@@ -218,6 +218,38 @@ class ChildRepository(
             val trimmed = history.takeLast(SareChildConstants.BATTERY_HISTORY_MAX)
             ref.update("batteryHistory", trimmed).await()
         }
+        // Dual-write heartbeat to Cloudflare edge (D1/KV) for fast TCD + redundancy.
+        syncHeartbeatToEdge(
+            familyId = fid,
+            deviceId = did,
+            batteryPercent = batteryPercent,
+            monitoringActive = monitoringActive,
+        )
+    }
+
+    private suspend fun syncHeartbeatToEdge(
+        familyId: String,
+        deviceId: String,
+        batteryPercent: Int,
+        monitoringActive: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("${SareChildConstants.R2_MEDIA_PROXY_BASE_URL}/edge/sync/device")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 4_000
+                readTimeout = 4_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+            val payload =
+                """{"familyId":"$familyId","deviceId":"$deviceId","childName":"${childName.replace("\"", "")}","lastHeartbeatMs":${System.currentTimeMillis()},"batteryPercent":$batteryPercent,"monitoringActive":$monitoringActive}"""
+            conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+            conn.responseCode
+            conn.disconnect()
+        } catch (_: Exception) {
+            // Best-effort edge redundancy; Firebase remains source of truth.
+        }
     }
 
     suspend fun postAlert(alert: FamilyAlert) {

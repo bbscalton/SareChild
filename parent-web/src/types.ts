@@ -229,6 +229,9 @@ export type TcdOverview = {
   criticalAlertsLast24h: number
   pendingCommands: number
   latestHeartbeatMs: number
+  /** firebase | kv | d1 | edge-device-sync | hybrid */
+  edgeSource?: string | null
+  edgeLatencyMs?: number | null
 }
 
 export function parseLocation(raw: unknown): LatLngPoint | null {

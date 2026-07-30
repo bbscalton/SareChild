@@ -5,12 +5,26 @@
   "compatibility_date": "2026-07-30",
   "vars": {
     "FIREBASE_PROJECT_ID": "safechild-f34ac",
-    "FIREBASE_AUTH_DOMAIN": "safechild-f34ac.firebaseapp.com"
+    "FIREBASE_AUTH_DOMAIN": "safechild-f34ac.firebaseapp.com",
+    "WENT_DARK_AFTER_MS": "300000"
   },
   "r2_buckets": [
     {
       "binding": "MEDIA_BUCKET",
       "bucket_name": "luscsl-uploads"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sarechild-ops",
+      "database_id": "df42579a-5ce4-4c1c-a599-0ac521ba5df9"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "EDGE_CACHE",
+      "id": "665b4123848046ee8a39ed36d9a471e3"
     }
   ]
 }

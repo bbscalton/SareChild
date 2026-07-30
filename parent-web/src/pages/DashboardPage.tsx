@@ -1398,6 +1398,10 @@ export function DashboardPage() {
                   <li>Critical alerts in last 24h: {tcdOverview.criticalAlertsLast24h}</li>
                   <li>Pending commands: {tcdOverview.pendingCommands}</li>
                   <li>
+                    Edge cache source: {tcdOverview.edgeSource || 'n/a'}
+                    {tcdOverview.edgeLatencyMs != null ? ` (${tcdOverview.edgeLatencyMs} ms)` : ''}
+                  </li>
+                  <li>
                     Latest heartbeat:{' '}
                     {tcdOverview.latestHeartbeatMs > 0
                       ? new Date(tcdOverview.latestHeartbeatMs).toLocaleString()

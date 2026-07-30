@@ -844,13 +844,22 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
       let detail = ''
       try {
         const body = (await response.json()) as {
-          checks?: { firebase?: { status?: string; message?: string }; r2?: { status?: string } }
+          checks?: {
+            firebase?: { status?: string; message?: string }
+            r2?: { status?: string }
+            d1?: { status?: string }
+            kv?: { status?: string }
+          }
+          loadBalancing?: string
         }
         const firebaseMsg = body.checks?.firebase?.message
         const r2Status = body.checks?.r2?.status
-        if (firebaseMsg || r2Status) {
-          detail = ` R2=${r2Status || 'n/a'}; Firebase probe=${firebaseMsg || 'n/a'}`
+        const d1Status = body.checks?.d1?.status
+        const kvStatus = body.checks?.kv?.status
+        if (firebaseMsg || r2Status || d1Status || kvStatus) {
+          detail = ` R2=${r2Status || 'n/a'}; D1=${d1Status || 'n/a'}; KV=${kvStatus || 'n/a'}; Firebase=${firebaseMsg || 'n/a'}`
         }
+        if (body.loadBalancing) detail += ` LB=${body.loadBalancing}`
       } catch {
         // non-JSON response is fine
       }
@@ -876,7 +885,89 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
   return { generatedAtMs: now, checks }
 }
 
+function edgeBaseUrl(): string {
+  return (
+    (import.meta.env.VITE_R2_MEDIA_PROXY_BASE_URL as string | undefined)?.trim() ||
+    'https://sarechild-media-proxy.neuereatec.workers.dev'
+  ).replace(/\/$/, '')
+}
+
+async function syncFleetToEdge(familyId: string, overview: TcdOverview): Promise<void> {
+  try {
+    await fetch(`${edgeBaseUrl()}/edge/sync/fleet`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        familyId,
+        registeredDevices: overview.registeredDevices,
+        onlineDevices: overview.onlineDevices,
+        offlineDevices: overview.offlineDevices,
+        guardians: overview.guardians,
+        alertsLast24h: overview.alertsLast24h,
+        criticalAlertsLast24h: overview.criticalAlertsLast24h,
+        pendingCommands: overview.pendingCommands,
+        latestHeartbeatMs: overview.latestHeartbeatMs,
+        source: 'firebase',
+      }),
+    })
+  } catch {
+    // Edge sync is best-effort redundancy; never block TCD.
+  }
+}
+
+async function loadFleetFromEdge(
+  familyId: string,
+): Promise<(TcdOverview & { source: string; latencyMs: number }) | null> {
+  try {
+    const started = performance.now()
+    const res = await fetch(`${edgeBaseUrl()}/edge/fleet/${encodeURIComponent(familyId)}`)
+    if (!res.ok) return null
+    const body = (await res.json()) as {
+      ok?: boolean
+      source?: string
+      latencyMs?: number
+      snapshot?: {
+        registeredDevices: number
+        onlineDevices: number
+        offlineDevices: number
+        guardians: number
+        alertsLast24h: number
+        criticalAlertsLast24h: number
+        pendingCommands: number
+        latestHeartbeatMs: number
+        updatedAtMs: number
+      }
+    }
+    if (!body.ok || !body.snapshot) return null
+    return {
+      generatedAtMs: body.snapshot.updatedAtMs || Date.now(),
+      registeredDevices: body.snapshot.registeredDevices,
+      onlineDevices: body.snapshot.onlineDevices,
+      offlineDevices: body.snapshot.offlineDevices,
+      guardians: body.snapshot.guardians,
+      alertsLast24h: body.snapshot.alertsLast24h,
+      criticalAlertsLast24h: body.snapshot.criticalAlertsLast24h,
+      pendingCommands: body.snapshot.pendingCommands,
+      latestHeartbeatMs: body.snapshot.latestHeartbeatMs,
+      source: body.source || 'edge',
+      latencyMs: body.latencyMs ?? Math.round(performance.now() - started),
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function loadTcdOverview(familyId: string): Promise<TcdOverview> {
+  // Prefer Cloudflare edge snapshot for speed; fall back to Firebase and refresh edge cache.
+  const edge = await loadFleetFromEdge(familyId)
+  if (edge && Date.now() - edge.generatedAtMs < 2 * 60 * 1000) {
+    return {
+      ...edge,
+      edgeSource: edge.source,
+      edgeLatencyMs: edge.latencyMs,
+    }
+  }
+
   const now = Date.now()
   const cutoff24h = now - 24 * 60 * 60 * 1000
 
@@ -908,7 +999,7 @@ export async function loadTcdOverview(familyId: string): Promise<TcdOverview> {
     }
   })
 
-  return {
+  const overview: TcdOverview = {
     generatedAtMs: now,
     registeredDevices,
     onlineDevices,
@@ -918,7 +1009,11 @@ export async function loadTcdOverview(familyId: string): Promise<TcdOverview> {
     criticalAlertsLast24h,
     pendingCommands,
     latestHeartbeatMs,
+    edgeSource: 'firebase',
+    edgeLatencyMs: null,
   }
+  void syncFleetToEdge(familyId, overview)
+  return overview
 }
 
 export async function runTcdAutoRepair(familyId: string): Promise<string[]> {

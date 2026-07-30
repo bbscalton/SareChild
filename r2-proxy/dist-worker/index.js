@@ -1,16 +1,8 @@
-export interface Env {
-  MEDIA_BUCKET: R2Bucket;
-  DB: D1Database;
-  EDGE_CACHE: KVNamespace;
-  FIREBASE_PROJECT_ID?: string;
-  FIREBASE_API_KEY?: string;
-  FIREBASE_AUTH_DOMAIN?: string;
-  WENT_DARK_AFTER_MS?: string;
-}
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-type Status = "ok" | "warn" | "fail";
-
-function json(body: unknown, status = 200): Response {
+// src/index.ts
+function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -18,46 +10,40 @@ function json(body: unknown, status = 200): Response {
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET,PUT,POST,OPTIONS",
       "access-control-allow-headers": "content-type,authorization,x-family-id",
-      "cache-control": "no-store",
-    },
+      "cache-control": "no-store"
+    }
   });
 }
-
-function wentDarkMs(env: Env): number {
-  const raw = Number(env.WENT_DARK_AFTER_MS ?? 300000);
-  return Number.isFinite(raw) && raw > 0 ? raw : 300000;
+__name(json, "json");
+function wentDarkMs(env) {
+  const raw = Number(env.WENT_DARK_AFTER_MS ?? 3e5);
+  return Number.isFinite(raw) && raw > 0 ? raw : 3e5;
 }
-
-async function probeFirebase(env: Env): Promise<{
-  status: Status;
-  message: string;
-  latencyMs: number | null;
-}> {
+__name(wentDarkMs, "wentDarkMs");
+async function probeFirebase(env) {
   const projectId = env.FIREBASE_PROJECT_ID?.trim();
   const apiKey = env.FIREBASE_API_KEY?.trim();
   const authDomain = env.FIREBASE_AUTH_DOMAIN?.trim();
   if (!projectId && !apiKey && !authDomain) {
     return { status: "warn", message: "Firebase probe vars not set on Worker.", latencyMs: null };
   }
-
   const started = Date.now();
   try {
     if (apiKey) {
-      const res = await fetch(
+      const res2 = await fetch(
         `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(apiKey)}`,
-        { method: "GET" },
+        { method: "GET" }
       );
-      const latencyMs = Date.now() - started;
-      if (res.status === 200 || res.status === 400 || res.status === 403) {
+      const latencyMs2 = Date.now() - started;
+      if (res2.status === 200 || res2.status === 400 || res2.status === 403) {
         return {
           status: "ok",
-          message: `Firebase Auth API reachable from Cloudflare (HTTP ${res.status}).`,
-          latencyMs,
+          message: `Firebase Auth API reachable from Cloudflare (HTTP ${res2.status}).`,
+          latencyMs: latencyMs2
         };
       }
-      return { status: "fail", message: `Firebase Auth API returned HTTP ${res.status}.`, latencyMs };
+      return { status: "fail", message: `Firebase Auth API returned HTTP ${res2.status}.`, latencyMs: latencyMs2 };
     }
-
     const host = authDomain || `${projectId}.firebaseapp.com`;
     const res = await fetch(`https://${host}/__/firebase/init.json`, { method: "GET" });
     const latencyMs = Date.now() - started;
@@ -69,12 +55,12 @@ async function probeFirebase(env: Env): Promise<{
     return {
       status: "fail",
       message: error instanceof Error ? error.message : "Firebase probe failed.",
-      latencyMs: Date.now() - started,
+      latencyMs: Date.now() - started
     };
   }
 }
-
-async function probeD1(env: Env): Promise<{ status: Status; message: string; latencyMs: number }> {
+__name(probeFirebase, "probeFirebase");
+async function probeD1(env) {
   const started = Date.now();
   try {
     await env.DB.prepare("SELECT 1 AS ok").first();
@@ -83,12 +69,12 @@ async function probeD1(env: Env): Promise<{ status: Status; message: string; lat
     return {
       status: "fail",
       message: error instanceof Error ? error.message : "D1 probe failed.",
-      latencyMs: Date.now() - started,
+      latencyMs: Date.now() - started
     };
   }
 }
-
-async function probeKv(env: Env): Promise<{ status: Status; message: string; latencyMs: number }> {
+__name(probeD1, "probeD1");
+async function probeKv(env) {
   const started = Date.now();
   const key = `__health_${Date.now()}`;
   try {
@@ -97,32 +83,18 @@ async function probeKv(env: Env): Promise<{ status: Status; message: string; lat
     return {
       status: value === "1" ? "ok" : "fail",
       message: value === "1" ? "KV edge cache is reachable." : "KV write/read mismatch.",
-      latencyMs: Date.now() - started,
+      latencyMs: Date.now() - started
     };
   } catch (error) {
     return {
       status: "fail",
       message: error instanceof Error ? error.message : "KV probe failed.",
-      latencyMs: Date.now() - started,
+      latencyMs: Date.now() - started
     };
   }
 }
-
-type FleetSnapshot = {
-  familyId: string;
-  registeredDevices: number;
-  onlineDevices: number;
-  offlineDevices: number;
-  guardians: number;
-  alertsLast24h: number;
-  criticalAlertsLast24h: number;
-  pendingCommands: number;
-  latestHeartbeatMs: number;
-  source: string;
-  updatedAtMs: number;
-};
-
-async function upsertFleetSnapshot(env: Env, snap: FleetSnapshot): Promise<void> {
+__name(probeKv, "probeKv");
+async function upsertFleetSnapshot(env, snap) {
   await env.DB.prepare(
     `INSERT INTO fleet_snapshots (
       family_id, registered_devices, online_devices, offline_devices, guardians,
@@ -139,32 +111,29 @@ async function upsertFleetSnapshot(env: Env, snap: FleetSnapshot): Promise<void>
       pending_commands=excluded.pending_commands,
       latest_heartbeat_ms=excluded.latest_heartbeat_ms,
       source=excluded.source,
-      updated_at_ms=excluded.updated_at_ms`,
-  )
-    .bind(
-      snap.familyId,
-      snap.registeredDevices,
-      snap.onlineDevices,
-      snap.offlineDevices,
-      snap.guardians,
-      snap.alertsLast24h,
-      snap.criticalAlertsLast24h,
-      snap.pendingCommands,
-      snap.latestHeartbeatMs,
-      snap.source,
-      snap.updatedAtMs,
-    )
-    .run();
-
+      updated_at_ms=excluded.updated_at_ms`
+  ).bind(
+    snap.familyId,
+    snap.registeredDevices,
+    snap.onlineDevices,
+    snap.offlineDevices,
+    snap.guardians,
+    snap.alertsLast24h,
+    snap.criticalAlertsLast24h,
+    snap.pendingCommands,
+    snap.latestHeartbeatMs,
+    snap.source,
+    snap.updatedAtMs
+  ).run();
   await env.EDGE_CACHE.put(`fleet:${snap.familyId}`, JSON.stringify(snap), {
-    expirationTtl: 60 * 30,
+    expirationTtl: 60 * 30
   });
 }
-
-async function readFleetSnapshot(env: Env, familyId: string): Promise<FleetSnapshot | null> {
+__name(upsertFleetSnapshot, "upsertFleetSnapshot");
+async function readFleetSnapshot(env, familyId) {
   const cached = await env.EDGE_CACHE.get(`fleet:${familyId}`, "json");
   if (cached && typeof cached === "object") {
-    return cached as FleetSnapshot;
+    return cached;
   }
   const row = await env.DB.prepare(
     `SELECT family_id as familyId, registered_devices as registeredDevices,
@@ -173,31 +142,27 @@ async function readFleetSnapshot(env: Env, familyId: string): Promise<FleetSnaps
       critical_alerts_last_24h as criticalAlertsLast24h,
       pending_commands as pendingCommands, latest_heartbeat_ms as latestHeartbeatMs,
       source, updated_at_ms as updatedAtMs
-     FROM fleet_snapshots WHERE family_id = ?`,
-  )
-    .bind(familyId)
-    .first<FleetSnapshot>();
+     FROM fleet_snapshots WHERE family_id = ?`
+  ).bind(familyId).first();
   return row ?? null;
 }
-
-export default {
-  async fetch(request, env): Promise<Response> {
+__name(readFleetSnapshot, "readFleetSnapshot");
+var index_default = {
+  async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return json({ ok: true });
-
     if (request.method === "GET" && url.pathname === "/health") {
       return json({
         ok: true,
         service: "sarechild-media-proxy",
         timestamp: Date.now(),
         bucketBound: Boolean(env.MEDIA_BUCKET),
-        edge: { d1: Boolean(env.DB), kv: Boolean(env.EDGE_CACHE) },
+        edge: { d1: Boolean(env.DB), kv: Boolean(env.EDGE_CACHE) }
       });
     }
-
     if (request.method === "GET" && url.pathname === "/platform-health") {
       const started = Date.now();
-      let r2Status: Status = "fail";
+      let r2Status = "fail";
       let r2Message = "R2 bucket binding missing.";
       try {
         await env.MEDIA_BUCKET.list({ limit: 1 });
@@ -206,30 +171,24 @@ export default {
       } catch (error) {
         r2Message = error instanceof Error ? error.message : "R2 probe failed.";
       }
-
       const [firebase, d1, kv] = await Promise.all([probeFirebase(env), probeD1(env), probeKv(env)]);
       const ok = r2Status === "ok" && d1.status !== "fail" && kv.status !== "fail" && firebase.status !== "fail";
-
       try {
         await env.DB.prepare(
           `INSERT INTO health_events (generated_at_ms, ok, r2_status, d1_status, kv_status, firebase_status, latency_ms, detail_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-          .bind(
-            Date.now(),
-            ok ? 1 : 0,
-            r2Status,
-            d1.status,
-            kv.status,
-            firebase.status,
-            Date.now() - started,
-            JSON.stringify({ r2Message, firebase, d1, kv }),
-          )
-          .run();
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          Date.now(),
+          ok ? 1 : 0,
+          r2Status,
+          d1.status,
+          kv.status,
+          firebase.status,
+          Date.now() - started,
+          JSON.stringify({ r2Message, firebase, d1, kv })
+        ).run();
       } catch {
-        // Health history should never break the health endpoint.
       }
-
       return json(
         {
           ok,
@@ -242,21 +201,19 @@ export default {
             primaryReads: "firebase-firestore",
             edgeCache: "cloudflare-kv",
             edgeOpsDb: "cloudflare-d1",
-            media: "cloudflare-r2",
+            media: "cloudflare-r2"
           },
           checks: {
             cloudflareWorker: { status: "ok", message: "Worker is serving requests on Cloudflare edge." },
             r2: { status: r2Status, message: r2Message },
-            d1: d1,
-            kv: kv,
-            firebase: firebase,
-          },
+            d1,
+            kv,
+            firebase
+          }
         },
-        ok ? 200 : 503,
+        ok ? 200 : 503
       );
     }
-
-    // Fast fleet snapshot for TCD (KV → D1 failover).
     if (request.method === "GET" && url.pathname.startsWith("/edge/fleet/")) {
       const familyId = decodeURIComponent(url.pathname.replace("/edge/fleet/", ""));
       if (!familyId) return json({ error: "familyId required" }, 400);
@@ -268,25 +225,23 @@ export default {
             ok: false,
             source: "miss",
             message: "No edge snapshot yet. Sync from parent TCD after Firestore load.",
-            latencyMs: Date.now() - started,
+            latencyMs: Date.now() - started
           },
-          404,
+          404
         );
       }
       return json({
         ok: true,
-        source: (await env.EDGE_CACHE.get(`fleet:${familyId}`)) ? "kv" : "d1",
+        source: await env.EDGE_CACHE.get(`fleet:${familyId}`) ? "kv" : "d1",
         latencyMs: Date.now() - started,
-        snapshot: snap,
+        snapshot: snap
       });
     }
-
-    // Parent/TCD pushes fleet overview into edge cache for fast global reads.
     if (request.method === "POST" && url.pathname === "/edge/sync/fleet") {
-      const body = (await request.json()) as Partial<FleetSnapshot> & { familyId?: string };
+      const body = await request.json();
       if (!body.familyId) return json({ error: "familyId required" }, 400);
       const now = Date.now();
-      const snap: FleetSnapshot = {
+      const snap = {
         familyId: body.familyId,
         registeredDevices: Number(body.registeredDevices ?? 0),
         onlineDevices: Number(body.onlineDevices ?? 0),
@@ -297,22 +252,13 @@ export default {
         pendingCommands: Number(body.pendingCommands ?? 0),
         latestHeartbeatMs: Number(body.latestHeartbeatMs ?? 0),
         source: String(body.source || "firebase"),
-        updatedAtMs: now,
+        updatedAtMs: now
       };
       await upsertFleetSnapshot(env, snap);
       return json({ ok: true, cached: true, updatedAtMs: now });
     }
-
-    // Child/device heartbeat dual-write for edge redundancy.
     if (request.method === "POST" && url.pathname === "/edge/sync/device") {
-      const body = (await request.json()) as {
-        familyId?: string;
-        deviceId?: string;
-        childName?: string;
-        lastHeartbeatMs?: number;
-        batteryPercent?: number;
-        monitoringActive?: boolean;
-      };
+      const body = await request.json();
       if (!body.familyId || !body.deviceId) return json({ error: "familyId and deviceId required" }, 400);
       const now = Date.now();
       const hb = Number(body.lastHeartbeatMs ?? now);
@@ -327,29 +273,23 @@ export default {
           battery_percent=excluded.battery_percent,
           monitoring_active=excluded.monitoring_active,
           online=excluded.online,
-          updated_at_ms=excluded.updated_at_ms`,
-      )
-        .bind(
-          body.familyId,
-          body.deviceId,
-          body.childName || "Child",
-          hb,
-          body.batteryPercent ?? -1,
-          body.monitoringActive ? 1 : 0,
-          online,
-          now,
-        )
-        .run();
-
+          updated_at_ms=excluded.updated_at_ms`
+      ).bind(
+        body.familyId,
+        body.deviceId,
+        body.childName || "Child",
+        hb,
+        body.batteryPercent ?? -1,
+        body.monitoringActive ? 1 : 0,
+        online,
+        now
+      ).run();
       const agg = await env.DB.prepare(
         `SELECT COUNT(*) as registered,
                 SUM(CASE WHEN online = 1 THEN 1 ELSE 0 END) as online,
                 MAX(last_heartbeat_ms) as latestHb
-         FROM device_heartbeats WHERE family_id = ?`,
-      )
-        .bind(body.familyId)
-        .first<{ registered: number; online: number; latestHb: number }>();
-
+         FROM device_heartbeats WHERE family_id = ?`
+      ).bind(body.familyId).first();
       const registered = Number(agg?.registered ?? 0);
       const onlineCount = Number(agg?.online ?? 0);
       await upsertFleetSnapshot(env, {
@@ -363,22 +303,19 @@ export default {
         pendingCommands: 0,
         latestHeartbeatMs: Number(agg?.latestHb ?? hb),
         source: "edge-device-sync",
-        updatedAtMs: now,
+        updatedAtMs: now
       });
-
       return json({ ok: true, online: Boolean(online), updatedAtMs: now });
     }
-
     if (request.method === "GET" && url.pathname === "/edge/health/history") {
       const rows = await env.DB.prepare(
         `SELECT id, generated_at_ms as generatedAtMs, ok, r2_status as r2Status,
                 d1_status as d1Status, kv_status as kvStatus, firebase_status as firebaseStatus,
                 latency_ms as latencyMs
-         FROM health_events ORDER BY generated_at_ms DESC LIMIT 30`,
+         FROM health_events ORDER BY generated_at_ms DESC LIMIT 30`
       ).all();
       return json({ ok: true, events: rows.results ?? [] });
     }
-
     if (request.method === "PUT" && url.pathname.startsWith("/upload/")) {
       const key = decodeURIComponent(url.pathname.replace("/upload/", ""));
       if (!key || key.includes("..")) return json({ error: "invalid path" }, 400);
@@ -388,10 +325,9 @@ export default {
       await env.MEDIA_BUCKET.put(key, body, { httpMetadata: { contentType } });
       return json({
         path: key,
-        url: `${url.origin}/media/${encodeURIComponent(key)}`,
+        url: `${url.origin}/media/${encodeURIComponent(key)}`
       });
     }
-
     if (request.method === "GET" && url.pathname.startsWith("/media/")) {
       const key = decodeURIComponent(url.pathname.replace("/media/", ""));
       if (!key || key.includes("..")) return new Response("invalid path", { status: 400 });
@@ -403,7 +339,10 @@ export default {
       headers.set("access-control-allow-origin", "*");
       return new Response(obj.body, { headers });
     }
-
     return json({ error: "not found" }, 404);
-  },
-} satisfies ExportedHandler<Env>;
+  }
+};
+export {
+  index_default as default
+};
+//# sourceMappingURL=index.js.map

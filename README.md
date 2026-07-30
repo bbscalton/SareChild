@@ -105,7 +105,29 @@ npx wrangler deploy
 
 Seed `keywordLists/default` from [`keywordLists.default.json`](keywordLists.default.json).
 
-## TCD (Technical Control Dashboard)
+## Cloudflare edge scale layer (D1 + KV + R2)
+
+SareChild uses Cloudflare as a global load-balanced edge for speed and redundancy:
+
+| Layer | Role |
+|-------|------|
+| Cloudflare Worker | Global edge API (auto multi-PoP load balancing) |
+| Cloudflare D1 (`sarechild-ops`) | Ops DB for fleet snapshots, heartbeats, health history |
+| Cloudflare KV | Ultra-fast latest fleet cache per family |
+| Cloudflare R2 | Media storage overflow |
+| Firebase Firestore | Source of truth for auth, alerts, commands, family data |
+
+Flow:
+1. Child heartbeats write to Firebase **and** Cloudflare edge (`/edge/sync/device`).
+2. Parent/TCD reads fleet from Cloudflare KV/D1 first (fast), falls back to Firebase, then refreshes edge cache.
+3. `/platform-health` monitors Worker + R2 + D1 + KV + Firebase reachability.
+
+Useful endpoints:
+- `GET /platform-health`
+- `GET /edge/fleet/{familyId}`
+- `POST /edge/sync/fleet`
+- `POST /edge/sync/device`
+- `GET /edge/health/history`
 
 - Parent web now includes a `TCD Ops` tab with one-click:
   - live health checks (Firestore, child heartbeat freshness, alerts stream, Cloudflare R2 proxy),

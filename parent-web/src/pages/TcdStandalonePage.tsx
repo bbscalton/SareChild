@@ -162,6 +162,10 @@ export function TcdStandalonePage() {
                 <li>Critical alerts in last 24h: {overview.criticalAlertsLast24h}</li>
                 <li>Pending commands: {overview.pendingCommands}</li>
                 <li>
+                  Edge cache source: {overview.edgeSource || 'n/a'}
+                  {overview.edgeLatencyMs != null ? ` (${overview.edgeLatencyMs} ms)` : ''}
+                </li>
+                <li>
                   Latest heartbeat:{' '}
                   {overview.latestHeartbeatMs > 0
                     ? new Date(overview.latestHeartbeatMs).toLocaleString()
