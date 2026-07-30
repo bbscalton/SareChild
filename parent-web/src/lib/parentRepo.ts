@@ -744,14 +744,20 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
     const devicesSnap = await getDocs(collection(db, COL.families, familyId, COL.devices))
     const latencyMs = Math.round(performance.now() - started)
     const staleCount = devicesSnap.docs.filter((d) => now - Number(d.get('lastHeartbeatMs') ?? 0) > WENT_DARK_AFTER_MS).length
+    const onlineCount = devicesSnap.docs.filter((d) => {
+      const hb = Number(d.get('lastHeartbeatMs') ?? 0)
+      return hb > 0 && now - hb < WENT_DARK_AFTER_MS
+    }).length
     checks.push({
       id: 'child-heartbeats',
       label: 'Child heartbeat freshness',
-      status: staleCount === 0 ? 'ok' : 'warn',
+      status: devicesSnap.size === 0 ? 'warn' : staleCount === 0 ? 'ok' : 'warn',
       message:
-        staleCount === 0
-          ? `${devicesSnap.size} child device(s) reporting recently.`
-          : `${staleCount} device(s) went dark in the last ${Math.round(WENT_DARK_AFTER_MS / 60000)} min.`,
+        devicesSnap.size === 0
+          ? 'No child devices registered yet.'
+          : staleCount === 0
+            ? `${onlineCount}/${devicesSnap.size} device(s) online and reporting.`
+            : `${staleCount}/${devicesSnap.size} device(s) offline or stale — open child app and confirm monitoring is active.`,
       latencyMs,
     })
   } catch (e) {
@@ -827,19 +833,30 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
       const started = performance.now()
       const response = await fetch(functionsHealthUrl, { method: 'GET' })
       const latencyMs = Math.round(performance.now() - started)
+      const status = response.ok ? 'ok' : response.status === 404 ? 'warn' : 'fail'
+      const message = response.ok
+        ? 'Functions health endpoint is reachable.'
+        : response.status === 404
+          ? 'platformHealth is not deployed yet (Firebase Blaze plan required to deploy Functions).'
+          : `Functions returned HTTP ${response.status}.`
       checks.push({
         id: 'functions-health',
         label: 'Firebase Functions health',
-        status: response.ok ? 'ok' : 'fail',
-        message: response.ok ? 'Functions health endpoint is reachable.' : `Functions returned HTTP ${response.status}.`,
+        status,
+        message,
         latencyMs,
       })
     } catch (e) {
       checks.push({
         id: 'functions-health',
         label: 'Firebase Functions health',
-        status: 'fail',
-        message: e instanceof Error ? e.message : 'Failed to reach Functions health endpoint.',
+        status: 'warn',
+        message:
+          e instanceof Error && e.message.includes('Failed to fetch')
+            ? 'Functions health URL unreachable (not deployed or blocked by browser/CORS). Enable Firebase Blaze and deploy platformHealth.'
+            : e instanceof Error
+              ? e.message
+              : 'Failed to reach Functions health endpoint.',
       })
     }
   }
@@ -925,6 +942,23 @@ export async function runTcdAutoRepair(familyId: string): Promise<string[]> {
     }),
   )
   fixes.push('Reconciled stale online flags for dark devices.')
+
+  const familySnap = await getDoc(doc(db, COL.families, familyId))
+  const parentUid = familySnap.get('parentUid') as string | undefined
+  const parentEmail =
+    (familySnap.get('parentEmail') as string | undefined) || auth.currentUser?.email || ''
+  if (parentUid) {
+    const guardianRef = doc(db, COL.families, familyId, COL.guardians, parentUid)
+    const guardianSnap = await getDoc(guardianRef)
+    if (!guardianSnap.exists()) {
+      await setDoc(guardianRef, {
+        email: parentEmail,
+        role: 'OWNER' satisfies GuardianRole,
+        joinedAtMs: Date.now(),
+      })
+      fixes.push('Restored missing OWNER guardian record for this family.')
+    }
+  }
 
   return fixes
 }

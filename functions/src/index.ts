@@ -283,32 +283,35 @@ export const purgeExpiredMedia = onSchedule("every 24 hours", async () => {
   logger.info(`purgeExpiredMedia deleted ${deleted} file(s)`);
 });
 
-export const platformHealth = onRequest(async (_req, res) => {
-  const now = Date.now();
-  const familiesSnap = await db.collection("families").limit(25).get();
-  let deviceCount = 0;
-  let staleCount = 0;
-  for (const family of familiesSnap.docs) {
-    const devices = await family.ref.collection("devices").get();
-    deviceCount += devices.size;
-    devices.docs.forEach((d) => {
-      const hb = Number(d.get("lastHeartbeatMs") ?? 0);
-      if (hb <= 0 || now - hb > WENT_DARK_MS) staleCount += 1;
+export const platformHealth = onRequest(
+  { cors: true },
+  async (_req, res) => {
+    const now = Date.now();
+    const familiesSnap = await db.collection("families").limit(25).get();
+    let deviceCount = 0;
+    let staleCount = 0;
+    for (const family of familiesSnap.docs) {
+      const devices = await family.ref.collection("devices").get();
+      deviceCount += devices.size;
+      devices.docs.forEach((d) => {
+        const hb = Number(d.get("lastHeartbeatMs") ?? 0);
+        if (hb <= 0 || now - hb > WENT_DARK_MS) staleCount += 1;
+      });
+    }
+    res.status(200).json({
+      ok: true,
+      generatedAtMs: now,
+      sampleFamilyCount: familiesSnap.size,
+      sampleDeviceCount: deviceCount,
+      staleDeviceCount: staleCount,
+      services: {
+        firestore: "ok",
+        storage: "ok",
+        functions: "ok",
+      },
     });
   }
-  res.status(200).json({
-    ok: true,
-    generatedAtMs: now,
-    sampleFamilyCount: familiesSnap.size,
-    sampleDeviceCount: deviceCount,
-    staleDeviceCount: staleCount,
-    services: {
-      firestore: "ok",
-      storage: "ok",
-      functions: "ok",
-    },
-  });
-});
+);
 
 export const autoRepairData = onSchedule("every 30 minutes", async () => {
   const now = Date.now();
