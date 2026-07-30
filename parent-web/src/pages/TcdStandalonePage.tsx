@@ -9,6 +9,8 @@ export function TcdStandalonePage() {
   const [report, setReport] = useState<TcdReport | null>(null)
   const [overview, setOverview] = useState<TcdOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [statusMsg, setStatusMsg] = useState<string | null>(null)
+  const [repairLog, setRepairLog] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
 
   const run = async () => {
@@ -24,6 +26,23 @@ export function TcdStandalonePage() {
       setOverview(nextOverview)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to run TCD checks')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runRepair = async () => {
+    if (!familyId) return
+    setBusy(true)
+    setError(null)
+    setStatusMsg(null)
+    try {
+      const log = await repo.runTcdAutoRepair(familyId)
+      setRepairLog(log)
+      await run()
+      setStatusMsg('Auto-repair completed and health re-checked.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to run auto-repair')
     } finally {
       setBusy(false)
     }
@@ -68,6 +87,7 @@ export function TcdStandalonePage() {
       </header>
 
       {error && <div className="banner error-banner">{error}</div>}
+      {statusMsg && <div className="banner ok-banner">{statusMsg}</div>}
 
       <main className="panel">
         <section className="stack">
@@ -80,11 +100,34 @@ export function TcdStandalonePage() {
               <button className="btn primary" type="button" disabled={busy || !familyId} onClick={() => void run()}>
                 Run now
               </button>
+              <button className="btn ghost" type="button" disabled={busy || !familyId} onClick={() => void runRepair()}>
+                Run auto-repair
+              </button>
               <a className="btn ghost compact" href="/SareChild/" target="_blank" rel="noreferrer">
                 Open parent dashboard
               </a>
             </div>
           </div>
+
+          {overview && (overview.offlineDevices > 0 || overview.guardians === 0) && (
+            <div className="card">
+              <h3>Action items</h3>
+              <ul className="meta">
+                {overview.offlineDevices > 0 && (
+                  <li>
+                    Child device offline — open the SareChild child app, tap Start protection, and confirm
+                    permissions are granted.
+                  </li>
+                )}
+                {overview.guardians === 0 && (
+                  <li>
+                    No guardians in family record — click <strong>Run auto-repair</strong> to restore the owner
+                    guardian entry.
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
 
           {report && (
             <div className="card">
@@ -124,6 +167,17 @@ export function TcdStandalonePage() {
                     ? new Date(overview.latestHeartbeatMs).toLocaleString()
                     : 'No heartbeat recorded'}
                 </li>
+              </ul>
+            </div>
+          )}
+
+          {repairLog.length > 0 && (
+            <div className="card">
+              <h3>Last auto-repair actions</h3>
+              <ul className="meta">
+                {repairLog.map((line, idx) => (
+                  <li key={`${line}-${idx}`}>{line}</li>
+                ))}
               </ul>
             </div>
           )}
