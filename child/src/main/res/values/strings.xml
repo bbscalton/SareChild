@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">SareChild</string>
+    <string name="notification_listener_label">SareChild message safety</string>
+    <string name="monitoring_channel_name">Child protection active</string>
+    <string name="monitoring_notification_title">Protected by SareChild</string>
+    <string name="monitoring_notification_text">Location and safety monitoring are on with parent approval.</string>
+    <string name="accessibility_message_monitor_description">Allows SareChild to read on-screen text in messaging apps for safety alerts when you consented. This does not unlock encrypted chat history.</string>
+</resources>

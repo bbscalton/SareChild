@@ -1,0 +1,32 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function parentProfile() {
+      return firestore.get(/databases/(default)/documents/parentProfiles/$(request.auth.uid)).data;
+    }
+
+    function isFamilyParent(familyId) {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/parentProfiles/$(request.auth.uid))
+        && parentProfile().familyId == familyId;
+    }
+
+    function isDeviceMember(familyId, deviceId) {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/families/$(familyId)/devices/$(deviceId))
+        && firestore.get(/databases/(default)/documents/families/$(familyId)/devices/$(deviceId)).data.authUid
+          == request.auth.uid;
+    }
+
+    match /families/{familyId}/devices/{deviceId}/{allPaths=**} {
+      allow read: if isFamilyParent(familyId) || isDeviceMember(familyId, deviceId);
+      allow write: if isDeviceMember(familyId, deviceId)
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|audio/.*|video/.*');
+    }
+  }
+}

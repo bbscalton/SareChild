@@ -1,0 +1,95 @@
+package com.sarechild.shared
+
+object SareChildConstants {
+    const val APP_NAME = "SareChild"
+    const val PROTECTED_LABEL = "Protected by SareChild"
+    const val R2_MEDIA_PROXY_BASE_URL = "https://sarechild-media-proxy.neuereatec.workers.dev"
+
+    const val COL_FAMILIES = "families"
+    const val COL_DEVICES = "devices"
+    const val COL_GEOFENCES = "geofences"
+    const val COL_ALERTS = "alerts"
+    const val COL_PAIRING_CODES = "pairingCodes"
+    const val COL_KEYWORD_LISTS = "keywordLists"
+    const val COL_COMMANDS = "commands"
+    const val COL_APP_EVENTS = "appEvents"
+    const val COL_USAGE_DAILY = "usageDaily"
+    const val COL_LOCATION_TRAIL = "locationTrail"
+    const val COL_CALL_SMS = "callSmsPreviews"
+    const val COL_GUARDIANS = "guardians"
+    const val COL_DIGESTS = "digests"
+    const val COL_SOS_CONTACTS = "sosContacts"
+    const val COL_SAFE_CONTACTS = "safeContacts"
+    const val COL_APP_LIMITS = "appLimits"
+    const val COL_APP_BLOCK_SCHEDULES = "appBlockSchedules"
+    const val COL_FAMILY_CHAT = "familyChat"
+    const val COL_SAFETY_SETTINGS = "safetySettings"
+    const val COL_GUARDIAN_INVITES = "guardianInvites"
+    const val COL_SCREEN_SHARE_SCHEDULES = "screenShareSchedules"
+
+    const val KEYWORD_LIST_DEFAULT = "default"
+
+    const val HEARTBEAT_INTERVAL_MS = 60_000L
+    const val LOCATION_INTERVAL_MS = 120_000L
+    const val WENT_DARK_AFTER_MS = 5 * 60_000L
+    const val LOW_BATTERY_PERCENT = 15
+    const val ALERT_RETENTION_DAYS = 30
+    const val MEDIA_RETENTION_DAYS = 7
+    const val MIC_CHECK_SECONDS = 10
+    const val SCREEN_FRAME_INTERVAL_MS = 2_000L
+    const val SCREEN_SHARE_DEFAULT_MINUTES = 10
+    const val SCREEN_SHARE_MAX_MINUTES = 60
+    const val SCREEN_SHARE_MIN_MINUTES = 5
+    const val MESSAGE_PREVIEW_MIN_RISK_SCORE = 20
+    const val BATTERY_HISTORY_MAX = 24
+    const val USAGE_SYNC_INTERVAL_MS = 15 * 60_000L
+    const val USAGE_BLOCK_ENFORCE_INTERVAL_MS = 10_000L
+    const val OFFLINE_EVIDENCE_MIN_INTERVAL_MS = 20 * 60_000L
+    const val OFFLINE_SMS_FALLBACK_INTERVAL_MS = 15 * 60_000L
+    const val OFFLINE_CALL_FALLBACK_INTERVAL_MS = 20 * 60_000L
+    const val CALL_SMS_SYNC_LIMIT = 40
+    const val SMS_SNIPPET_MAX = 120
+
+    const val PREFS_NAME = "sarechild_prefs"
+    const val PREF_FAMILY_ID = "family_id"
+    const val PREF_DEVICE_ID = "device_id"
+    const val PREF_CHILD_NAME = "child_name"
+    const val PREF_CONSENT_DONE = "consent_done"
+    const val PREF_FCM_TOKEN = "fcm_token"
+    const val PREF_SCREEN_SHARE_CONSENT = "screen_share_consent"
+    const val PREF_CAMERA_CHECK_CONSENT = "camera_check_consent"
+    const val PREF_MIC_CHECK_CONSENT = "mic_check_consent"
+    const val PREF_MESSAGE_MONITOR_CONSENT = "message_monitor_consent"
+    const val PREF_INSTALL_MONITOR_CONSENT = "install_monitor_consent"
+    const val PREF_USAGE_CONSENT = "usage_consent"
+    const val PREF_CALL_SMS_CONSENT = "call_sms_consent"
+    const val PREF_OFFLINE_SMS_FALLBACK_CONSENT = "offline_sms_fallback_consent"
+    const val PREF_OFFLINE_AUTO_CALL_CONSENT = "offline_auto_call_consent"
+    const val PREF_OFFLINE_CALL_ENABLED = "offline_call_enabled"
+    const val PREF_OFFLINE_CALL_NUMBER = "offline_call_number"
+    const val PREF_OFFLINE_CALL_MAX_ATTEMPTS = "offline_call_max_attempts"
+    const val PREF_ACTIVE_SESSION = "active_session"
+    const val PREF_LAST_OFFLINE_EVIDENCE_MS = "last_offline_evidence_ms"
+    const val PREF_LAST_OFFLINE_SMS_MS = "last_offline_sms_ms"
+    const val PREF_LAST_OFFLINE_CALL_MS = "last_offline_call_ms"
+
+    const val NOTIFICATION_CHANNEL_MONITORING = "monitoring"
+    const val NOTIFICATION_CHANNEL_ALERTS = "alerts"
+    const val NOTIFICATION_CHANNEL_SAFETY = "safety_checks"
+    const val FGS_NOTIFICATION_ID = 1001
+    const val SAFETY_NOTIFICATION_ID = 1002
+    const val SCREEN_NOTIFICATION_ID = 1003
+    const val MESSAGE_MONITOR_NOTIFICATION_ID = 1004
+    const val RING_NOTIFICATION_ID = 1005
+    const val CALL_SMS_NOTIFICATION_ID = 1006
+    const val USAGE_NOTIFICATION_ID = 1007
+    const val DEVICE_LOCK_NOTIFICATION_ID = 1008
+
+    const val EXTRA_COMMAND_ID = "command_id"
+    const val EXTRA_COMMAND_TYPE = "command_type"
+    const val EXTRA_CAMERA_FACING = "camera_facing"
+    const val EXTRA_DURATION_MINUTES = "duration_minutes"
+    const val EXTRA_SCHEDULE_ID = "schedule_id"
+    const val ACTION_DEVICE_UNLOCK = "com.sarechild.child.ACTION_DEVICE_UNLOCK"
+    const val PREF_DEVICE_LOCKED = "device_locked"
+}

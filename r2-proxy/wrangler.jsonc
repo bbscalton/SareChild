@@ -1,0 +1,12 @@
+{
+  "$schema": "../functions/node_modules/wrangler/config-schema.json",
+  "name": "sarechild-media-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "luscsl-uploads"
+    }
+  ]
+}

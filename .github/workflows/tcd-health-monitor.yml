@@ -1,0 +1,20 @@
+name: TCD Health Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run TCD health probe
+        env:
+          TCD_PARENT_WEB_URL: ${{ secrets.TCD_PARENT_WEB_URL }}
+          TCD_R2_HEALTH_URL: ${{ secrets.TCD_R2_HEALTH_URL }}
+          TCD_FUNCTIONS_HEALTH_URL: ${{ secrets.TCD_FUNCTIONS_HEALTH_URL }}
+        run: node scripts/tcd/health-check.mjs

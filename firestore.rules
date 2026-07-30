@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function parentProfile() {
+      return get(/databases/$(database)/documents/parentProfiles/$(request.auth.uid)).data;
+    }
+
+    function familyDoc(familyId) {
+      return get(/databases/$(database)/documents/families/$(familyId)).data;
+    }
+
+    // True for the parent who owns the family profile record (legacy check, kept
+    // for backward compatibility with existing profile.familyId linkage).
+    function isFamilyParent(familyId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
+        && parentProfile().familyId == familyId;
+    }
+
+    // True only for the exact uid stored as families/{familyId}.parentUid.
+    function isFamilyOwner(familyId) {
+      return signedIn() && familyDoc(familyId).parentUid == request.auth.uid;
+    }
+
+    // True for the parent/owner or any invited guardian (caregiver) of the family.
+    function isFamilyGuardian(familyId) {
+      return isFamilyParent(familyId)
+        || (signedIn()
+          && exists(/databases/$(database)/documents/families/$(familyId)/guardians/$(request.auth.uid)));
+    }
+
+    function isDeviceMember(familyId, deviceId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/families/$(familyId)/devices/$(deviceId))
+        && get(/databases/$(database)/documents/families/$(familyId)/devices/$(deviceId)).data.authUid
+          == request.auth.uid;
+    }
+
+    match /parentProfiles/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /families/{familyId} {
+      allow create: if signedIn();
+      allow read: if isFamilyGuardian(familyId);
+
+      match /devices/{deviceId} {
+        allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        allow create, update: if isFamilyGuardian(familyId)
+          || (signedIn() && request.resource.data.authUid == request.auth.uid);
+      }
+
+      match /alerts/{alertId} {
+        allow read, update: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
+      match /familyChat/{messageId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow create: if isFamilyGuardian(familyId) || signedIn();
+      }
+
+      match /geofences/{geofenceId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      match /commands/{commandId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow create: if isFamilyGuardian(familyId);
+        allow update: if isFamilyGuardian(familyId) || signedIn();
+      }
+
+      // Child device telemetry: the (anonymously signed-in) child app creates
+      // these; parents/guardians read them on the dashboard.
+      match /appEvents/{eventId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
+      match /usageDaily/{dayId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow create, update: if signedIn();
+      }
+
+      match /locationTrail/{sampleId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
+      match /callSmsPreviews/{previewId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
+      // Written by the weeklySafetyDigest Cloud Function only.
+      match /digests/{digestId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow write: if false;
+      }
+
+      match /sosContacts/{contactId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      match /safeContacts/{contactId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      match /safetySettings/{docId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      match /appLimits/{limitId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      match /appBlockSchedules/{ruleId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      match /screenShareSchedules/{scheduleId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      // Owner manages any guardian entry; a user may also write their own
+      // entry (used by signUp for the OWNER doc and acceptGuardianInvite for
+      // a CAREGIVER doc).
+      match /guardians/{uid} {
+        allow read: if isFamilyGuardian(familyId);
+        allow write: if isFamilyOwner(familyId) || (signedIn() && request.auth.uid == uid);
+      }
+    }
+
+    // Top-level so a caregiver can look up/claim an invite before they belong
+    // to the family. Only the family owner may create one; anyone signed in
+    // may read/claim (accept) it — matching resource.data.email is preferred
+    // but not required since not every auth provider verifies email.
+    match /guardianInvites/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn() && isFamilyOwner(request.resource.data.familyId);
+      allow update: if signedIn();
+    }
+
+    match /pairingCodes/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
+    }
+
+    match /keywordLists/{id} {
+      allow read: if signedIn();
+      allow write: if false; // seed via Admin SDK / console
+    }
+  }
+}
