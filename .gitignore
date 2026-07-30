@@ -20,4 +20,5 @@ parent-web/.env
 parent-web/dist/
 .firebase/
 r2-proxy/.wrangler/
+r2-proxy/dist-worker/
 *.log
