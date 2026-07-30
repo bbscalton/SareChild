@@ -18,4 +18,6 @@ functions/lib/
 functions/.env
 parent-web/.env
 parent-web/dist/
+.firebase/
+r2-proxy/.wrangler/
 *.log
