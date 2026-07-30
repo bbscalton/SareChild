@@ -15,6 +15,7 @@ import type {
   ScreenShareSchedule,
   SosContact,
   TcdReport,
+  TcdOverview,
   UsageDaily,
   WeeklyDigest,
 } from '../types'
@@ -87,6 +88,7 @@ export function DashboardPage() {
   const [safeLabel, setSafeLabel] = useState('')
   const [safeIdentifier, setSafeIdentifier] = useState('')
   const [tcdReport, setTcdReport] = useState<TcdReport | null>(null)
+  const [tcdOverview, setTcdOverview] = useState<TcdOverview | null>(null)
   const [repairLog, setRepairLog] = useState<string[]>([])
 
   useEffect(() => {
@@ -423,8 +425,12 @@ export function DashboardPage() {
     setBusy(true)
     setError(null)
     try {
-      const report = await repo.runTcdHealthCheck(familyId)
+      const [report, overview] = await Promise.all([
+        repo.runTcdHealthCheck(familyId),
+        repo.loadTcdOverview(familyId),
+      ])
       setTcdReport(report)
+      setTcdOverview(overview)
       setStatusMsg('TCD health check completed.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to run TCD check')
@@ -440,8 +446,12 @@ export function DashboardPage() {
     try {
       const log = await repo.runTcdAutoRepair(familyId)
       setRepairLog(log)
-      const report = await repo.runTcdHealthCheck(familyId)
+      const [report, overview] = await Promise.all([
+        repo.runTcdHealthCheck(familyId),
+        repo.loadTcdOverview(familyId),
+      ])
       setTcdReport(report)
+      setTcdOverview(overview)
       setStatusMsg('Auto-repair completed and health re-checked.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to run auto-repair')
@@ -1342,6 +1352,9 @@ export function DashboardPage() {
                 Runs live checks for Firestore connectivity, child heartbeat freshness, alerts stream
                 health, and Cloudflare R2 proxy reachability.
               </p>
+              <p className="muted small">
+                Dedicated monitor app link: <a href="/SareChild/tcd.html" target="_blank" rel="noreferrer">open standalone TCD</a>
+              </p>
               <div className="btn-row">
                 <button className="btn primary" type="button" disabled={busy} onClick={() => void runTcdCheck()}>
                   Run health check
@@ -1363,8 +1376,33 @@ export function DashboardPage() {
                     <li key={check.id}>
                       <span className={`pill tcd-${check.status}`}>{check.status.toUpperCase()}</span>{' '}
                       <strong>{check.label}:</strong> {check.message}
+                      {check.latencyMs != null ? ` (${check.latencyMs} ms)` : ''}
                     </li>
                   ))}
+                </ul>
+              </div>
+            )}
+
+            {tcdOverview && (
+              <div className="card">
+                <div className="card-head">
+                  <h3>Fleet and application health</h3>
+                  <span className="muted small">{new Date(tcdOverview.generatedAtMs).toLocaleString()}</span>
+                </div>
+                <ul className="meta">
+                  <li>Registered devices: {tcdOverview.registeredDevices}</li>
+                  <li>Online devices: {tcdOverview.onlineDevices}</li>
+                  <li>Offline devices: {tcdOverview.offlineDevices}</li>
+                  <li>Guardians registered: {tcdOverview.guardians}</li>
+                  <li>Alerts in last 24h: {tcdOverview.alertsLast24h}</li>
+                  <li>Critical alerts in last 24h: {tcdOverview.criticalAlertsLast24h}</li>
+                  <li>Pending commands: {tcdOverview.pendingCommands}</li>
+                  <li>
+                    Latest heartbeat:{' '}
+                    {tcdOverview.latestHeartbeatMs > 0
+                      ? new Date(tcdOverview.latestHeartbeatMs).toLocaleString()
+                      : 'No heartbeat recorded'}
+                  </li>
                 </ul>
               </div>
             )}

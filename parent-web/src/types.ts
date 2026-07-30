@@ -211,11 +211,24 @@ export type TcdCheck = {
   label: string
   status: TcdCheckStatus
   message: string
+  latencyMs?: number | null
 }
 
 export type TcdReport = {
   generatedAtMs: number
   checks: TcdCheck[]
+}
+
+export type TcdOverview = {
+  generatedAtMs: number
+  registeredDevices: number
+  onlineDevices: number
+  offlineDevices: number
+  guardians: number
+  alertsLast24h: number
+  criticalAlertsLast24h: number
+  pendingCommands: number
+  latestHeartbeatMs: number
 }
 
 export function parseLocation(raw: unknown): LatLngPoint | null {

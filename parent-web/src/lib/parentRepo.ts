@@ -34,6 +34,7 @@ import type {
   SafetyCommand,
   SosContact,
   TcdCheck,
+  TcdOverview,
   TcdReport,
   UsageDaily,
   WeeklyDigest,
@@ -357,7 +358,11 @@ export async function ensureKeywordListSeeded(): Promise<void> {
   const ref = doc(db, COL.keywordLists, 'default')
   const snap = await getDoc(ref)
   if (snap.exists()) return
-  await setDoc(ref, { categories: DEFAULT_KEYWORDS })
+  try {
+    await setDoc(ref, { categories: DEFAULT_KEYWORDS })
+  } catch {
+    // Parent web is read-focused; if rules block seeding, backend/manual seed is acceptable.
+  }
 }
 
 // ---------- Usage & app limits ----------
@@ -715,12 +720,15 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
   const now = Date.now()
 
   try {
+    const started = performance.now()
     const familySnap = await getDoc(doc(db, COL.families, familyId))
+    const latencyMs = Math.round(performance.now() - started)
     checks.push({
       id: 'firestore-family',
       label: 'Firestore family document',
       status: familySnap.exists() ? 'ok' : 'fail',
       message: familySnap.exists() ? 'Family doc is reachable.' : 'Family doc is missing.',
+      latencyMs,
     })
   } catch (e) {
     checks.push({
@@ -732,7 +740,9 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
   }
 
   try {
+    const started = performance.now()
     const devicesSnap = await getDocs(collection(db, COL.families, familyId, COL.devices))
+    const latencyMs = Math.round(performance.now() - started)
     const staleCount = devicesSnap.docs.filter((d) => now - Number(d.get('lastHeartbeatMs') ?? 0) > WENT_DARK_AFTER_MS).length
     checks.push({
       id: 'child-heartbeats',
@@ -742,6 +752,7 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
         staleCount === 0
           ? `${devicesSnap.size} child device(s) reporting recently.`
           : `${staleCount} device(s) went dark in the last ${Math.round(WENT_DARK_AFTER_MS / 60000)} min.`,
+      latencyMs,
     })
   } catch (e) {
     checks.push({
@@ -753,12 +764,15 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
   }
 
   try {
+    const started = performance.now()
     await getDocs(query(collection(db, COL.families, familyId, COL.alerts), orderBy('createdAtMs', 'desc'), limit(1)))
+    const latencyMs = Math.round(performance.now() - started)
     checks.push({
       id: 'alerts-read',
       label: 'Alerts stream',
       status: 'ok',
       message: 'Alerts collection is readable.',
+      latencyMs,
     })
   } catch (e) {
     checks.push({
@@ -779,13 +793,16 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
     })
   } else {
     try {
+      const started = performance.now()
       const response = await fetch(`${mediaProbeUrl.replace(/\/$/, '')}/health`, { method: 'GET' })
+      const latencyMs = Math.round(performance.now() - started)
       const ok = response.ok
       checks.push({
         id: 'r2-proxy',
         label: 'Cloudflare R2 proxy',
         status: ok ? 'ok' : 'fail',
         message: ok ? 'R2 worker health endpoint is reachable.' : `R2 worker returned HTTP ${response.status}.`,
+        latencyMs,
       })
     } catch (e) {
       checks.push({
@@ -797,7 +814,82 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
     }
   }
 
+  const functionsHealthUrl = (import.meta.env.VITE_FUNCTIONS_HEALTH_URL as string | undefined)?.trim()
+  if (!functionsHealthUrl) {
+    checks.push({
+      id: 'functions-health',
+      label: 'Firebase Functions health',
+      status: 'warn',
+      message: 'Set VITE_FUNCTIONS_HEALTH_URL to enable backend health checks.',
+    })
+  } else {
+    try {
+      const started = performance.now()
+      const response = await fetch(functionsHealthUrl, { method: 'GET' })
+      const latencyMs = Math.round(performance.now() - started)
+      checks.push({
+        id: 'functions-health',
+        label: 'Firebase Functions health',
+        status: response.ok ? 'ok' : 'fail',
+        message: response.ok ? 'Functions health endpoint is reachable.' : `Functions returned HTTP ${response.status}.`,
+        latencyMs,
+      })
+    } catch (e) {
+      checks.push({
+        id: 'functions-health',
+        label: 'Firebase Functions health',
+        status: 'fail',
+        message: e instanceof Error ? e.message : 'Failed to reach Functions health endpoint.',
+      })
+    }
+  }
+
   return { generatedAtMs: now, checks }
+}
+
+export async function loadTcdOverview(familyId: string): Promise<TcdOverview> {
+  const now = Date.now()
+  const cutoff24h = now - 24 * 60 * 60 * 1000
+
+  const [devicesSnap, guardiansSnap, commandsSnap, alertsSnap] = await Promise.all([
+    getDocs(collection(db, COL.families, familyId, COL.devices)),
+    getDocs(collection(db, COL.families, familyId, COL.guardians)),
+    getDocs(query(collection(db, COL.families, familyId, COL.commands), limit(100))),
+    getDocs(query(collection(db, COL.families, familyId, COL.alerts), orderBy('createdAtMs', 'desc'), limit(300))),
+  ])
+
+  let onlineDevices = 0
+  let latestHeartbeatMs = 0
+  devicesSnap.docs.forEach((d) => {
+    const hb = Number(d.get('lastHeartbeatMs') ?? 0)
+    if (hb > latestHeartbeatMs) latestHeartbeatMs = hb
+    if (hb > 0 && now - hb < WENT_DARK_AFTER_MS) onlineDevices += 1
+  })
+  const registeredDevices = devicesSnap.size
+  const offlineDevices = Math.max(0, registeredDevices - onlineDevices)
+  const pendingCommands = commandsSnap.docs.filter((d) => String(d.get('status') ?? '') === 'PENDING').length
+
+  let alertsLast24h = 0
+  let criticalAlertsLast24h = 0
+  alertsSnap.docs.forEach((d) => {
+    const created = Number(d.get('createdAtMs') ?? 0)
+    if (created >= cutoff24h) {
+      alertsLast24h += 1
+      if (String(d.get('severity') ?? '').toUpperCase() === 'CRITICAL') criticalAlertsLast24h += 1
+    }
+  })
+
+  return {
+    generatedAtMs: now,
+    registeredDevices,
+    onlineDevices,
+    offlineDevices,
+    guardians: guardiansSnap.size,
+    alertsLast24h,
+    criticalAlertsLast24h,
+    pendingCommands,
+    latestHeartbeatMs,
+  }
 }
 
 export async function runTcdAutoRepair(familyId: string): Promise<string[]> {

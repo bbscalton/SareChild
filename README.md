@@ -110,6 +110,7 @@ Seed `keywordLists/default` from [`keywordLists.default.json`](keywordLists.defa
 - Parent web now includes a `TCD Ops` tab with one-click:
   - live health checks (Firestore, child heartbeat freshness, alerts stream, Cloudflare R2 proxy),
   - auto-repair actions (seed defaults, reconcile stale online flags).
+- Standalone TCD app page: `/SareChild/tcd.html` (separate operator-focused monitor surface).
 - Backend health endpoint: `platformHealth` (Firebase Functions).
 - Scheduled self-healing job: `autoRepairData` runs every 30 minutes.
 
@@ -129,6 +130,7 @@ Set these GitHub repository secrets before enabling workflows:
 - `VITE_FIREBASE_APP_ID`
 - `VITE_FIREBASE_MEASUREMENT_ID`
 - `VITE_R2_MEDIA_PROXY_BASE_URL`
+- `VITE_FUNCTIONS_HEALTH_URL`
 - `TCD_PARENT_WEB_URL`
 - `TCD_R2_HEALTH_URL`
 - `TCD_FUNCTIONS_HEALTH_URL`
