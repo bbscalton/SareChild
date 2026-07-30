@@ -111,8 +111,8 @@ Seed `keywordLists/default` from [`keywordLists.default.json`](keywordLists.defa
   - live health checks (Firestore, child heartbeat freshness, alerts stream, Cloudflare R2 proxy),
   - auto-repair actions (seed defaults, reconcile stale online flags).
 - Standalone TCD app page: `/SareChild/tcd.html` (separate operator-focused monitor surface).
-- Backend health endpoint: `platformHealth` (Firebase Functions).
-- Scheduled self-healing job: `autoRepairData` runs every 30 minutes.
+- Backend health endpoint: Cloudflare Worker `/platform-health` (Blaze-free replacement for Firebase `platformHealth`).
+- Optional Firebase scheduled jobs (`autoRepairData`, went-dark, digests) still require Blaze if you want server-side cron; TCD auto-repair works from the web console without Blaze.
 
 ### GitHub Pages hosting for TCD
 
@@ -130,12 +130,12 @@ Set these GitHub repository secrets before enabling workflows:
 - `VITE_FIREBASE_APP_ID`
 - `VITE_FIREBASE_MEASUREMENT_ID`
 - `VITE_R2_MEDIA_PROXY_BASE_URL`
-- `VITE_FUNCTIONS_HEALTH_URL`
+- `VITE_PLATFORM_HEALTH_URL` (optional; defaults to R2 proxy `/platform-health`)
 - `TCD_PARENT_WEB_URL`
 - `TCD_R2_HEALTH_URL`
-- `TCD_FUNCTIONS_HEALTH_URL`
+- `TCD_PLATFORM_HEALTH_URL`
 
-`TCD_FUNCTIONS_HEALTH_URL` should point to your deployed function URL for `platformHealth`.
+`TCD_PLATFORM_HEALTH_URL` should point to `https://sarechild-media-proxy.neuereatec.workers.dev/platform-health`.
 
 ## Build & run
 

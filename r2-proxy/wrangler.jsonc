@@ -3,6 +3,10 @@
   "name": "sarechild-media-proxy",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-30",
+  "vars": {
+    "FIREBASE_PROJECT_ID": "safechild-f34ac",
+    "FIREBASE_AUTH_DOMAIN": "safechild-f34ac.firebaseapp.com"
+  },
   "r2_buckets": [
     {
       "binding": "MEDIA_BUCKET",

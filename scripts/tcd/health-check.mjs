@@ -21,7 +21,10 @@ async function checkUrl(name, url) {
 
 await checkUrl("Parent Web", process.env.TCD_PARENT_WEB_URL);
 await checkUrl("Cloudflare R2 Proxy", process.env.TCD_R2_HEALTH_URL);
-await checkUrl("Firebase Functions Health", process.env.TCD_FUNCTIONS_HEALTH_URL);
+await checkUrl(
+  "Platform Health (Cloudflare)",
+  process.env.TCD_PLATFORM_HEALTH_URL || process.env.TCD_FUNCTIONS_HEALTH_URL,
+);
 
 const failures = checks.filter((c) => !c.ok);
 console.log(JSON.stringify({ generatedAt: new Date().toISOString(), checks }, null, 2));

@@ -820,43 +820,55 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
     }
   }
 
-  const functionsHealthUrl = (import.meta.env.VITE_FUNCTIONS_HEALTH_URL as string | undefined)?.trim()
-  if (!functionsHealthUrl) {
+  // Prefer Cloudflare Worker platform-health (no Firebase Blaze required).
+  // Fallback order: VITE_PLATFORM_HEALTH_URL → R2 proxy /platform-health → legacy Functions URL.
+  const r2Base = (import.meta.env.VITE_R2_MEDIA_PROXY_BASE_URL as string | undefined)?.trim()
+  const platformHealthUrl =
+    (import.meta.env.VITE_PLATFORM_HEALTH_URL as string | undefined)?.trim() ||
+    (r2Base ? `${r2Base.replace(/\/$/, '')}/platform-health` : '') ||
+    (import.meta.env.VITE_FUNCTIONS_HEALTH_URL as string | undefined)?.trim() ||
+    ''
+
+  if (!platformHealthUrl) {
     checks.push({
-      id: 'functions-health',
-      label: 'Firebase Functions health',
+      id: 'platform-health',
+      label: 'Platform backend health (Cloudflare)',
       status: 'warn',
-      message: 'Set VITE_FUNCTIONS_HEALTH_URL to enable backend health checks.',
+      message: 'Set VITE_R2_MEDIA_PROXY_BASE_URL or VITE_PLATFORM_HEALTH_URL for backend health checks.',
     })
   } else {
     try {
       const started = performance.now()
-      const response = await fetch(functionsHealthUrl, { method: 'GET' })
+      const response = await fetch(platformHealthUrl, { method: 'GET' })
       const latencyMs = Math.round(performance.now() - started)
-      const status = response.ok ? 'ok' : response.status === 404 ? 'warn' : 'fail'
-      const message = response.ok
-        ? 'Functions health endpoint is reachable.'
-        : response.status === 404
-          ? 'platformHealth is not deployed yet (Firebase Blaze plan required to deploy Functions).'
-          : `Functions returned HTTP ${response.status}.`
+      let detail = ''
+      try {
+        const body = (await response.json()) as {
+          checks?: { firebase?: { status?: string; message?: string }; r2?: { status?: string } }
+        }
+        const firebaseMsg = body.checks?.firebase?.message
+        const r2Status = body.checks?.r2?.status
+        if (firebaseMsg || r2Status) {
+          detail = ` R2=${r2Status || 'n/a'}; Firebase probe=${firebaseMsg || 'n/a'}`
+        }
+      } catch {
+        // non-JSON response is fine
+      }
       checks.push({
-        id: 'functions-health',
-        label: 'Firebase Functions health',
-        status,
-        message,
+        id: 'platform-health',
+        label: 'Platform backend health (Cloudflare)',
+        status: response.ok ? 'ok' : 'fail',
+        message: response.ok
+          ? `Cloudflare platform-health OK.${detail}`
+          : `Platform health returned HTTP ${response.status}.${detail}`,
         latencyMs,
       })
     } catch (e) {
       checks.push({
-        id: 'functions-health',
-        label: 'Firebase Functions health',
-        status: 'warn',
-        message:
-          e instanceof Error && e.message.includes('Failed to fetch')
-            ? 'Functions health URL unreachable (not deployed or blocked by browser/CORS). Enable Firebase Blaze and deploy platformHealth.'
-            : e instanceof Error
-              ? e.message
-              : 'Failed to reach Functions health endpoint.',
+        id: 'platform-health',
+        label: 'Platform backend health (Cloudflare)',
+        status: 'fail',
+        message: e instanceof Error ? e.message : 'Failed to reach Cloudflare platform-health.',
       })
     }
   }
