@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../AuthContext'
 import * as repo from '../lib/parentRepo'
+import { WENT_DARK_AFTER_MS } from '../firebase'
 import { LoginPage } from './LoginPage'
-import type { TcdOverview, TcdReport } from '../types'
+import type { DeviceStatus, FamilyAlert, GuardianInfo, SafetyCommand, TcdOverview, TcdReport } from '../types'
+
+function isDeviceOnline(device: DeviceStatus, nowMs: number): boolean {
+  return device.lastHeartbeatMs > 0 && nowMs - device.lastHeartbeatMs < WENT_DARK_AFTER_MS
+}
 
 export function TcdStandalonePage() {
   const { user, loading, familyId, refreshFamilyId, signOut } = useAuth()
@@ -12,6 +17,50 @@ export function TcdStandalonePage() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
   const [repairLog, setRepairLog] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+
+  // Live Firestore listeners: fleet online/offline and alerts update instantly,
+  // independent of the periodic edge/platform health poll below.
+  const [devices, setDevices] = useState<DeviceStatus[]>([])
+  const [alerts, setAlerts] = useState<FamilyAlert[]>([])
+  const [guardians, setGuardians] = useState<GuardianInfo[]>([])
+  const [commands, setCommands] = useState<SafetyCommand[]>([])
+  const [nowTick, setNowTick] = useState(() => Date.now())
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 15_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    if (!familyId) return
+    const unsubs = [
+      repo.observeDevices(familyId, setDevices),
+      repo.observeAlerts(familyId, setAlerts),
+      repo.observeGuardians(familyId, setGuardians),
+      repo.observeCommands(familyId, setCommands),
+    ]
+    return () => unsubs.forEach((u) => u())
+  }, [familyId])
+
+  const liveFleet = useMemo(() => {
+    const cutoff24h = nowTick - 24 * 60 * 60 * 1000
+    const onlineDevices = devices.filter((d) => isDeviceOnline(d, nowTick)).length
+    const alertsLast24h = alerts.filter((a) => a.createdAtMs >= cutoff24h).length
+    const criticalAlertsLast24h = alerts.filter(
+      (a) => a.createdAtMs >= cutoff24h && a.severity.toUpperCase() === 'CRITICAL',
+    ).length
+    const pendingCommands = commands.filter((c) => c.status === 'PENDING').length
+    return {
+      registeredDevices: devices.length,
+      onlineDevices,
+      offlineDevices: Math.max(0, devices.length - onlineDevices),
+      guardians: guardians.length,
+      alertsLast24h,
+      criticalAlertsLast24h,
+      pendingCommands,
+      generatedAtMs: nowTick,
+    }
+  }, [devices, alerts, commands, guardians, nowTick])
 
   const run = async () => {
     if (!familyId) return
@@ -107,6 +156,25 @@ export function TcdStandalonePage() {
                 Open parent dashboard
               </a>
             </div>
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <h3>Live fleet status (real-time)</h3>
+              <span className="muted small">{new Date(liveFleet.generatedAtMs).toLocaleTimeString()}</span>
+            </div>
+            <p className="muted small">
+              Pushed straight from Firestore listeners — no click or reload needed.
+            </p>
+            <ul className="meta">
+              <li>Registered devices: {liveFleet.registeredDevices}</li>
+              <li>Online devices: {liveFleet.onlineDevices}</li>
+              <li>Offline devices: {liveFleet.offlineDevices}</li>
+              <li>Guardians registered: {liveFleet.guardians}</li>
+              <li>Alerts in last 24h: {liveFleet.alertsLast24h}</li>
+              <li>Critical alerts in last 24h: {liveFleet.criticalAlertsLast24h}</li>
+              <li>Pending commands: {liveFleet.pendingCommands}</li>
+            </ul>
           </div>
 
           {overview && (overview.offlineDevices > 0 || overview.guardians === 0) && (

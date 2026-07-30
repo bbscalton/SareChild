@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../AuthContext'
 import * as repo from '../lib/parentRepo'
+import { WENT_DARK_AFTER_MS } from '../firebase'
 import type {
   AppBlockSchedule,
   AppLimit,
@@ -50,6 +51,14 @@ export function DashboardPage() {
   })
   const [sosContacts, setSosContacts] = useState<SosContact[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  // Ticks every 15s so "went dark" transitions show up live even when no new
+  // Firestore snapshot arrives (heartbeats stop, so there's nothing to push).
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 15_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const [childName, setChildName] = useState('')
   const [pairingCode, setPairingCode] = useState<string | null>(null)
@@ -122,6 +131,29 @@ export function DashboardPage() {
   }, [devices, limitDeviceId, scheduleDeviceId])
 
   const unread = useMemo(() => alerts.filter((a) => !a.read).length, [alerts])
+
+  // Live fleet snapshot derived from the same Firestore listeners already
+  // driving the Devices/Alerts tabs, so TCD reflects changes instantly
+  // without waiting on the periodic edge/health refresh.
+  const liveFleet = useMemo(() => {
+    const cutoff24h = nowTick - 24 * 60 * 60 * 1000
+    const onlineDevices = devices.filter((d) => isDeviceOnline(d, nowTick)).length
+    const alertsLast24h = alerts.filter((a) => a.createdAtMs >= cutoff24h).length
+    const criticalAlertsLast24h = alerts.filter(
+      (a) => a.createdAtMs >= cutoff24h && a.severity.toUpperCase() === 'CRITICAL',
+    ).length
+    const pendingCommands = commands.filter((c) => c.status === 'PENDING').length
+    return {
+      registeredDevices: devices.length,
+      onlineDevices,
+      offlineDevices: Math.max(0, devices.length - onlineDevices),
+      guardians: guardians.length,
+      alertsLast24h,
+      criticalAlertsLast24h,
+      pendingCommands,
+      generatedAtMs: nowTick,
+    }
+  }, [devices, alerts, commands, guardians, nowTick])
 
   const galleryItems = useMemo(() => {
     const fromAlerts = alerts
@@ -514,6 +546,7 @@ export function DashboardPage() {
                 <DeviceCard
                   key={d.id}
                   device={d}
+                  online={isDeviceOnline(d, nowTick)}
                   trail={locationTrail.filter((s) => s.deviceId === d.id).slice(0, 5)}
                 />
               ))
@@ -652,8 +685,8 @@ export function DashboardPage() {
                 <article key={d.id} className="card">
                   <div className="card-head">
                     <h3>{d.childName}</h3>
-                    <span className={`pill ${d.online ? 'online' : 'offline'}`}>
-                      {d.online ? 'Online' : 'Offline'}
+                    <span className={`pill ${isDeviceOnline(d, nowTick) ? 'online' : 'offline'}`}>
+                      {isDeviceOnline(d, nowTick) ? 'Online' : 'Offline'}
                     </span>
                   </div>
                   <ul className="meta">
@@ -1365,6 +1398,25 @@ export function DashboardPage() {
               </div>
             </div>
 
+            <div className="card">
+              <div className="card-head">
+                <h3>Live fleet status (real-time)</h3>
+                <span className="muted small">{new Date(liveFleet.generatedAtMs).toLocaleTimeString()}</span>
+              </div>
+              <p className="muted small">
+                Pushed straight from Firestore listeners — no click or reload needed.
+              </p>
+              <ul className="meta">
+                <li>Registered devices: {liveFleet.registeredDevices}</li>
+                <li>Online devices: {liveFleet.onlineDevices}</li>
+                <li>Offline devices: {liveFleet.offlineDevices}</li>
+                <li>Guardians registered: {liveFleet.guardians}</li>
+                <li>Alerts in last 24h: {liveFleet.alertsLast24h}</li>
+                <li>Critical alerts in last 24h: {liveFleet.criticalAlertsLast24h}</li>
+                <li>Pending commands: {liveFleet.pendingCommands}</li>
+              </ul>
+            </div>
+
             {tcdReport && (
               <div className="card">
                 <div className="card-head">
@@ -1485,17 +1537,48 @@ function AlertMedia({ url }: { url: string }) {
   )
 }
 
-function DeviceCard({ device, trail }: { device: DeviceStatus; trail: LocationTrailSample[] }) {
+function isDeviceOnline(device: DeviceStatus, nowMs: number): boolean {
+  return device.lastHeartbeatMs > 0 && nowMs - device.lastHeartbeatMs < WENT_DARK_AFTER_MS
+}
+
+const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined)?.trim()
+
+function staticMapThumbUrl(lat: number, lng: number): string | null {
+  if (!GOOGLE_MAPS_BROWSER_KEY) return null
+  const params = new URLSearchParams({
+    center: `${lat},${lng}`,
+    zoom: '15',
+    size: '360x180',
+    scale: '2',
+    maptype: 'roadmap',
+    markers: `color:red|${lat},${lng}`,
+    key: GOOGLE_MAPS_BROWSER_KEY,
+  })
+  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`
+}
+
+function DeviceCard({
+  device,
+  online,
+  trail,
+}: {
+  device: DeviceStatus
+  online: boolean
+  trail: LocationTrailSample[]
+}) {
   const mapsUrl = device.lastLocation
     ? `https://www.google.com/maps?q=${device.lastLocation.lat},${device.lastLocation.lng}`
+    : null
+  const thumbUrl = device.lastLocation
+    ? staticMapThumbUrl(device.lastLocation.lat, device.lastLocation.lng)
     : null
 
   return (
     <article className="card">
       <div className="card-head">
         <h3>{device.childName}</h3>
-        <span className={`pill ${device.online ? 'online' : 'offline'}`}>
-          {device.online ? 'Online' : 'Offline / went dark'}
+        <span className={`pill ${online ? 'online' : 'offline'}`}>
+          {online ? 'Online' : 'Offline / went dark'}
         </span>
       </div>
       <ul className="meta">
@@ -1523,6 +1606,11 @@ function DeviceCard({ device, trail }: { device: DeviceStatus; trail: LocationTr
           </li>
         )}
       </ul>
+      {thumbUrl && (
+        <a href={mapsUrl ?? undefined} target="_blank" rel="noreferrer" className="frame-preview">
+          <img src={thumbUrl} alt={`Map thumbnail for ${device.childName}`} loading="lazy" />
+        </a>
+      )}
       {device.batteryHistory.length > 0 && (
         <details className="battery-history">
           <summary className="muted small">Battery history ({device.batteryHistory.length})</summary>

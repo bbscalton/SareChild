@@ -17,6 +17,7 @@ type AuthContextValue = {
   refreshFamilyId: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string) => Promise<void>
+  signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -65,6 +66,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       signUp: async (email, password) => {
         await repo.signUp(email, password)
+      },
+      signInWithGoogle: async () => {
+        await repo.signInWithGoogle()
       },
       signOut: async () => {
         await repo.signOut()

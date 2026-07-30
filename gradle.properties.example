@@ -1,0 +1,4 @@
+# Copy values into gradle.properties OR local.properties (preferred for secrets).
+# local.properties is gitignored.
+#
+# MAPS_API_KEY=your_google_maps_android_key

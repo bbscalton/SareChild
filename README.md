@@ -105,6 +105,35 @@ npx wrangler deploy
 
 Seed `keywordLists/default` from [`keywordLists.default.json`](keywordLists.default.json).
 
+## Google Cloud / Maps Platform APIs
+
+Project: `safechild-f34ac` · Billing: linked, Always-Free/free-tier friendly usage only. Manage in [Google Cloud Console → APIs & Services](https://console.cloud.google.com/apis/dashboard?project=safechild-f34ac) and [Credentials](https://console.cloud.google.com/apis/credentials?project=safechild-f34ac).
+
+**Enabled APIs** (all restricted, low-volume, well under free monthly caps for this app's traffic):
+
+| API | Used for | Free tier (as of Mar 2025 pricing) |
+|-----|----------|-------------------------------------|
+| Maps SDK for Android (`maps-android-backend`) | Parent `DeviceMapActivity` map view | Unlimited free |
+| Geocoding API (`geocoding-backend`) | Reverse-geocode last known lat/lng → human address on the parent map | 10,000 req/mo free |
+| Places API — Nearby Search (`places-backend`) | "near <place>" context label on the parent map | 5,000 req/mo free |
+| Roads API (`roads.googleapis.com`) | Snap the raw GPS trail to actual roads for a cleaner, more accurate polyline | 5,000 req/mo free |
+| Static Maps API (`static-maps-backend`) | Small location thumbnail on parent-web device cards | 10,000 req/mo free |
+| Maps JavaScript API / Embed (`maps-backend`, `maps-embed-backend`) | Reserved for future parent-web embedded map | Unlimited free (Embed) |
+
+Not enabled (documented as future candidates only, not wired — avoid unused paid APIs): Vision API / ML Kit (no photo-classification feature yet), Speech-to-Text and Cloud Translation (chat voice notes are stored as raw audio; no transcription/translation pipeline yet), Distance Matrix / Routes (no travel-time or proximity-to-geofence feature yet).
+
+**API keys** (all restricted; never commit key values — they live in `local.properties` / `parent-web/.env`, both gitignored):
+
+| Key | Restriction | apiTargets |
+|-----|-------------|------------|
+| SareChild Parent Maps (Android) | Android app `com.sarechild.parent` + debug SHA-1 | Maps SDK, Geocoding, Places, Roads, Static Maps |
+| SareChild Parent Web Maps (Browser) | HTTP referrer (GitHub Pages + localhost) | Maps JS, Geocoding, Places, Static Maps |
+| Firebase auto Android/Browser keys | Firebase APIs only | unchanged — do not repurpose |
+
+The child app intentionally has **no** Maps API key — it only reports GPS coordinates; it never renders a map or calls Places/Geocoding.
+
+If you rotate the debug keystore or add a release signing key, add its SHA-1 to the Android key's allowed applications in Cloud Console (or via `gcloud services api-keys update`) or Maps/Geocoding/Places/Roads calls from that build will start failing with `REQUEST_DENIED`.
+
 ## Cloudflare edge scale layer (D1 + KV + R2)
 
 SareChild uses Cloudflare as a global load-balanced edge for speed and redundancy:
@@ -153,6 +182,7 @@ Set these GitHub repository secrets before enabling workflows:
 - `VITE_FIREBASE_MEASUREMENT_ID`
 - `VITE_R2_MEDIA_PROXY_BASE_URL`
 - `VITE_PLATFORM_HEALTH_URL` (optional; defaults to R2 proxy `/platform-health`)
+- `VITE_GOOGLE_MAPS_API_KEY` (optional; browser-restricted key, enables the Static Maps thumbnail on device cards — see "Google Cloud / Maps Platform APIs" below)
 - `TCD_PARENT_WEB_URL`
 - `TCD_R2_HEALTH_URL`
 - `TCD_PLATFORM_HEALTH_URL`

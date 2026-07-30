@@ -1,6 +1,8 @@
 import {
   createUserWithEmailAndPassword,
+  GoogleAuthProvider,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut as firebaseSignOut,
 } from 'firebase/auth'
 import {
@@ -65,6 +67,36 @@ export async function signUp(email: string, password: string): Promise<string> {
 
 export async function signIn(email: string, password: string): Promise<void> {
   await signInWithEmailAndPassword(auth, email, password)
+}
+
+/**
+ * Signs in (or signs up, on first use) with Google via a popup. New Google users get the same
+ * family/guardian bootstrap as email signups; returning users simply resume their existing family.
+ */
+export async function signInWithGoogle(): Promise<void> {
+  const provider = new GoogleAuthProvider()
+  const result = await signInWithPopup(auth, provider)
+  const uid = result.user.uid
+  const email = result.user.email ?? ''
+  const profileSnap = await getDoc(doc(db, COL.parentProfiles, uid))
+  if (!profileSnap.exists()) {
+    const familyRef = doc(collection(db, COL.families))
+    await setDoc(familyRef, {
+      parentUid: uid,
+      createdAtMs: Date.now(),
+      parentEmail: email,
+    })
+    await setDoc(doc(db, COL.parentProfiles, uid), {
+      familyId: familyRef.id,
+      email,
+      createdAtMs: Date.now(),
+    })
+    await setDoc(doc(db, COL.families, familyRef.id, COL.guardians, uid), {
+      email,
+      role: 'OWNER' satisfies GuardianRole,
+      joinedAtMs: Date.now(),
+    })
+  }
 }
 
 export async function signOut(): Promise<void> {

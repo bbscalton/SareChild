@@ -1,6 +1,7 @@
 package com.sarechild.parent.data
 
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -98,6 +99,44 @@ class ParentRepository(
 
     suspend fun signIn(email: String, password: String): Result<Unit> = runCatching {
         auth.signInWithEmailAndPassword(email, password).await()
+        Unit
+    }
+
+    /**
+     * Signs in (or signs up, on first use) with a Google ID token obtained from GoogleSignInClient.
+     * New Google users get the same family/guardian bootstrap as email signups; returning users
+     * simply resume their existing family.
+     */
+    suspend fun signInWithGoogleIdToken(idToken: String): Result<Unit> = runCatching {
+        val credential = GoogleAuthProvider.getCredential(idToken, null)
+        val authResult = auth.signInWithCredential(credential).await()
+        val uid = authResult.user?.uid ?: error("No user id")
+        val email = authResult.user?.email.orEmpty()
+        val hasProfile = db.collection("parentProfiles").document(uid).get().await().exists()
+        if (!hasProfile) {
+            val familyRef = db.collection(SareChildConstants.COL_FAMILIES).document()
+            familyRef.set(
+                mapOf(
+                    "parentUid" to uid,
+                    "createdAtMs" to System.currentTimeMillis(),
+                    "parentEmail" to email
+                )
+            ).await()
+            db.collection("parentProfiles").document(uid).set(
+                mapOf(
+                    "familyId" to familyRef.id,
+                    "email" to email,
+                    "createdAtMs" to System.currentTimeMillis()
+                )
+            ).await()
+            familyRef.collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
+                mapOf(
+                    "email" to email,
+                    "role" to GuardianRole.OWNER.name,
+                    "joinedAtMs" to System.currentTimeMillis()
+                )
+            ).await()
+        }
         Unit
     }
 

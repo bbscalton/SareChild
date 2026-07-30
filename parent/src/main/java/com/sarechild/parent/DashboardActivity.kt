@@ -43,6 +43,7 @@ import com.sarechild.shared.SareChildConstants
 import com.sarechild.shared.SosContact
 import com.sarechild.shared.WeeklyDigest
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -252,8 +253,22 @@ class DashboardActivity : AppCompatActivity() {
                     if (binding.tabs.selectedTabPosition == 2) showTab(2)
                 }
             }
+            // Device "went dark" is a function of wall-clock time, not a new write, so
+            // heartbeats stopping wouldn't otherwise refresh the Online/Offline pill.
+            launch {
+                while (true) {
+                    delay(30_000)
+                    if (binding.tabs.selectedTabPosition in listOf(0, 2)) {
+                        showTab(binding.tabs.selectedTabPosition)
+                    }
+                }
+            }
         }
     }
+
+    private fun isDeviceOnline(device: DeviceStatus): Boolean =
+        device.lastHeartbeatMs > 0 &&
+            System.currentTimeMillis() - device.lastHeartbeatMs < SareChildConstants.WENT_DARK_AFTER_MS
 
     private fun showTab(index: Int) {
         val container = binding.content
@@ -307,7 +322,7 @@ class DashboardActivity : AppCompatActivity() {
                 CardRow(
                     title = d.childName,
                     subtitle = buildString {
-                        append(if (d.online) "Online" else "Offline / went dark")
+                        append(if (isDeviceOnline(d)) "Online" else "Offline / went dark")
                         append(" · Battery ")
                         append(if (d.batteryPercent >= 0) "${d.batteryPercent}%" else "—")
                         append(if (d.charging) " (charging)" else "")
@@ -361,8 +376,21 @@ class DashboardActivity : AppCompatActivity() {
                     action = d.lastLocation?.let { "Open map" },
                     onAction = d.lastLocation?.let { loc ->
                         {
-                            val uri = Uri.parse("geo:${loc.lat},${loc.lng}?q=${loc.lat},${loc.lng}")
-                            startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            val trail = locationTrail.filter { it.deviceId == d.id }.takeLast(20)
+                            val intent = Intent(this, DeviceMapActivity::class.java).apply {
+                                putExtra(DeviceMapActivity.EXTRA_CHILD_NAME, d.childName)
+                                putExtra(DeviceMapActivity.EXTRA_LAT, loc.lat)
+                                putExtra(DeviceMapActivity.EXTRA_LNG, loc.lng)
+                                putExtra(
+                                    DeviceMapActivity.EXTRA_TRAIL_LATS,
+                                    trail.mapNotNull { it.location?.lat }.toDoubleArray(),
+                                )
+                                putExtra(
+                                    DeviceMapActivity.EXTRA_TRAIL_LNGS,
+                                    trail.mapNotNull { it.location?.lng }.toDoubleArray(),
+                                )
+                            }
+                            startActivity(intent)
                         }
                     }
                 )
@@ -504,7 +532,7 @@ class DashboardActivity : AppCompatActivity() {
             root.addView(
                 TextView(this).apply {
                     text = buildString {
-                        append(if (device.online) "Online" else "Offline")
+                        append(if (isDeviceOnline(device)) "Online" else "Offline")
                         append(if (device.charging) " · Charging" else "")
                         append(" · Session: ${device.activeSession ?: "none"}")
                         append("\nConsent screen=${device.screenShareConsent} camera=${device.cameraCheckConsent} ")

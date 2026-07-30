@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react'
+import { FirebaseError } from 'firebase/app'
 import { useAuth } from '../AuthContext'
 
 export function LoginPage() {
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, signInWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -16,6 +17,22 @@ export function LoginPage() {
       else await signUp(email.trim(), password)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Authentication failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitGoogle = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await signInWithGoogle()
+    } catch (e) {
+      if (e instanceof FirebaseError && e.code === 'auth/account-exists-with-different-credential') {
+        setError('An account already exists with this email using a password. Sign in with your email and password instead.')
+      } else {
+        setError(e instanceof Error ? e.message : 'Google sign-in failed')
+      }
     } finally {
       setBusy(false)
     }
@@ -71,6 +88,19 @@ export function LoginPage() {
           onClick={() => void submit('up')}
         >
           Create parent account
+        </button>
+
+        <p className="muted" style={{ textAlign: 'center', margin: '12px 0 0' }}>
+          or
+        </p>
+
+        <button
+          className="btn ghost"
+          type="button"
+          disabled={busy}
+          onClick={() => void submitGoogle()}
+        >
+          Continue with Google
         </button>
       </form>
     </div>

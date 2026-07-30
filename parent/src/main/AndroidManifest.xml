@@ -35,6 +35,9 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".DeviceMapActivity"
+            android:exported="false" />
+        <activity
             android:name=".FamilyChatActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />

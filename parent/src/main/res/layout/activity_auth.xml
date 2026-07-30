@@ -73,6 +73,20 @@
             android:layout_marginTop="8dp"
             android:text="Create parent account" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="or" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/googleSignIn"
+            style="@style/Widget.Material3.Button.OutlinedButton.Icon"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Continue with Google" />
+
         <ProgressBar
             android:id="@+id/loading"
             android:layout_width="wrap_content"
