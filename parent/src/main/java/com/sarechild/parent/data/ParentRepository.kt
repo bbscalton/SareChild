@@ -62,6 +62,28 @@ data class LocationTrailSample(
     val recordedAtMs: Long = 0L
 )
 
+/** parentProfiles/{uid} trial fields — mirrors parent-web's TrialInfo type. */
+data class TrialInfo(
+    val plan: String = "trial",
+    val status: String = "active",
+    val trialStartedAt: Long = 0L,
+    val trialEndsAt: Long = 0L,
+    val lastLoginAt: Long? = null,
+    val lastParentCheckInAt: Long? = null
+) {
+    val isBlocked: Boolean
+        get() = status == "purged" || (plan == "trial" && trialEndsAt > 0 && System.currentTimeMillis() > trialEndsAt)
+}
+
+private fun newTrialFields(now: Long): Map<String, Any> = mapOf(
+    "plan" to "trial",
+    "status" to "active",
+    "trialStartedAt" to now,
+    "trialEndsAt" to now + SareChildConstants.TRIAL_DAYS * 24L * 60 * 60 * 1000,
+    "lastLoginAt" to now,
+    "lastParentCheckInAt" to now
+)
+
 class ParentRepository(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -72,11 +94,12 @@ class ParentRepository(
     suspend fun signUp(email: String, password: String): Result<String> = runCatching {
         val result = auth.createUserWithEmailAndPassword(email, password).await()
         val uid = result.user?.uid ?: error("No user id")
+        val now = System.currentTimeMillis()
         val familyRef = db.collection(SareChildConstants.COL_FAMILIES).document()
         familyRef.set(
             mapOf(
                 "parentUid" to uid,
-                "createdAtMs" to System.currentTimeMillis(),
+                "createdAtMs" to now,
                 "parentEmail" to email
             )
         ).await()
@@ -84,14 +107,14 @@ class ParentRepository(
             mapOf(
                 "familyId" to familyRef.id,
                 "email" to email,
-                "createdAtMs" to System.currentTimeMillis()
-            )
+                "createdAtMs" to now
+            ) + newTrialFields(now)
         ).await()
         familyRef.collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
             mapOf(
                 "email" to email,
                 "role" to GuardianRole.OWNER.name,
-                "joinedAtMs" to System.currentTimeMillis()
+                "joinedAtMs" to now
             )
         ).await()
         familyRef.id
@@ -114,11 +137,12 @@ class ParentRepository(
         val email = authResult.user?.email.orEmpty()
         val hasProfile = db.collection("parentProfiles").document(uid).get().await().exists()
         if (!hasProfile) {
+            val now = System.currentTimeMillis()
             val familyRef = db.collection(SareChildConstants.COL_FAMILIES).document()
             familyRef.set(
                 mapOf(
                     "parentUid" to uid,
-                    "createdAtMs" to System.currentTimeMillis(),
+                    "createdAtMs" to now,
                     "parentEmail" to email
                 )
             ).await()
@@ -126,14 +150,14 @@ class ParentRepository(
                 mapOf(
                     "familyId" to familyRef.id,
                     "email" to email,
-                    "createdAtMs" to System.currentTimeMillis()
-                )
+                    "createdAtMs" to now
+                ) + newTrialFields(now)
             ).await()
             familyRef.collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
                 mapOf(
                     "email" to email,
                     "role" to GuardianRole.OWNER.name,
-                    "joinedAtMs" to System.currentTimeMillis()
+                    "joinedAtMs" to now
                 )
             ).await()
         }
@@ -146,6 +170,52 @@ class ParentRepository(
         val uid = currentUserId ?: error("Not signed in")
         val profile = db.collection("parentProfiles").document(uid).get().await()
         return profile.getString("familyId") ?: error("Family not found")
+    }
+
+    /** Reads the current trial/subscription status once (used to gate the dashboard). */
+    suspend fun getTrialInfo(): TrialInfo? {
+        val uid = currentUserId ?: return null
+        val doc = db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).get().await()
+        if (!doc.exists() || doc.getString("plan") == null) return null
+        return TrialInfo(
+            plan = doc.getString("plan") ?: "trial",
+            status = doc.getString("status") ?: "active",
+            trialStartedAt = doc.getLong("trialStartedAt") ?: 0L,
+            trialEndsAt = doc.getLong("trialEndsAt") ?: 0L,
+            lastLoginAt = doc.getLong("lastLoginAt"),
+            lastParentCheckInAt = doc.getLong("lastParentCheckInAt")
+        )
+    }
+
+    private val checkInThrottleMs = 60 * 60 * 1000L
+
+    /** Called once per app open / sign-in. Best-effort; a purged account's write is denied by rules. */
+    suspend fun recordLogin() {
+        val uid = currentUserId ?: return
+        runCatching {
+            db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid)
+                .set(mapOf("lastLoginAt" to System.currentTimeMillis()), SetOptions.merge())
+                .await()
+        }
+    }
+
+    private var lastCheckInWriteMs = 0L
+
+    /**
+     * Called when the parent actively checks on their kids (dashboard load, device tab,
+     * alerts tab). Throttled in-process to once/hour to match the product spec without
+     * spamming Firestore writes.
+     */
+    suspend fun recordParentCheckIn() {
+        val uid = currentUserId ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastCheckInWriteMs < checkInThrottleMs) return
+        lastCheckInWriteMs = now
+        runCatching {
+            db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid)
+                .set(mapOf("lastParentCheckInAt" to now), SetOptions.merge())
+                .await()
+        }
     }
 
     suspend fun createPairingCode(childName: String): String {

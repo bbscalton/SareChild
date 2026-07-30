@@ -8,11 +8,12 @@ Parents approve and pair a child device. The child app stays visible (“Protect
 
 | Module | Application ID | Role |
 |--------|----------------|------|
+| `marketing/` | GitHub Pages / Vite | Public landing site: pitch, how-it-works, APK downloads, trial CTA |
 | `parent/` | `com.sarechild.parent` | Parent/caregiver dashboard (devices, alerts, safety, usage, digests, guardians, geofences, pair) |
 | `parent-web/` | Firebase Hosting / Vite | Same data as Android parent |
 | `child/` | `com.sarechild.child` | Pairing, consent, monitoring FGS, SOS, safety checks, usage, call/SMS summaries |
 | `shared/` | library | Models, keyword matcher, constants |
-| `functions/` | Cloud Functions | FCM fan-out (parent + guardians), went-dark, alert purge, **media purge**, **weekly digest** |
+| `functions/` | Cloud Functions | FCM fan-out (parent + guardians), went-dark, alert purge, **media purge**, **weekly digest**, **trial cleanup** |
 
 ## Features
 
@@ -75,6 +76,34 @@ Parents approve and pair a child device. The child app stays visible (“Protect
 Storage path: `families/{familyId}/devices/{deviceId}/...`  
 Retention: **7 days** (`purgeExpiredMedia`). Alerts: **30 days** (`purgeExpiredAlerts`).
 
+## Public sites
+
+| Site | URL | Hosting | Source |
+|------|-----|---------|--------|
+| Marketing / landing | `https://bbscalton.github.io/SareChild/` | GitHub Pages | `marketing/` |
+| Parent web app (dashboard/login) | `https://safechild-f34ac.web.app/` | Firebase Hosting | `parent-web/` |
+
+The marketing site is the public front door — it explains the product, links to the parent dashboard, and hosts the two APK download buttons. The parent dashboard used to live on GitHub Pages; it now lives on Firebase Hosting so GitHub Pages can serve the marketing site at the repo root without clobbering it. See `.github/workflows/deploy-marketing-pages.yml` and `.github/workflows/deploy-parent-web-firebase.yml`.
+
+## Free trial & auto-cleanup
+
+There is no billing yet — every signup gets a **30-day free trial with full features**, tracked on `parentProfiles/{uid}`:
+
+```
+plan: "trial" | "paid"          // paid is reserved for future billing, unused today
+status: "active" | "at_risk" | "purged"
+trialStartedAt, trialEndsAt     // trialEndsAt = trialStartedAt + 30 days
+lastLoginAt                     // updated (throttled) on parent-web / Android sign-in and app open
+lastParentCheckInAt             // updated (throttled) when a parent views devices/alerts
+```
+
+**Purge rule** (run daily by `functions/src/index.ts` → `purgeInactiveTrials`, and mirrored in `scripts/purge-inactive-trials.mjs` for manual/offline runs):
+1. Trial accounts past `trialEndsAt` are purged.
+2. Trial accounts that go **7+ days with no parent check-in** are marked `at_risk` (client shows a warning banner); if they then go on to hit an inactivity grace window with no login either, they're purged.
+3. Purging deletes the family's subcollections, removes guardian records (or the whole family if the purged user was the owner), deletes the Firebase Auth user, and leaves a `status: "purged"` tombstone on `parentProfiles/{uid}` so `firestore.rules` can permanently deny that UID (`requesterActive()`).
+
+Parent-web and the Android parent app both call `recordLogin()` / `recordParentCheckIn()` (throttled to avoid excess writes) and gate the UI with `TrialInfo` — purged/expired users see a dedicated "trial ended" screen instead of the dashboard. No credit card is collected; this is purely to validate demand before paid plans launch.
+
 ## Prerequisites
 
 - Android Studio (AGP 8.13 / JDK 11+)
@@ -95,6 +124,15 @@ cd parent-web && npm install && npm run build && cd .. && firebase deploy --only
 - Media proxy Worker: `https://sarechild-media-proxy.neuereatec.workers.dev`
 - R2 bucket: `luscsl-uploads`
 - Android uploads now try Cloudflare R2 first, then fall back to Firebase Storage if R2 is unreachable.
+
+**Public APK downloads** are served from the same Worker at `GET /downloads/parent.apk` and `GET /downloads/child.apk`, backed by R2 objects at `downloads/parent.apk` / `downloads/child.apk` in the `luscsl-uploads` bucket. Upload/update a build with:
+
+```bash
+npx wrangler r2 object put luscsl-uploads/downloads/parent.apk --file parent/build/outputs/apk/release/parent-release.apk --remote
+npx wrangler r2 object put luscsl-uploads/downloads/child.apk --file child/build/outputs/apk/release/child-release.apk --remote
+```
+
+The marketing site's download buttons (`marketing/src/config.ts`) point at those two Worker URLs; flip `APKS_ARE_RELEASE_SIGNED` there once you're uploading release-signed (not debug) builds.
 
 Deploy/update the proxy Worker:
 
@@ -168,7 +206,8 @@ Useful endpoints:
 ### GitHub Pages hosting for TCD
 
 This repo includes:
-- `.github/workflows/deploy-parent-web-pages.yml` for Pages deployment
+- `.github/workflows/deploy-marketing-pages.yml` — builds `marketing/` and deploys it to GitHub Pages at the repo root
+- `.github/workflows/deploy-parent-web-firebase.yml` — builds `parent-web/` and deploys it to Firebase Hosting (needs a `FIREBASE_SERVICE_ACCOUNT_SAFECHILD_F34AC` secret; until that's added, deploy manually with `firebase deploy --only hosting`)
 - `.github/workflows/tcd-health-monitor.yml` for 15-minute synthetic checks
 - `scripts/tcd/health-check.mjs` probe script used by Actions
 

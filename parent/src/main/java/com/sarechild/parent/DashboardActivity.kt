@@ -98,6 +98,12 @@ class DashboardActivity : AppCompatActivity() {
         binding.tabs.visibility = View.GONE
 
         lifecycleScope.launch {
+            runCatching { repo.recordLogin() }
+            val trial = runCatching { repo.getTrialInfo() }.getOrNull()
+            if (trial != null && trial.isBlocked) {
+                showTrialBlockedPrompt(trial)
+                return@launch
+            }
             runCatching { repo.ensureKeywordListSeeded() }
             runCatching { repo.getFamilyId() }
                 .onSuccess {
@@ -105,11 +111,50 @@ class DashboardActivity : AppCompatActivity() {
                     binding.tabs.visibility = View.VISIBLE
                     showTab(0)
                     observe(it)
+                    runCatching { repo.recordParentCheckIn() }
                 }
                 .onFailure {
                     showJoinFamilyPrompt(it.message)
                 }
         }
+    }
+
+    /** Full features while status == "active" and now < trialEndsAt (see ParentRepository.TrialInfo). */
+    private fun showTrialBlockedPrompt(trial: com.sarechild.parent.data.TrialInfo) {
+        val container = binding.content
+        container.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(24), dp(16), dp(24))
+        }
+        container.addView(root, matchFrameParams())
+        val title = if (trial.status == "purged") {
+            "This trial account was removed"
+        } else {
+            "Your free trial has ended"
+        }
+        val body = if (trial.status == "purged") {
+            "This account was inactive for too long during its free trial and was automatically removed along with its family data, per our trial cleanup policy."
+        } else {
+            "Your 30-day free trial has finished. Paid plans are coming later — thanks for trying SareChild!"
+        }
+        root.addView(TextView(this).apply {
+            text = title
+            textSize = 20f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = body
+            setPadding(0, dp(8), 0, dp(16))
+        })
+        root.addView(MaterialButton(this).apply {
+            text = "Sign out"
+            setOnClickListener {
+                repo.signOut()
+                startActivity(Intent(this@DashboardActivity, AuthActivity::class.java))
+                finish()
+            }
+        })
     }
 
     private fun showJoinFamilyPrompt(error: String?) {

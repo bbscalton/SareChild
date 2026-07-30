@@ -9,11 +9,13 @@ import {
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { auth } from './firebase'
 import * as repo from './lib/parentRepo'
+import type { TrialInfo } from './types'
 
 type AuthContextValue = {
   user: User | null
   loading: boolean
   familyId: string | null
+  trialInfo: TrialInfo | null
   refreshFamilyId: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string) => Promise<void>
@@ -27,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [familyId, setFamilyId] = useState<string | null>(null)
+  const [trialInfo, setTrialInfo] = useState<TrialInfo | null>(null)
 
   const refreshFamilyId = async () => {
     if (!auth.currentUser) {
@@ -41,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return onAuthStateChanged(auth, async (next) => {
       setUser(next)
       if (next) {
+        void repo.recordLogin(next.uid)
         try {
           await repo.ensureKeywordListSeeded()
           const id = await repo.getFamilyId()
@@ -50,16 +54,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         setFamilyId(null)
+        setTrialInfo(null)
       }
       setLoading(false)
     })
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+    return repo.observeTrialInfo(user.uid, setTrialInfo)
+  }, [user])
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       loading,
       familyId,
+      trialInfo,
       refreshFamilyId,
       signIn: async (email, password) => {
         await repo.signIn(email, password)
@@ -74,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await repo.signOut()
       },
     }),
-    [user, loading, familyId],
+    [user, loading, familyId, trialInfo],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -164,6 +164,22 @@ export type CallSmsPreview = {
   deviceId: string
 }
 
+export type TrialPlan = 'trial' | 'paid'
+export type TrialStatus = 'active' | 'at_risk' | 'purged'
+
+// Mirrors parentProfiles/{uid} trial fields (see functions/src/index.ts
+// purgeInactiveTrials for the server-side rules that consume these). Kept as its own
+// type — separate from any future PaidPlanInfo — so billing fields can be added later
+// without touching every call site that only cares about trial status today.
+export type TrialInfo = {
+  plan: TrialPlan
+  status: TrialStatus
+  trialStartedAt: number
+  trialEndsAt: number
+  lastLoginAt: number | null
+  lastParentCheckInAt: number | null
+}
+
 export type GuardianRole = 'OWNER' | 'CAREGIVER'
 
 export type GuardianInfo = {

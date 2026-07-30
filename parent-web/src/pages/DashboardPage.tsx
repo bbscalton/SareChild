@@ -26,7 +26,7 @@ import type { SafetyCommandType } from '../lib/parentRepo'
 type Tab = 'devices' | 'alerts' | 'safety' | 'usage' | 'digests' | 'guardians' | 'geofences' | 'pair' | 'tcd'
 
 export function DashboardPage() {
-  const { user, familyId, signOut, refreshFamilyId } = useAuth()
+  const { user, familyId, trialInfo, signOut, refreshFamilyId } = useAuth()
   const [tab, setTab] = useState<Tab>('devices')
   const [devices, setDevices] = useState<DeviceStatus[]>([])
   const [alerts, setAlerts] = useState<FamilyAlert[]>([])
@@ -59,6 +59,14 @@ export function DashboardPage() {
     const id = window.setInterval(() => setNowTick(Date.now()), 15_000)
     return () => window.clearInterval(id)
   }, [])
+
+  // "Checking up on kids" = opening the dashboard or viewing devices/alerts — the
+  // trial-cleanup rule cares about this signal, not just login. Throttled to once/hour
+  // inside recordParentCheckIn, so this is safe to call on every relevant render.
+  useEffect(() => {
+    if (!user || (tab !== 'devices' && tab !== 'alerts')) return
+    void repo.recordParentCheckIn(user.uid)
+  }, [user, tab])
 
   const [childName, setChildName] = useState('')
   const [pairingCode, setPairingCode] = useState<string | null>(null)
@@ -505,6 +513,18 @@ export function DashboardPage() {
         </button>
       </header>
 
+      {trialInfo && trialInfo.plan === 'trial' && trialInfo.status === 'active' && (
+        <div className="banner trial-banner">
+          <TrialBannerText trialInfo={trialInfo} />
+        </div>
+      )}
+      {trialInfo && trialInfo.status === 'at_risk' && (
+        <div className="banner error-banner">
+          We haven't seen a check-in from you in a while — sign in and open the dashboard
+          weekly during your trial, or this account may be automatically removed for
+          inactivity.
+        </div>
+      )}
       {error && <div className="banner error-banner">{error}</div>}
       {statusMsg && <div className="banner ok-banner">{statusMsg}</div>}
 
@@ -1484,6 +1504,16 @@ export function DashboardPage() {
         )}
       </main>
     </div>
+  )
+}
+
+function TrialBannerText({ trialInfo }: { trialInfo: import('../types').TrialInfo }) {
+  const daysLeft = Math.max(0, Math.ceil((trialInfo.trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000)))
+  return (
+    <span>
+      Free trial — {daysLeft} day{daysLeft === 1 ? '' : 's'} left with full access. Paid plans are
+      coming later; no card required for now.
+    </span>
   )
 }
 

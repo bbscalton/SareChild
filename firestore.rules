@@ -13,23 +13,37 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/families/$(familyId)).data;
     }
 
+    // Trial/subscription gate: a signed-in user with no parentProfile yet (brand-new
+    // signup, still writing their own bootstrap docs) is treated as active. Once a
+    // parentProfile exists, its `status` must not be "purged" — purged trial accounts
+    // (see purgeInactiveTrials Cloud Function) lose all family read/write access even
+    // though their Auth account and profile tombstone still exist for audit purposes.
+    function requesterActive() {
+      return signedIn()
+        && (!exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
+          || parentProfile().status != 'purged');
+    }
+
     // True for the parent who owns the family profile record (legacy check, kept
     // for backward compatibility with existing profile.familyId linkage).
     function isFamilyParent(familyId) {
-      return signedIn()
+      return requesterActive()
         && exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
         && parentProfile().familyId == familyId;
     }
 
     // True only for the exact uid stored as families/{familyId}.parentUid.
     function isFamilyOwner(familyId) {
-      return signedIn() && familyDoc(familyId).parentUid == request.auth.uid;
+      return requesterActive() && familyDoc(familyId).parentUid == request.auth.uid;
     }
 
     // True for the parent/owner or any invited guardian (caregiver) of the family.
+    // Because every family subcollection rule below is gated on isFamilyGuardian (or
+    // isFamilyParent/isFamilyOwner), routing all three through requesterActive() is a
+    // single choke point that revokes a purged trial account's access everywhere.
     function isFamilyGuardian(familyId) {
       return isFamilyParent(familyId)
-        || (signedIn()
+        || (requesterActive()
           && exists(/databases/$(database)/documents/families/$(familyId)/guardians/$(request.auth.uid)));
     }
 
@@ -41,11 +55,22 @@ service cloud.firestore {
     }
 
     match /parentProfiles/{uid} {
-      allow read, write: if signedIn() && request.auth.uid == uid;
+      // Always readable by the owner so a purged/expired user can see their own status
+      // (e.g. "trial expired" screen) even after losing family access.
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid;
+      // A client may update its own profile (login/check-in timestamps, plan==trial
+      // bootstrap fields, FCM tokens) but can never use a write to un-purge itself or
+      // silently extend its own trial window — only the purge job / an Admin SDK
+      // script may change `status` away from "purged" or move `trialEndsAt`.
+      allow update: if signedIn() && request.auth.uid == uid
+        && (resource.data.status != 'purged' || request.resource.data.status == 'purged')
+        && (!('trialEndsAt' in resource.data)
+          || request.resource.data.trialEndsAt == resource.data.trialEndsAt);
     }
 
     match /families/{familyId} {
-      allow create: if signedIn();
+      allow create: if requesterActive();
       allow read: if isFamilyGuardian(familyId);
 
       match /devices/{deviceId} {
@@ -138,7 +163,7 @@ service cloud.firestore {
       // a CAREGIVER doc).
       match /guardians/{uid} {
         allow read: if isFamilyGuardian(familyId);
-        allow write: if isFamilyOwner(familyId) || (signedIn() && request.auth.uid == uid);
+        allow write: if isFamilyOwner(familyId) || (requesterActive() && request.auth.uid == uid);
       }
     }
 
@@ -148,13 +173,13 @@ service cloud.firestore {
     // but not required since not every auth provider verifies email.
     match /guardianInvites/{code} {
       allow read: if signedIn();
-      allow create: if signedIn() && isFamilyOwner(request.resource.data.familyId);
-      allow update: if signedIn();
+      allow create: if isFamilyOwner(request.resource.data.familyId);
+      allow update: if requesterActive();
     }
 
     match /pairingCodes/{code} {
       allow read: if signedIn();
-      allow create: if signedIn();
+      allow create: if requesterActive();
       allow update: if signedIn();
     }
 

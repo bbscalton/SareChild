@@ -38,29 +38,51 @@ import type {
   TcdCheck,
   TcdOverview,
   TcdReport,
+  TrialInfo,
   UsageDaily,
   WeeklyDigest,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
+export const TRIAL_DAYS = 30
+
+/**
+ * Bootstrap fields for a brand-new parentProfiles/{uid} doc. `plan`/`status` are their
+ * own small object (not spread across many booleans) so a later "paid" plan can reuse
+ * the same shape (e.g. status stays "active", plan flips to "paid", trialEndsAt is
+ * simply ignored) without a data-model migration.
+ */
+function newTrialFields(now: number) {
+  return {
+    plan: 'trial' as const,
+    status: 'active' as const,
+    trialStartedAt: now,
+    trialEndsAt: now + TRIAL_DAYS * 24 * 60 * 60 * 1000,
+    lastLoginAt: now,
+    lastParentCheckInAt: now,
+  }
+}
+
 export async function signUp(email: string, password: string): Promise<string> {
   const result = await createUserWithEmailAndPassword(auth, email, password)
   const uid = result.user.uid
+  const now = Date.now()
   const familyRef = doc(collection(db, COL.families))
   await setDoc(familyRef, {
     parentUid: uid,
-    createdAtMs: Date.now(),
+    createdAtMs: now,
     parentEmail: email,
   })
   await setDoc(doc(db, COL.parentProfiles, uid), {
     familyId: familyRef.id,
     email,
-    createdAtMs: Date.now(),
+    createdAtMs: now,
+    ...newTrialFields(now),
   })
   await setDoc(doc(db, COL.families, familyRef.id, COL.guardians, uid), {
     email,
     role: 'OWNER' satisfies GuardianRole,
-    joinedAtMs: Date.now(),
+    joinedAtMs: now,
   })
   return familyRef.id
 }
@@ -80,21 +102,23 @@ export async function signInWithGoogle(): Promise<void> {
   const email = result.user.email ?? ''
   const profileSnap = await getDoc(doc(db, COL.parentProfiles, uid))
   if (!profileSnap.exists()) {
+    const now = Date.now()
     const familyRef = doc(collection(db, COL.families))
     await setDoc(familyRef, {
       parentUid: uid,
-      createdAtMs: Date.now(),
+      createdAtMs: now,
       parentEmail: email,
     })
     await setDoc(doc(db, COL.parentProfiles, uid), {
       familyId: familyRef.id,
       email,
-      createdAtMs: Date.now(),
+      createdAtMs: now,
+      ...newTrialFields(now),
     })
     await setDoc(doc(db, COL.families, familyRef.id, COL.guardians, uid), {
       email,
       role: 'OWNER' satisfies GuardianRole,
-      joinedAtMs: Date.now(),
+      joinedAtMs: now,
     })
   }
 }
@@ -110,6 +134,67 @@ export async function getFamilyId(): Promise<string> {
   const familyId = profile.data()?.familyId as string | undefined
   if (!familyId) throw new Error('Family not found')
   return familyId
+}
+
+// ---------- Trial subscription tracking ----------
+// See functions/src/index.ts purgeInactiveTrials for the server-side purge rule that
+// consumes lastLoginAt / lastParentCheckInAt, and the README "Trial model" section for
+// the plain-language product rule.
+
+export function observeTrialInfo(
+  uid: string,
+  onData: (info: TrialInfo | null) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, COL.parentProfiles, uid),
+    (snap) => {
+      const data = snap.data()
+      if (!data || data.plan == null) {
+        onData(null)
+        return
+      }
+      onData({
+        plan: (data.plan as TrialInfo['plan']) || 'trial',
+        status: (data.status as TrialInfo['status']) || 'active',
+        trialStartedAt: Number(data.trialStartedAt ?? 0),
+        trialEndsAt: Number(data.trialEndsAt ?? 0),
+        lastLoginAt: data.lastLoginAt == null ? null : Number(data.lastLoginAt),
+        lastParentCheckInAt: data.lastParentCheckInAt == null ? null : Number(data.lastParentCheckInAt),
+      })
+    },
+    (err) => onError?.(err),
+  )
+}
+
+const CHECKIN_THROTTLE_MS = 60 * 60 * 1000 // once per hour, per the product spec
+
+/** Called once per sign-in / app open. Throttled client-side to avoid write spam. */
+export async function recordLogin(uid: string): Promise<void> {
+  const key = `sarechild:lastLoginWriteMs:${uid}`
+  const last = Number(localStorage.getItem(key) ?? 0)
+  const now = Date.now()
+  if (now - last < CHECKIN_THROTTLE_MS) return
+  localStorage.setItem(key, String(now))
+  await setDoc(doc(db, COL.parentProfiles, uid), { lastLoginAt: now }, { merge: true }).catch(() => {
+    // Best-effort — a purged account's profile write will be denied by rules; that's fine.
+  })
+}
+
+/**
+ * Called whenever the parent actively checks on their kids: opening the dashboard,
+ * viewing a device, or viewing alerts. Throttled to once/hour so normal browsing
+ * doesn't spam Firestore writes.
+ */
+export async function recordParentCheckIn(uid: string): Promise<void> {
+  const key = `sarechild:lastCheckInWriteMs:${uid}`
+  const last = Number(localStorage.getItem(key) ?? 0)
+  const now = Date.now()
+  if (now - last < CHECKIN_THROTTLE_MS) return
+  localStorage.setItem(key, String(now))
+  await setDoc(doc(db, COL.parentProfiles, uid), { lastParentCheckInAt: now }, { merge: true }).catch(() => {
+    // Best-effort — see recordLogin.
+  })
 }
 
 export async function createPairingCode(childName: string): Promise<string> {

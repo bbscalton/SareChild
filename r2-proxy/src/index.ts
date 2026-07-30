@@ -392,6 +392,25 @@ export default {
       });
     }
 
+    // Public APK downloads for the marketing site. Files are uploaded to R2 under
+    // the `downloads/` prefix (e.g. downloads/parent.apk, downloads/child.apk).
+    if (request.method === "GET" && url.pathname.startsWith("/downloads/")) {
+      const name = decodeURIComponent(url.pathname.replace("/downloads/", ""));
+      if (!name || name.includes("..") || !name.endsWith(".apk")) {
+        return new Response("invalid path", { status: 400 });
+      }
+      const obj = await env.MEDIA_BUCKET.get(`downloads/${name}`);
+      if (!obj) return new Response("not found", { status: 404 });
+      const headers = new Headers();
+      obj.writeHttpMetadata(headers);
+      headers.set("content-type", "application/vnd.android.package-archive");
+      headers.set("content-disposition", `attachment; filename="${name}"`);
+      headers.set("etag", obj.httpEtag);
+      headers.set("cache-control", "public, max-age=300, must-revalidate");
+      headers.set("access-control-allow-origin", "*");
+      return new Response(obj.body, { headers });
+    }
+
     if (request.method === "GET" && url.pathname.startsWith("/media/")) {
       const key = decodeURIComponent(url.pathname.replace("/media/", ""));
       if (!key || key.includes("..")) return new Response("invalid path", { status: 400 });

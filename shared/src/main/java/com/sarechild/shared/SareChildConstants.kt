@@ -35,6 +35,10 @@ object SareChildConstants {
     const val LOW_BATTERY_PERCENT = 15
     const val ALERT_RETENTION_DAYS = 30
     const val MEDIA_RETENTION_DAYS = 7
+    // Trial subscription model — see functions/src/index.ts purgeInactiveTrials for the
+    // server-side purge rule and README "Trial model" for the plain-language summary.
+    const val TRIAL_DAYS = 30
+    const val COL_PARENT_PROFILES = "parentProfiles"
     const val MIC_CHECK_SECONDS = 10
     const val SCREEN_FRAME_INTERVAL_MS = 2_000L
     const val SCREEN_SHARE_DEFAULT_MINUTES = 10

@@ -135,6 +135,11 @@ select {
   border-color: #b9dfcb;
   color: var(--ok);
 }
+.trial-banner {
+  background: #eef3ff;
+  border-color: #c7d4f3;
+  color: #2c3f7a;
+}
 
 .btn-row {
   display: flex;

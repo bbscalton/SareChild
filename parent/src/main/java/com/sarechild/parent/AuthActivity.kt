@@ -65,6 +65,7 @@ class AuthActivity : AppCompatActivity() {
             val result = if (signUp) repo.signUp(email, password) else repo.signIn(email, password)
             binding.loading.visibility = View.GONE
             result.onSuccess {
+                repo.recordLogin()
                 goToDashboard()
             }.onFailure {
                 showError(it.message ?: "Auth failed")
@@ -79,6 +80,7 @@ class AuthActivity : AppCompatActivity() {
             val result = repo.signInWithGoogleIdToken(idToken)
             binding.loading.visibility = View.GONE
             result.onSuccess {
+                repo.recordLogin()
                 goToDashboard()
             }.onFailure {
                 val message = if (it is FirebaseAuthUserCollisionException) {

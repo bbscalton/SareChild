@@ -1,27 +1,29 @@
-name: Deploy Parent Web (GitHub Pages)
+name: Deploy Parent Web (Firebase Hosting)
+
+# Requires a repo secret `FIREBASE_SERVICE_ACCOUNT_SAFECHILD_F34AC` containing
+# the JSON key of a Firebase service account with Hosting Admin access on the
+# `safechild-f34ac` project. Generate one in Firebase Console > Project
+# Settings > Service Accounts, or via:
+#   gcloud iam service-accounts keys create key.json \
+#     --iam-account=firebase-adminsdk@safechild-f34ac.iam.gserviceaccount.com
+# then add its contents as the secret (Settings > Secrets and variables >
+# Actions) before this workflow can deploy. Until then, deploy manually with
+# `firebase deploy --only hosting` from an authenticated machine.
 
 on:
   push:
     branches: ["main"]
     paths:
       - "parent-web/**"
-      - ".github/workflows/deploy-parent-web-pages.yml"
+      - "firebase.json"
+      - ".github/workflows/deploy-parent-web-firebase.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -43,7 +45,6 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          GITHUB_PAGES: "true"
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
@@ -54,14 +55,11 @@ jobs:
           VITE_R2_MEDIA_PROXY_BASE_URL: ${{ secrets.VITE_R2_MEDIA_PROXY_BASE_URL }}
           VITE_PLATFORM_HEALTH_URL: ${{ secrets.VITE_PLATFORM_HEALTH_URL }}
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          path: parent-web/dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SAFECHILD_F34AC }}
+          projectId: safechild-f34ac
+          channelId: live
+          entryPoint: .
