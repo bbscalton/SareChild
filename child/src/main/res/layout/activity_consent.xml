@@ -1,125 +1,196 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/cloud_bg">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="20dp">
 
-        <TextView
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Parent-approved protection"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:background="@drawable/bg_gradient_hero"
+            android:padding="20dp">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="SareChild helps a parent keep you safer. It is not secret spyware. You will always see when monitoring or safety checks are active." />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Core monitoring:"
-            android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Parent-approved protection"
+                    android:textColor="@android:color/white"
+                    android:textSize="22sp"
+                    android:fontFamily="sans-serif-rounded"
+                    android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="• Location\n• Notification previews for risk words\n• Battery and online status\n• SOS button\n\nNot included: silent call recording or full private chat history dumps." />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="SareChild helps a parent keep you safer. It is not secret spyware — you will always see when monitoring or a safety check is active."
+                    android:textColor="#E4F1FF"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </FrameLayout>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Optional safety checks (you will be asked again when used):"
-            android:textStyle="bold" />
-
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkLocation"
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="I understand location may be shared with my parent" />
+            app:contentPadding="18dp">
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkNotif"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="What's always on"
+                    android:textAppearance="@style/TextAppearance.SareChild.SectionLabel" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="• Location\n• Notification previews for risk words\n• Battery and online status\n• Your SOS button\n\nNot included: silent call recording or full private chat history dumps."
+                    android:textColor="@color/ink_soft"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="I understand notification previews may be scanned for safety alerts" />
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/sky_soft"
+            app:contentPadding="18dp">
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkVisible"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Please agree to these three"
+                    android:textAppearance="@style/TextAppearance.SareChild.SectionLabel"
+                    android:textColor="@color/sky_blue_dark" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkLocation"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="I understand location may be shared with my parent" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkNotif"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="I understand notification previews may be scanned for safety alerts" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkVisible"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="I understand this device will show “Protected by SareChild”" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="I understand this device will show “Protected by SareChild”" />
+            android:layout_marginTop="14dp"
+            app:contentPadding="18dp">
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkScreen"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow parent to request visible screen sharing (with on-screen notice)" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkCamera"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow parent to request a visible camera photo check" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Optional safety checks (you'll be asked again when used)"
+                    android:textAppearance="@style/TextAppearance.SareChild.SectionLabel" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkMic"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow parent to request a short visible voice check" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkScreen"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Allow parent to request visible screen sharing (with on-screen notice)" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkMessages"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow message-screen / notification preview monitoring (not full chat dump)" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkCamera"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow parent to request a visible camera photo check" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkInstalls"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow app install / uninstall alerts" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkMic"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow parent to request a short visible voice check" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkUsage"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow screen-time usage stats and visible app limits" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkMessages"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow message-screen / notification preview monitoring (not full chat dump)" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkCallSms"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow call log and SMS summary sync (not silent call recording)" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkInstalls"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow app install / uninstall alerts" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkOfflineSmsFallback"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow emergency offline SMS location fallback to parent/guardian contacts when internet is unavailable" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkUsage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow screen-time usage stats and visible app limits" />
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/checkOfflineAutoCall"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Allow emergency offline auto-calls to parent-configured number when internet is unavailable" />
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkCallSms"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow call log and SMS summary sync (not silent call recording)" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkOfflineSmsFallback"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow emergency offline SMS location fallback to parent/guardian contacts when internet is unavailable" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkOfflineAutoCall"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow emergency offline auto-calls to parent-configured number when internet is unavailable" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/continueBtn"
+            style="@style/Widget.SareChild.Button.Primary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="20dp"
             android:enabled="false"
             android:text="I agree — continue setup" />
     </LinearLayout>

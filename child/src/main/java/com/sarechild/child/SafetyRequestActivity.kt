@@ -13,11 +13,20 @@ import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivitySafetyRequestBinding
 import com.sarechild.child.monitoring.ScreenShareService
+import com.sarechild.child.ui.AllowCountdownController
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SafetyCommandType
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
 
+/**
+ * The single "please allow" surface shared by every parent-initiated command
+ * that needs the child to actively consent in the moment (screen share,
+ * camera check, mic check). Always shows a big, unmissable auto-allow
+ * countdown (see [AllowCountdownController]) so a parent isn't stuck if the
+ * child can't reach the phone — e.g. an emergency. Tapping Allow or Not now
+ * cancels the countdown immediately.
+ */
 class SafetyRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySafetyRequestBinding
     private lateinit var repo: ChildRepository
@@ -25,6 +34,8 @@ class SafetyRequestActivity : AppCompatActivity() {
     private var scheduleId: String? = null
     private lateinit var commandType: SafetyCommandType
     private var durationMinutes: Int = SareChildConstants.SCREEN_SHARE_DEFAULT_MINUTES
+    private var countdown: AllowCountdownController? = null
+    private var autoAllowed = false
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -138,12 +149,34 @@ class SafetyRequestActivity : AppCompatActivity() {
 
         binding.accept.setOnClickListener { accept() }
         binding.decline.setOnClickListener { decline("Declined by child") }
+
+        startAutoAllowCountdown()
+    }
+
+    /**
+     * Big, hard-to-miss ring countdown. If the child doesn't tap Allow or Not
+     * now before it reaches zero, this auto-allows the request — the exact
+     * "can't reach the phone" safety scenario this screen exists to cover.
+     */
+    private fun startAutoAllowCountdown() {
+        binding.ring.startPulse()
+        countdown = AllowCountdownController(
+            context = this,
+            ring = binding.ring,
+            secondsLabel = binding.secondsText,
+            onAutoAllow = {
+                autoAllowed = true
+                accept()
+            }
+        ).also { it.start() }
     }
 
     private fun accept() {
+        countdown?.cancel()
+        binding.ring.stopPulse()
         lifecycleScope.launch {
             if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
+                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED, autoAllowed = autoAllowed)
             }
         }
         when (commandType) {
@@ -176,6 +209,8 @@ class SafetyRequestActivity : AppCompatActivity() {
     }
 
     private fun decline(reason: String) {
+        countdown?.cancel()
+        binding.ring.stopPulse()
         lifecycleScope.launch {
             if (commandId.isNotBlank()) {
                 repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason)
@@ -191,5 +226,12 @@ class SafetyRequestActivity : AppCompatActivity() {
 
     private fun micIntent() = Intent(this, MicCheckActivity::class.java).apply {
         putExtra(SareChildConstants.EXTRA_COMMAND_ID, commandId)
+    }
+
+    override fun onDestroy() {
+        // Safety net: if the child navigates away without tapping Allow/Not now
+        // (e.g. presses back), don't leave a timer running against a dead view.
+        countdown?.cancel()
+        super.onDestroy()
     }
 }

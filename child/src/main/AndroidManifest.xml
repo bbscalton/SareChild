@@ -15,6 +15,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Lets the parent "please allow" safety-check screen pop up full-screen even
+         over the lock screen — see CommandListener.notifyAndLaunch(). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
@@ -71,7 +74,18 @@
             android:turnScreenOn="true"
             android:excludeFromRecents="true" />
         <activity android:name=".UsageLimitActivity" android:exported="false" />
-        <activity android:name=".FamilyChatActivity" android:exported="false" />
+        <activity
+            android:name=".FamilyChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <service
+            android:name=".fcm.ChildFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".monitoring.MonitoringForegroundService"

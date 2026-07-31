@@ -80,6 +80,11 @@ object SareChildConstants {
     const val NOTIFICATION_CHANNEL_MONITORING = "monitoring"
     const val NOTIFICATION_CHANNEL_ALERTS = "alerts"
     const val NOTIFICATION_CHANNEL_SAFETY = "safety_checks"
+    // Family chat push: kept distinct from ALERTS/SAFETY so a chat message never gets
+    // silenced/misrouted if a user tweaks those channels, and so an urgent chat message
+    // (keyword match) can escalate to a louder, alarm-toned channel without touching SOS.
+    const val NOTIFICATION_CHANNEL_FAMILY_CHAT = "family_chat"
+    const val NOTIFICATION_CHANNEL_CHAT_URGENT = "family_chat_urgent"
     const val FGS_NOTIFICATION_ID = 1001
     const val SAFETY_NOTIFICATION_ID = 1002
     const val SCREEN_NOTIFICATION_ID = 1003
@@ -88,6 +93,15 @@ object SareChildConstants {
     const val CALL_SMS_NOTIFICATION_ID = 1006
     const val USAGE_NOTIFICATION_ID = 1007
     const val DEVICE_LOCK_NOTIFICATION_ID = 1008
+    const val CHAT_NOTIFICATION_ID = 1009
+
+    // FCM data-payload keys shared by the family chat Cloud Function and both apps.
+    const val FCM_DATA_TYPE = "type"
+    const val FCM_TYPE_FAMILY_CHAT = "FAMILY_CHAT"
+    const val FCM_DATA_URGENT = "urgent"
+    const val FCM_DATA_SCREEN = "screen"
+    const val FCM_SCREEN_FAMILY_CHAT = "family_chat"
+    const val EXTRA_OPEN_CHAT = "open_chat"
 
     const val EXTRA_COMMAND_ID = "command_id"
     const val EXTRA_COMMAND_TYPE = "command_type"
@@ -96,4 +110,13 @@ object SareChildConstants {
     const val EXTRA_SCHEDULE_ID = "schedule_id"
     const val ACTION_DEVICE_UNLOCK = "com.sarechild.child.ACTION_DEVICE_UNLOCK"
     const val PREF_DEVICE_LOCKED = "device_locked"
+
+    /**
+     * How long a child has to tap Allow/Not now on an in-app parent request
+     * (screen share, camera check, mic check, etc.) before it auto-allows.
+     * Exists so an emergency where the child can't reach the phone doesn't
+     * leave the parent stuck waiting forever. Never applies to OS-controlled
+     * system permission dialogs — only our own in-app Allow screens.
+     */
+    const val PARENT_REQUEST_AUTO_ALLOW_SECONDS = 30
 }

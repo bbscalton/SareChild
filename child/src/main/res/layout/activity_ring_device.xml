@@ -2,24 +2,38 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#B3261E"
+    android:background="@drawable/bg_gradient_ring_device"
     android:gravity="center"
     android:orientation="vertical"
-    android:padding="24dp">
+    android:padding="28dp">
+
+    <ImageView
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:src="@drawable/ic_bell_ring"
+        android:contentDescription="@null" />
 
     <TextView
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:background="@drawable/bg_pill_soft"
+        android:backgroundTint="#33FFFFFF"
         android:gravity="center"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
         android:text="Protected by SareChild"
         android:textColor="@android:color/white"
-        android:textSize="18sp"
+        android:textSize="13sp"
         android:textStyle="bold" />
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="18dp"
+        android:fontFamily="sans-serif-rounded"
         android:gravity="center"
         android:text="Your parent is ringing this device"
         android:textColor="@android:color/white"
@@ -32,12 +46,15 @@
         android:layout_marginTop="12dp"
         android:gravity="center"
         android:text="This is a visible locate alert — not silent."
-        android:textColor="@android:color/white" />
+        android:textColor="#FFE9E7" />
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/dismiss"
+        style="@style/Widget.SareChild.Button.Primary"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="32dp"
-        android:text="Stop ringing" />
+        android:backgroundTint="@android:color/white"
+        android:text="Stop ringing"
+        android:textColor="@color/coral_dark" />
 </LinearLayout>

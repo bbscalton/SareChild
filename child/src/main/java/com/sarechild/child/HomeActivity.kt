@@ -1,17 +1,20 @@
 package com.sarechild.child
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Bundle
 import android.view.View
+import android.view.animation.LinearInterpolator
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.google.firebase.messaging.FirebaseMessaging
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityHomeBinding
 import com.sarechild.child.monitoring.MonitoringForegroundService
@@ -27,6 +30,7 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var binding: ActivityHomeBinding
     private lateinit var repo: ChildRepository
     private var sending = false
+    private var pulseAnimator: ValueAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +41,7 @@ class HomeActivity : AppCompatActivity() {
         binding.greeting.text = "Hi, ${repo.childName}"
         refreshAwareness()
         MonitoringForegroundService.start(this)
+        refreshFcmToken()
 
         binding.reviewPermissions.setOnClickListener {
             startActivity(Intent(this, PermissionsActivity::class.java))
@@ -104,7 +109,7 @@ class HomeActivity : AppCompatActivity() {
 
         val session = repo.activeSession
         if (!session.isNullOrBlank()) {
-            binding.sessionBanner.visibility = View.VISIBLE
+            binding.sessionBannerCard.visibility = View.VISIBLE
             binding.sessionBanner.text = when (session) {
                 "screen" -> "Screen sharing is ACTIVE — your parent can see this screen"
                 "camera" -> "Camera safety check is ACTIVE"
@@ -112,8 +117,48 @@ class HomeActivity : AppCompatActivity() {
                 "locked" -> "Device is LOCKED by parent — Protected by SareChild"
                 else -> "Safety check in progress: $session"
             }
+            startBannerPulse()
         } else {
-            binding.sessionBanner.visibility = View.GONE
+            binding.sessionBannerCard.visibility = View.GONE
+            stopBannerPulse()
+        }
+    }
+
+    /** Gentle pulse so a live parent-facing safety session is impossible to miss. */
+    private fun startBannerPulse() {
+        if (pulseAnimator != null) return
+        pulseAnimator = ValueAnimator.ofFloat(1f, 1.03f, 1f).apply {
+            duration = 1100L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            addUpdateListener {
+                val scale = it.animatedValue as Float
+                binding.sessionBannerCard.scaleX = scale
+                binding.sessionBannerCard.scaleY = scale
+            }
+            start()
+        }
+    }
+
+    private fun stopBannerPulse() {
+        pulseAnimator?.cancel()
+        pulseAnimator = null
+        binding.sessionBannerCard.scaleX = 1f
+        binding.sessionBannerCard.scaleY = 1f
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopBannerPulse()
+    }
+
+    /** Re-registers this device's FCM token so family chat / SOS pushes stay reachable. */
+    private fun refreshFcmToken() {
+        lifecycleScope.launch {
+            runCatching {
+                val token = FirebaseMessaging.getInstance().token.await()
+                repo.saveFcmToken(token)
+            }
         }
     }
 

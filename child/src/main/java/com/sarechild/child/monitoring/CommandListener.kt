@@ -13,6 +13,9 @@ import com.sarechild.child.R
 import com.sarechild.child.RingDeviceActivity
 import com.sarechild.child.SafetyRequestActivity
 import com.sarechild.child.data.ChildRepository
+import com.sarechild.shared.AlertSeverity
+import com.sarechild.shared.AlertType
+import com.sarechild.shared.FamilyAlert
 import com.sarechild.shared.SafetyCommand
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SafetyCommandType
@@ -77,8 +80,22 @@ class CommandListener(
                 return
             }
             SafetyCommandType.UNLOCK_DEVICE -> {
-                DeviceLockActivity.unlock(context)
-                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                // Authoritative unlock — see DeviceLockActivity.unlock() doc for why this
+                // must not depend on a specific DeviceLockActivity instance still being alive.
+                DeviceLockActivity.unlock(context, repo)
+                scope.launch {
+                    repo.setActiveSessionRemote(null)
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    repo.postAlert(
+                        FamilyAlert(
+                            type = AlertType.DEVICE_UNLOCKED,
+                            severity = AlertSeverity.MEDIUM,
+                            title = "Device unlocked — ${repo.childName}",
+                            snippet = "Visible safety lock was removed by parent request",
+                            commandId = command.id
+                        )
+                    )
+                }
                 return
             }
             else -> Unit
@@ -108,9 +125,17 @@ class CommandListener(
         val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
-            .setContentText("Tap to Accept or Decline. This is visible on purpose.")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentText("A timer will auto-allow this if you can't respond. Tap to Allow or Not now.")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pending)
+            // Reliably pops the Allow screen full-screen even over the lock screen or
+            // while the app is backgrounded — the "child can't reach the phone" /
+            // emergency case this whole countdown flow exists for. A plain
+            // startActivity() call from a service can be silently blocked by modern
+            // Android's background-activity-launch restrictions, so this is the
+            // OS-blessed fallback that still gets through.
+            .setFullScreenIntent(pending, true)
             .setAutoCancel(true)
             .build()
         context.getSystemService(NotificationManager::class.java)

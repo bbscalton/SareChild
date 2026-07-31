@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_green">#0F6B4C</color>
+    <color name="brand_green_dark">#0A4F38</color>
+    <color name="brand_green_soft">#E6F2EC</color>
+    <color name="chat_bg">#F2F6F4</color>
+    <color name="chat_surface">#FFFFFF</color>
+    <color name="chat_bubble_out">#0F6B4C</color>
+    <color name="chat_bubble_in">#FFFFFF</color>
+    <color name="chat_text_primary">#1A2E26</color>
+    <color name="chat_text_secondary">#5A7268</color>
+    <color name="chat_text_on_brand">#FFFFFF</color>
+    <color name="chat_divider">#D7E5DE</color>
+    <color name="chat_composer_stroke">#C5D9CF</color>
+    <color name="danger_red">#B3261E</color>
+
+    <!-- Playful child-app palette: bright, warm, no purple/dark-surveillance tones. -->
+    <color name="sky_blue">#2F9BFF</color>
+    <color name="sky_blue_dark">#1C7ED6</color>
+    <color name="sky_soft">#E7F3FF</color>
+    <color name="sunny_yellow">#FFC93C</color>
+    <color name="sunny_yellow_dark">#F5A623</color>
+    <color name="sun_soft">#FFF6DE</color>
+    <color name="coral">#FF6B6B</color>
+    <color name="coral_dark">#E8483F</color>
+    <color name="coral_soft">#FFE9E7</color>
+    <color name="grass_green">#2ECC71</color>
+    <color name="grass_green_dark">#22B573</color>
+    <color name="mint_soft">#E4FBF0</color>
+    <color name="ink">#26324A</color>
+    <color name="ink_soft">#5B6B85</color>
+    <color name="ink_faint">#8C99AF</color>
+    <color name="cloud_white">#FFFFFF</color>
+    <color name="cloud_bg">#F3F8FE</color>
+    <color name="ring_track">#40FFFFFF</color>
+</resources>

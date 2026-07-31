@@ -8,6 +8,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.storage.FirebaseStorage
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
@@ -156,6 +157,32 @@ class ChildRepository(
         familyId = family
         deviceId = newDeviceId
         childName = name
+
+        // Register push notifications for this device right away so a guardian's very
+        // first family chat message (or an alert) can reach it — don't wait for a
+        // fresh onNewToken() callback, which may not fire again on this install.
+        runCatching {
+            val token = FirebaseMessaging.getInstance().token.await()
+            saveFcmToken(token)
+        }
+    }
+
+    /**
+     * Persists an FCM registration token on this device's Firestore doc so the
+     * `onFamilyChatMessageCreated` / `onAlertCreated` Cloud Functions can push to it.
+     * Cached locally first so a token delivered via onNewToken() before pairing
+     * completes isn't lost — see [claimPairingCode].
+     */
+    suspend fun saveFcmToken(token: String) {
+        prefs.edit().putString(SareChildConstants.PREF_FCM_TOKEN, token).apply()
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        runCatching {
+            db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+                .collection(SareChildConstants.COL_DEVICES).document(did)
+                .set(mapOf("fcmTokens" to FieldValue.arrayUnion(token)), SetOptions.merge())
+                .await()
+        }
     }
 
     fun consentMap(): Map<String, Any?> = mapOf(
@@ -563,7 +590,8 @@ class ChildRepository(
         status: SafetyCommandStatus,
         resultPath: String? = null,
         resultUrl: String? = null,
-        error: String? = null
+        error: String? = null,
+        autoAllowed: Boolean = false
     ) {
         val fid = familyId ?: return
         val data = mutableMapOf<String, Any?>(
@@ -579,6 +607,9 @@ class ChildRepository(
         if (resultPath != null) data["resultPath"] = resultPath
         if (resultUrl != null) data["resultUrl"] = resultUrl
         if (error != null) data["error"] = error
+        // Lets the parent dashboard show "auto-allowed for safety" instead of implying
+        // the child actively tapped Allow — see AllowCountdownController.
+        if (autoAllowed) data["autoAllowed"] = true
         db.collection(SareChildConstants.COL_FAMILIES).document(fid)
             .collection(SareChildConstants.COL_COMMANDS).document(commandId)
             .set(data, SetOptions.merge())
