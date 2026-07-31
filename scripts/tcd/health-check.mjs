@@ -20,6 +20,10 @@ async function checkUrl(name, url) {
 }
 
 await checkUrl("Parent Web", process.env.TCD_PARENT_WEB_URL);
+await checkUrl(
+  "TCD on GitHub Pages",
+  process.env.TCD_PAGES_URL || "https://bbscalton.github.io/SareChild/tcd.html",
+);
 await checkUrl("Cloudflare R2 Proxy", process.env.TCD_R2_HEALTH_URL);
 await checkUrl(
   "Platform Health (Cloudflare)",

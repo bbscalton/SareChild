@@ -15,6 +15,7 @@ jobs:
       - name: Run TCD health probe
         env:
           TCD_PARENT_WEB_URL: ${{ secrets.TCD_PARENT_WEB_URL }}
+          TCD_PAGES_URL: ${{ secrets.TCD_PAGES_URL }}
           TCD_R2_HEALTH_URL: ${{ secrets.TCD_R2_HEALTH_URL }}
           TCD_FUNCTIONS_HEALTH_URL: ${{ secrets.TCD_FUNCTIONS_HEALTH_URL }}
         run: node scripts/tcd/health-check.mjs

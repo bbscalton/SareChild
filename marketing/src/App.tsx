@@ -229,6 +229,9 @@ function Footer() {
         <div className="footer-links">
           <a href={PARENT_WEB_URL}>Parent dashboard</a>
           <a href={GITHUB_REPO_URL}>Source on GitHub</a>
+          <a href="tcd.html" className="footer-ops-link">
+            Ops / TCD
+          </a>
           <a href="#top">Back to top</a>
         </div>
       </div>

@@ -434,3 +434,5 @@ a {
 .footer-brand { color: #fff; margin-bottom: 0.5rem; }
 .footer-links { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 .footer-links a:hover { color: #fff; }
+.footer-ops-link { opacity: 0.55; font-size: 0.85rem; }
+.footer-ops-link:hover { opacity: 1; }
