@@ -118,14 +118,23 @@ class PermissionsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         binding.checkWhatsappConsent.isChecked = repo.whatsappMonitorConsent
-        syncConsentAndRestartMonitoring()
+        syncConsentFlags()
+        startMonitoringWhenReady()
     }
 
-    private fun syncConsentAndRestartMonitoring() {
+    private fun syncConsentFlags() {
         repo.whatsappMonitorConsent = binding.checkWhatsappConsent.isChecked
         lifecycleScope.launch {
             runCatching { repo.syncConsentFlags() }
         }
+    }
+
+    private fun startMonitoringWhenReady() {
         MonitoringForegroundService.start(this)
+    }
+
+    private fun syncConsentAndRestartMonitoring() {
+        syncConsentFlags()
+        startMonitoringWhenReady()
     }
 }

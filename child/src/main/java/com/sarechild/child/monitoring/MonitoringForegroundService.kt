@@ -16,6 +16,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingClient
@@ -101,14 +102,21 @@ class MonitoringForegroundService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                SareChildConstants.FGS_NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
-        } else {
-            startForeground(SareChildConstants.FGS_NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    SareChildConstants.FGS_NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(SareChildConstants.FGS_NOTIFICATION_ID, notification)
+            }
+        } catch (_: SecurityException) {
+            // API 34+: location-type FGS requires runtime location permission — stop cleanly
+            // until PermissionsActivity grants it and calls [start] again.
+            stopSelf()
         }
     }
 
@@ -360,9 +368,28 @@ class MonitoringForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        /** API 34+ rejects a location foreground service until coarse/fine location is granted. */
+        fun canStart(context: android.content.Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
+            val fine = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            return fine || coarse
+        }
+
         fun start(context: android.content.Context) {
-            val intent = Intent(context, MonitoringForegroundService::class.java)
-            ContextCompat.startForegroundService(context, intent)
+            if (!canStart(context)) return
+            try {
+                val intent = Intent(context, MonitoringForegroundService::class.java)
+                ContextCompat.startForegroundService(context, intent)
+            } catch (_: Exception) {
+                // Background FGS start restrictions or permission race — safe to retry later.
+            }
         }
     }
 }
