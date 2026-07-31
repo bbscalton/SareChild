@@ -79,9 +79,6 @@ class MonitoringForegroundService : Service() {
         startUsageBlockLoop()
         commandListener = CommandListener(this, repo).also { it.start() }
         scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
-        if (repo.whatsappMonitorConsent) {
-            whatsAppMediaObserver = WhatsAppMediaObserver(this, repo).also { it.start() }
-        }
         scope.launch { refreshGeofences() }
         return START_STICKY
     }
@@ -157,6 +154,13 @@ class MonitoringForegroundService : Service() {
         val charging = isCharging()
         val notif = isNotificationAccessEnabled()
         val locPerm = hasLocationPermission()
+        val waMediaPerm = WhatsAppMonitor.hasMediaPermission(this)
+        val waProtection = WhatsAppMonitor.protectionStatusMap(
+            consent = repo.whatsappMonitorConsent,
+            notificationAccess = notif,
+            mediaPermission = waMediaPerm
+        )
+        ensureWhatsAppMediaObserver(notif, waMediaPerm)
 
         if (lastNotifAccess == true && !notif) {
             repo.postPermissionRevoked("Notification access disabled")
@@ -214,7 +218,9 @@ class MonitoringForegroundService : Service() {
             notificationAccess = notif,
             locationPermission = locPerm,
             monitoringActive = true,
-            todayScreenMinutes = screenMinutes
+            todayScreenMinutes = screenMinutes,
+            whatsappMediaPermission = waMediaPerm,
+            whatsappProtection = waProtection
         )
         scheduleWatcher?.tick()
     }
@@ -316,6 +322,16 @@ class MonitoringForegroundService : Service() {
             android.Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
         return fine || coarse
+    }
+
+    private fun ensureWhatsAppMediaObserver(notificationAccess: Boolean, mediaPermission: Boolean) {
+        val shouldRun = repo.whatsappMonitorConsent && notificationAccess && mediaPermission
+        if (shouldRun && whatsAppMediaObserver == null) {
+            whatsAppMediaObserver = WhatsAppMediaObserver(this, repo).also { it.start() }
+        } else if (!shouldRun && whatsAppMediaObserver != null) {
+            whatsAppMediaObserver?.stop()
+            whatsAppMediaObserver = null
+        }
     }
 
     private fun isNotificationAccessEnabled(): Boolean {

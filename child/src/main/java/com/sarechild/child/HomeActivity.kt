@@ -82,6 +82,7 @@ class HomeActivity : AppCompatActivity() {
         super.onResume()
         repo = ChildRepository(this)
         refreshAwareness()
+        lifecycleScope.launch { runCatching { repo.syncConsentFlags() } }
         if (repo.deviceLocked) {
             startActivity(
                 Intent(this, DeviceLockActivity::class.java).apply {
@@ -100,6 +101,7 @@ class HomeActivity : AppCompatActivity() {
             if (repo.installMonitorConsent) add("App installs")
             if (repo.usageConsent) add("Screen time")
             if (repo.callSmsConsent) add("Call/SMS summaries")
+            if (repo.whatsappMonitorConsent) add("WhatsApp protection")
         }
         binding.consentSummary.text = if (enabled.isEmpty()) {
             "Advanced safety checks: not enabled"

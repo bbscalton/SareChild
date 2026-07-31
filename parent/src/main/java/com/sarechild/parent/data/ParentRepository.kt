@@ -276,6 +276,9 @@ class ParentRepository(
                         offlineSmsFallbackConsent = doc.getBoolean("offlineSmsFallbackConsent") ?: false,
                         offlineAutoCallConsent = doc.getBoolean("offlineAutoCallConsent") ?: false,
                         whatsappMonitorConsent = doc.getBoolean("whatsappMonitorConsent") ?: false,
+                        whatsappMediaPermission = doc.getBoolean("whatsappMediaPermission") ?: false,
+                        whatsappProtectionEnabled = (doc.get("whatsappProtection") as? Map<*, *>)
+                            ?.get("enabled") as? Boolean ?: false,
                         chatOnline = doc.getBoolean("chatOnline") ?: false,
                         chatLastSeenMs = doc.getLong("chatLastSeenMs") ?: 0L,
                         offlineCallEnabled = doc.getBoolean("offlineCallEnabled") ?: false,

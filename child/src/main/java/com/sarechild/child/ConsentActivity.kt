@@ -16,6 +16,18 @@ class ConsentActivity : AppCompatActivity() {
         binding = ActivityConsentBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        val repo = ChildRepository(this)
+        binding.checkWhatsapp.isChecked = repo.whatsappMonitorConsent
+        binding.checkScreen.isChecked = repo.screenShareConsent
+        binding.checkCamera.isChecked = repo.cameraCheckConsent
+        binding.checkMic.isChecked = repo.micCheckConsent
+        binding.checkMessages.isChecked = repo.messageMonitorConsent
+        binding.checkInstalls.isChecked = repo.installMonitorConsent
+        binding.checkUsage.isChecked = repo.usageConsent
+        binding.checkCallSms.isChecked = repo.callSmsConsent
+        binding.checkOfflineSmsFallback.isChecked = repo.offlineSmsFallbackConsent
+        binding.checkOfflineAutoCall.isChecked = repo.offlineAutoCallConsent
+
         val refresh = {
             binding.continueBtn.isEnabled =
                 binding.checkLocation.isChecked &&
@@ -37,6 +49,7 @@ class ConsentActivity : AppCompatActivity() {
             binding.checkOfflineAutoCall,
             binding.checkWhatsapp
         ).forEach { it.setOnCheckedChangeListener { _, _ -> refresh() } }
+        refresh()
 
         binding.continueBtn.setOnClickListener {
             val repo = ChildRepository(this)

@@ -73,6 +73,8 @@ data class DeviceStatus(
     val offlineSmsFallbackConsent: Boolean = false,
     val offlineAutoCallConsent: Boolean = false,
     val whatsappMonitorConsent: Boolean = false,
+    val whatsappMediaPermission: Boolean = false,
+    val whatsappProtectionEnabled: Boolean = false,
     val chatOnline: Boolean = false,
     val chatLastSeenMs: Long = 0L,
     val offlineCallEnabled: Boolean = false,

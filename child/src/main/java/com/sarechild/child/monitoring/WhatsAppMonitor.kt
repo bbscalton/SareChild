@@ -1,6 +1,8 @@
 package com.sarechild.child.monitoring
 
 import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
@@ -75,8 +77,40 @@ object WhatsAppMonitor {
         }
     }
 
-    fun normalizeIdentifier(value: String): String =
-        value.lowercase().replace(Regex("[^a-z0-9+]"), "")
+    fun normalizeIdentifier(value: String): String {
+        val normalized = value.lowercase().replace(Regex("[^a-z0-9+]"), "")
+        if (normalized.isNotBlank()) return normalized
+        val fallback = value.trim().lowercase().filter { it.isLetterOrDigit() }
+        return fallback.ifBlank { "unknown" }
+    }
+
+    private fun digitsOnly(value: String): String = value.filter { it.isDigit() }
+
+    /**
+     * Tight safe-contact match — avoids short fragments (e.g. "ton") matching unrelated names.
+     * Phone-like identifiers match on trailing digits; name handles require length >= 4.
+     */
+    fun matchesSafeIdentifier(normalizedContact: String, normalizedSafe: String): Boolean {
+        if (normalizedContact.isBlank() || normalizedSafe.isBlank()) return false
+        if (normalizedContact == normalizedSafe) return true
+
+        val contactDigits = digitsOnly(normalizedContact)
+        val safeDigits = digitsOnly(normalizedSafe)
+        if (safeDigits.length >= 7 && contactDigits.length >= 7) {
+            val safeTail = safeDigits.takeLast(7)
+            val contactTail = contactDigits.takeLast(7)
+            if (safeTail == contactTail) return true
+            if (contactDigits.endsWith(safeDigits) || safeDigits.endsWith(contactDigits)) return true
+        }
+
+        val contactName = normalizedContact.replace(Regex("\\d+"), "")
+        val safeName = normalizedSafe.replace(Regex("\\d+"), "")
+        if (safeName.length >= 4 && contactName.length >= 4) {
+            if (contactName == safeName) return true
+            if (contactName.contains(safeName) || safeName.contains(contactName)) return true
+        }
+        return false
+    }
 
     /** Best-effort English-locale heuristic — WhatsApp's exact notification wording varies by
      *  OS/locale/version, so this purposefully degrades to MESSAGE rather than guessing wrong. */
@@ -107,7 +141,7 @@ object WhatsAppMonitor {
     suspend fun isKnownSafe(repo: ChildRepository, normalizedIdentifier: String): Boolean {
         if (normalizedIdentifier.isBlank()) return false
         val safe = loadSafeContactIdentifiers(repo)
-        return safe.any { s -> s.isNotBlank() && (normalizedIdentifier.contains(s) || s.contains(normalizedIdentifier)) }
+        return safe.any { s -> matchesSafeIdentifier(normalizedIdentifier, s) }
     }
 
     /** Main entry point from [NotificationMonitorService] for every WhatsApp notification. */
@@ -128,7 +162,6 @@ object WhatsAppMonitor {
         val contentType = classify(title, text, big)
         val contactRaw = extractContact(contentType, title, text)
         val normalized = normalizeIdentifier(contactRaw)
-        if (normalized.isBlank()) return
         lastContactByPackage[packageName] = contactRaw to System.currentTimeMillis()
 
         val safe = isKnownSafe(repo, normalized)
@@ -177,7 +210,6 @@ object WhatsAppMonitor {
         val firstLine = trimmed.lineSequence().firstOrNull()?.trim().orEmpty()
         val contactRaw = extractContact(WhatsAppEventType.MESSAGE, firstLine, trimmed)
         val normalized = normalizeIdentifier(contactRaw)
-        if (normalized.isBlank()) return
         lastContactByPackage[packageName] = contactRaw to System.currentTimeMillis()
         val safe = isKnownSafe(repo, normalized)
         repo.postWhatsAppEvent(
@@ -305,4 +337,34 @@ object WhatsAppMonitor {
         prefs.edit().putStringSet(KNOWN_CONTACTS_PREF_KEY, updated).apply()
         return true
     }
+
+    /** Composite status written to the device doc for the parent WhatsApp dashboard. */
+    fun protectionStatusMap(
+        consent: Boolean,
+        notificationAccess: Boolean,
+        mediaPermission: Boolean
+    ): Map<String, Any?> {
+        val now = System.currentTimeMillis()
+        val enabled = consent && notificationAccess
+        return mapOf(
+            "enabled" to enabled,
+            "consent" to consent,
+            "notificationAccess" to notificationAccess,
+            "mediaPermission" to mediaPermission,
+            "updatedAtMs" to now
+        )
+    }
+
+    fun hasMediaPermission(context: Context): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            hasPerm(context, android.Manifest.permission.READ_MEDIA_IMAGES) ||
+                hasPerm(context, android.Manifest.permission.READ_MEDIA_VIDEO) ||
+                hasPerm(context, android.Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            hasPerm(context, android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    private fun hasPerm(context: Context, perm: String): Boolean =
+        ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
 }

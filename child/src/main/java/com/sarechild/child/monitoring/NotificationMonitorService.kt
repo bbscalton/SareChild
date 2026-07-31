@@ -1,6 +1,7 @@
 package com.sarechild.child.monitoring
 
 import android.app.Notification
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.sarechild.child.data.ChildRepository
@@ -39,8 +40,8 @@ class NotificationMonitorService : NotificationListenerService() {
         if (sbn == null) return
         if (sbn.packageName == packageName) return
         val extras = sbn.notification.extras ?: return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        val title = notificationTitle(extras)
+        val text = notificationBody(extras)
         val big = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
         val combined = listOf(title, text, big).filter { it.isNotBlank() }.joinToString(" — ")
         if (combined.isBlank()) return
@@ -111,5 +112,31 @@ class NotificationMonitorService : NotificationListenerService() {
             cachedSettingsAtMs = now
         }
         return now < cachedSettings.snoozeUntilMs && cachedSettings.snoozedCategories.contains(category)
+    }
+
+    /** MessagingStyle notifications often put the sender in conversation title, not EXTRA_TITLE. */
+    private fun notificationTitle(extras: Bundle): String {
+        val direct = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        if (direct.isNotBlank()) return direct
+        return extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString().orEmpty()
+    }
+
+    private fun notificationBody(extras: Bundle): String {
+        val direct = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        if (direct.isNotBlank()) return direct
+        val summary = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty()
+        if (summary.isNotBlank()) return summary
+        val info = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString().orEmpty()
+        if (info.isNotBlank()) return info
+        @Suppress("DEPRECATION")
+        val messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+        if (messages != null) {
+            for (raw in messages) {
+                val msg = raw as? Bundle ?: continue
+                val text = msg.getCharSequence("text")?.toString().orEmpty()
+                if (text.isNotBlank()) return text
+            }
+        }
+        return ""
     }
 }

@@ -228,7 +228,9 @@ class ChildRepository(
         notificationAccess: Boolean,
         locationPermission: Boolean,
         monitoringActive: Boolean,
-        todayScreenMinutes: Int = 0
+        todayScreenMinutes: Int = 0,
+        whatsappMediaPermission: Boolean = false,
+        whatsappProtection: Map<String, Any?> = emptyMap()
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -242,8 +244,12 @@ class ChildRepository(
             "monitoringActive" to monitoringActive,
             "online" to true,
             "todayScreenMinutes" to todayScreenMinutes,
-            "batteryHistory" to FieldValue.arrayUnion(sample.toMap())
+            "batteryHistory" to FieldValue.arrayUnion(sample.toMap()),
+            "whatsappMediaPermission" to whatsappMediaPermission
         )
+        if (whatsappProtection.isNotEmpty()) {
+            data["whatsappProtection"] = whatsappProtection
+        }
         data.putAll(consentMap())
         if (location != null) {
             data["lastLocation"] = location.toMap()
@@ -645,6 +651,7 @@ class ChildRepository(
     suspend fun postWhatsAppEvent(event: WhatsAppEvent) {
         val fid = familyId ?: return
         val did = deviceId ?: return
+        ensureSignedIn()
         db.collection(SareChildConstants.COL_FAMILIES).document(fid)
             .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
             .add(event.copy(deviceId = did).toMap())

@@ -223,10 +223,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         val normalizedCandidate = normalizeIdentifier(candidate)
         if (normalizedCandidate.isBlank()) return
         val safe = loadSafeContactIdentifiers()
-        val isSafe = safe.any { normalizedSafe ->
-            normalizedSafe.isNotBlank() &&
-                (normalizedCandidate.contains(normalizedSafe) || normalizedSafe.contains(normalizedCandidate))
-        }
+        val isSafe = safe.any { WhatsAppMonitor.matchesSafeIdentifier(normalizedCandidate, it) }
         if (isSafe) return
         val key = "$pkg|$normalizedCandidate"
         val now = System.currentTimeMillis()

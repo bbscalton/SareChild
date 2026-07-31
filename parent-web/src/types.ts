@@ -11,6 +11,14 @@ export type BatterySample = {
   atMs: number
 }
 
+export type WhatsAppProtectionStatus = {
+  enabled: boolean
+  consent: boolean
+  notificationAccess: boolean
+  mediaPermission: boolean
+  updatedAtMs: number
+}
+
 export type DeviceStatus = {
   id: string
   childName: string
@@ -33,6 +41,8 @@ export type DeviceStatus = {
   offlineSmsFallbackConsent: boolean
   offlineAutoCallConsent: boolean
   whatsappMonitorConsent: boolean
+  whatsappMediaPermission: boolean
+  whatsappProtection: WhatsAppProtectionStatus | null
   chatOnline: boolean
   chatLastSeenMs: number
   offlineCallEnabled: boolean

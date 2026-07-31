@@ -51,6 +51,7 @@ import type {
   WeeklyDigest,
   WhatsAppEvent,
   WhatsAppEventType,
+  WhatsAppProtectionStatus,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
@@ -220,6 +221,18 @@ export async function createPairingCode(childName: string): Promise<string> {
   return code
 }
 
+function parseWhatsAppProtection(raw: unknown): WhatsAppProtectionStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  return {
+    enabled: Boolean(data.enabled),
+    consent: Boolean(data.consent),
+    notificationAccess: Boolean(data.notificationAccess),
+    mediaPermission: Boolean(data.mediaPermission),
+    updatedAtMs: Number(data.updatedAtMs ?? 0),
+  }
+}
+
 export function observeDevices(
   familyId: string,
   onData: (devices: DeviceStatus[]) => void,
@@ -254,6 +267,8 @@ export function observeDevices(
           offlineSmsFallbackConsent: Boolean(data.offlineSmsFallbackConsent),
           offlineAutoCallConsent: Boolean(data.offlineAutoCallConsent),
           whatsappMonitorConsent: Boolean(data.whatsappMonitorConsent),
+          whatsappMediaPermission: Boolean(data.whatsappMediaPermission),
+          whatsappProtection: parseWhatsAppProtection(data.whatsappProtection),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           offlineCallEnabled: Boolean(data.offlineCallEnabled),

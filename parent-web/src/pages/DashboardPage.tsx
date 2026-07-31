@@ -243,6 +243,40 @@ export function DashboardPage() {
     [whatsAppEvents],
   )
 
+  const whatsAppSetupStatus = useMemo(() => {
+    if (devices.length === 0) return null
+    const statuses = devices.map((d) => d.whatsappProtection)
+    const anyEnabled = statuses.some((s) => s?.enabled)
+    if (anyEnabled) return null
+    const missingConsent = devices.every(
+      (d) => !(d.whatsappProtection?.consent ?? d.whatsappMonitorConsent),
+    )
+    if (missingConsent) {
+      return {
+        title: 'WhatsApp protection not enabled yet',
+        body: 'Ask your child to open SareChild → Review permissions, check “Enable WhatsApp protection”, and tap Start protection. Safe-list contacts still appear in the timeline once enabled.',
+      }
+    }
+    const missingNotif = devices.some((d) => !(d.whatsappProtection?.notificationAccess ?? d.notificationAccess))
+    if (missingNotif) {
+      return {
+        title: 'Notification access needed',
+        body: 'WhatsApp protection is consented on the device but notification access is off. On the child phone: SareChild → Review permissions → Open notification access settings → enable SareChild.',
+      }
+    }
+    const missingMedia = devices.some((d) => !(d.whatsappProtection?.mediaPermission ?? d.whatsappMediaPermission))
+    if (missingMedia) {
+      return {
+        title: 'WhatsApp media permission missing',
+        body: 'Messages and calls can still be captured from notifications. For photos, videos, and voice notes, grant WhatsApp media access on the child device (Review permissions → step 8).',
+      }
+    }
+    return {
+      title: 'Waiting for child heartbeat',
+      body: 'WhatsApp protection was just enabled — status updates on the next device heartbeat (within a few minutes). Send a test WhatsApp message to verify events appear.',
+    }
+  }, [devices])
+
   const filteredWhatsAppEvents = useMemo(() => {
     if (whatsAppFilter === 'all') return whatsAppEvents
     if (whatsAppFilter === 'unknown') return whatsAppEvents.filter((e) => !e.contactSafe)
@@ -1354,9 +1388,8 @@ export function DashboardPage() {
                   to the device&apos;s WhatsApp media folder.
                 </p>
                 <p className="muted small">
-                  Contacts on the safe list below are exempt from recording and alerts. Everyone else is
-                  monitored and logged here so you can review unknown-contact activity, shared media, and
-                  calls.
+                  Safe-list contacts are still logged here (marked safe) but do not trigger alerts.
+                  Unknown contacts are monitored and flagged for your review.
                 </p>
                 <div className="whatsapp-stats">
                   <div className="whatsapp-stat">
@@ -1392,11 +1425,8 @@ export function DashboardPage() {
                 </div>
               </div>
 
-              {devices.length > 0 && devices.every((d) => !d.whatsappMonitorConsent) && (
-                <Empty
-                  title="WhatsApp protection not enabled yet"
-                  body="Ask your child to open SareChild, and enable the WhatsApp protection checkbox during setup plus grant notification access and media permissions. No events will appear until consent is granted on the device."
-                />
+              {whatsAppSetupStatus && (
+                <Empty title={whatsAppSetupStatus.title} body={whatsAppSetupStatus.body} />
               )}
 
               <div className="card">

@@ -11,24 +11,34 @@ import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityPermissionsBinding
 import com.sarechild.child.monitoring.MonitoringForegroundService
+import kotlinx.coroutines.launch
 
 class PermissionsActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPermissionsBinding
+    private lateinit var repo: ChildRepository
 
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    ) { syncConsentAndRestartMonitoring() }
 
     private val requestBackground = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { syncConsentAndRestartMonitoring() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityPermissionsBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        repo = ChildRepository(this)
+        binding.checkWhatsappConsent.isChecked = repo.whatsappMonitorConsent
+        binding.checkWhatsappConsent.setOnCheckedChangeListener { _, checked ->
+            repo.whatsappMonitorConsent = checked
+            syncConsentAndRestartMonitoring()
+        }
 
         binding.btnLocation.setOnClickListener {
             val needed = mutableListOf(
@@ -99,9 +109,23 @@ class PermissionsActivity : AppCompatActivity() {
             requestPerms.launch(needed)
         }
         binding.btnStart.setOnClickListener {
-            MonitoringForegroundService.start(this)
+            syncConsentAndRestartMonitoring()
             startActivity(Intent(this, HomeActivity::class.java))
             finish()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        binding.checkWhatsappConsent.isChecked = repo.whatsappMonitorConsent
+        syncConsentAndRestartMonitoring()
+    }
+
+    private fun syncConsentAndRestartMonitoring() {
+        repo.whatsappMonitorConsent = binding.checkWhatsappConsent.isChecked
+        lifecycleScope.launch {
+            runCatching { repo.syncConsentFlags() }
+        }
+        MonitoringForegroundService.start(this)
     }
 }
