@@ -26,10 +26,25 @@ object SareChildConstants {
     const val COL_SAFETY_SETTINGS = "safetySettings"
     const val COL_GUARDIAN_INVITES = "guardianInvites"
     const val COL_SCREEN_SHARE_SCHEDULES = "screenShareSchedules"
+    // Parent-authored Home/School/Work/Custom pins for the parent-web Live Map
+    // control center (see parent-web/src/pages/LiveMapPage.tsx). Not yet read/written
+    // by either Android app — kept here so the collection name stays a single
+    // source of truth if a future on-device feature (e.g. "distance to school") needs it.
+    const val COL_MAP_PLACES = "mapPlaces"
 
     const val KEYWORD_LIST_DEFAULT = "default"
 
     const val HEARTBEAT_INTERVAL_MS = 60_000L
+    // Every heartbeat tick (60s) also appends the most recent fused-location fix to
+    // `locationTrail` (see MonitoringForegroundService.tick()), so real-world trail
+    // density is ~once/minute — dense enough for the Live Map's stop-detection
+    // (default 5-minute minimum dwell) and history playback without changing the
+    // underlying GPS request cadence below. We intentionally did NOT tighten
+    // LOCATION_INTERVAL_MS/minUpdateInterval further for this feature: halving it
+    // would roughly double location-fix wakeups/battery draw for a marginal
+    // playback-smoothness gain that most parents won't notice. If sparser trails
+    // ever become a real complaint, prefer significant-motion-triggered extra
+    // samples over a blanket interval decrease.
     const val LOCATION_INTERVAL_MS = 120_000L
     const val WENT_DARK_AFTER_MS = 5 * 60_000L
     const val LOW_BATTERY_PERCENT = 15

@@ -1,28 +1,22 @@
-// Loads the Google Maps JavaScript API once (idempotent) so we can use the
-// google.maps.Geocoder for reverse-geocoding — the web-service Geocoding REST
+// Loads the Google Maps JavaScript API once (idempotent). Used both for the
+// google.maps.Geocoder (reverse-geocoding — the web-service Geocoding REST
 // endpoint doesn't return CORS headers for HTTP-referrer-restricted keys, but
-// the JS SDK's Geocoder is explicitly designed to work with them from a browser.
-// See: https://developers.google.com/maps/documentation/javascript/geocoding
-//
-// We declare only the tiny slice of the Maps JS API surface we actually call,
-// instead of pulling in the full @types/google.maps dependency.
-type GeocoderResult = { formatted_address?: string }
-type GeocoderResponse = { results: GeocoderResult[] }
-type GeocoderRequest = { location: { lat: number; lng: number } }
-type MinimalGoogleMaps = {
-  maps: {
-    Geocoder: new () => {
-      geocode: (request: GeocoderRequest) => Promise<GeocoderResponse>
-    }
-  }
-}
-
+// the JS SDK's Geocoder is explicitly designed to work with them from a
+// browser: https://developers.google.com/maps/documentation/javascript/geocoding)
+// and for the full interactive map (Live Map control center): Map, Marker,
+// Polyline, InfoWindow, Circle, LatLngBounds via the real `@types/google.maps`
+// ambient types — the actual `window.google` value only exists once this
+// script has loaded, hence the loader + `typeof google` cast below.
 const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined)?.trim()
 
 declare global {
   interface Window {
-    google?: MinimalGoogleMaps
+    google?: typeof google
   }
+}
+
+export function hasGoogleMapsKey(): boolean {
+  return !!GOOGLE_MAPS_BROWSER_KEY
 }
 
 let loadPromise: Promise<boolean> | null = null
@@ -42,7 +36,7 @@ export function loadGoogleMaps(): Promise<boolean> {
     }
     const script = document.createElement('script')
     script.id = 'sarechild-google-maps-script'
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_BROWSER_KEY}&v=weekly&loading=async`
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_BROWSER_KEY}&v=weekly&loading=async&libraries=geometry`
     script.async = true
     script.defer = true
     script.onload = () => resolve(true)

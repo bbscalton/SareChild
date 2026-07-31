@@ -907,13 +907,16 @@ class DashboardActivity : AppCompatActivity() {
 
     private fun openDeviceMap(d: DeviceStatus) {
         val loc = d.lastLocation ?: return
-        val trail = locationTrail.filter { it.deviceId == d.id }.takeLast(20)
+        // Wider window than before (60 vs 20 samples, ~1hr at the ~60s heartbeat
+        // cadence) so on-device stop detection has enough points to work with.
+        val trail = locationTrail.filter { it.deviceId == d.id && it.location != null }.takeLast(60)
         val intent = Intent(this, DeviceMapActivity::class.java).apply {
             putExtra(DeviceMapActivity.EXTRA_CHILD_NAME, d.childName)
             putExtra(DeviceMapActivity.EXTRA_LAT, loc.lat)
             putExtra(DeviceMapActivity.EXTRA_LNG, loc.lng)
-            putExtra(DeviceMapActivity.EXTRA_TRAIL_LATS, trail.mapNotNull { it.location?.lat }.toDoubleArray())
-            putExtra(DeviceMapActivity.EXTRA_TRAIL_LNGS, trail.mapNotNull { it.location?.lng }.toDoubleArray())
+            putExtra(DeviceMapActivity.EXTRA_TRAIL_LATS, trail.map { it.location!!.lat }.toDoubleArray())
+            putExtra(DeviceMapActivity.EXTRA_TRAIL_LNGS, trail.map { it.location!!.lng }.toDoubleArray())
+            putExtra(DeviceMapActivity.EXTRA_TRAIL_ATS, trail.map { it.recordedAtMs }.toLongArray())
         }
         startActivity(intent)
     }

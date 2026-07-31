@@ -18,6 +18,7 @@ import {
   query,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore'
 import { auth, COL, db, WENT_DARK_AFTER_MS } from '../firebase'
 import { DEFAULT_KEYWORDS, generatePairingCode } from './helpers'
@@ -33,6 +34,8 @@ import type {
   GuardianInfo,
   GuardianRole,
   LocationTrailSample,
+  MapPlace,
+  PlaceKind,
   SafeContact,
   SafetyCommand,
   SosContact,
@@ -348,6 +351,67 @@ export async function deleteGeofence(familyId: string, geofenceId: string): Prom
   await deleteDoc(doc(db, COL.families, familyId, COL.geofences, geofenceId))
 }
 
+// ---------------------------------------------------------------------------
+// Map places (Home / School / Work / Custom pins for the Live Map control
+// center). Kept as their own collection rather than reusing `geofences` so a
+// parent can label a spot on the map without it also becoming an on-device
+// enter/exit alert rule — those two concerns can still be linked manually by
+// creating a geofence at the same coordinates.
+// ---------------------------------------------------------------------------
+
+export function observeMapPlaces(
+  familyId: string,
+  onData: (places: MapPlace[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    collection(db, COL.families, familyId, COL.mapPlaces),
+    (snap) => {
+      const places = snap.docs.map((d) => {
+        const data = d.data()
+        const kind = (data.kind as string) || 'custom'
+        return {
+          id: d.id,
+          name: (data.name as string) || 'Place',
+          kind: (['home', 'school', 'work', 'custom'].includes(kind) ? kind : 'custom') as PlaceKind,
+          lat: Number(data.lat ?? 0),
+          lng: Number(data.lng ?? 0),
+          radiusM: Number(data.radiusM ?? 100),
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        } satisfies MapPlace
+      })
+      onData(places)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export async function addMapPlace(
+  familyId: string,
+  place: Omit<MapPlace, 'id' | 'createdAtMs'>,
+): Promise<void> {
+  await addDoc(collection(db, COL.families, familyId, COL.mapPlaces), {
+    name: place.name,
+    kind: place.kind,
+    lat: place.lat,
+    lng: place.lng,
+    radiusM: place.radiusM,
+    createdAtMs: Date.now(),
+  })
+}
+
+export async function updateMapPlace(
+  familyId: string,
+  placeId: string,
+  patch: Partial<Omit<MapPlace, 'id' | 'createdAtMs'>>,
+): Promise<void> {
+  await updateDoc(doc(db, COL.families, familyId, COL.mapPlaces, placeId), { ...patch })
+}
+
+export async function deleteMapPlace(familyId: string, placeId: string): Promise<void> {
+  await deleteDoc(doc(db, COL.families, familyId, COL.mapPlaces, placeId))
+}
+
 export async function markAlertRead(familyId: string, alertId: string): Promise<void> {
   await updateDoc(doc(db, COL.families, familyId, COL.alerts, alertId), { read: true })
 }
@@ -544,6 +608,44 @@ export function observeLocationTrail(
     },
     (err) => onError?.(err),
   )
+}
+
+/**
+ * One-shot fetch of location trail samples across the *whole family* (not
+ * filtered by device — the live listener above already caps at the most
+ * recent 300 samples across every device, which is too shallow a window for
+ * "playback last 24h" once a family has more than a device or two). Callers
+ * filter by `deviceId` client-side, same pattern the live dashboard already
+ * uses. Only a single range filter on `recordedAtMs` (matching the `orderBy`)
+ * is used so this stays a single-field index Firestore creates automatically
+ * — no composite index / `firestore.indexes.json` change needed.
+ */
+export async function fetchLocationTrailRange(
+  familyId: string,
+  fromMs: number,
+  toMs: number,
+  maxSamples = 4000,
+): Promise<LocationTrailSample[]> {
+  const q = query(
+    collection(db, COL.families, familyId, COL.locationTrail),
+    where('recordedAtMs', '>=', fromMs),
+    where('recordedAtMs', '<=', toMs),
+    orderBy('recordedAtMs', 'asc'),
+    limit(maxSamples),
+  )
+  const snap = await getDocs(q)
+  return snap.docs.map((d) => {
+    const data = d.data()
+    return {
+      id: d.id,
+      deviceId: (data.deviceId as string) || '',
+      location: parseLocation(data.location),
+      batteryPercent: Number(data.batteryPercent ?? -1),
+      charging: Boolean(data.charging),
+      hadNetwork: data.hadNetwork !== false,
+      recordedAtMs: Number(data.recordedAtMs ?? 0),
+    } satisfies LocationTrailSample
+  })
 }
 
 export function observeAppLimits(

@@ -94,6 +94,15 @@ service cloud.firestore {
         allow write: if isFamilyGuardian(familyId);
       }
 
+      // Parent-authored map pins (Home/School/Work/Custom) shown on the Live Map
+      // control center. Read is also open to a signed-in device (like geofences
+      // above) so a future child-side "distance to school" feature can reuse it
+      // without a rules change.
+      match /mapPlaces/{placeId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
       match /commands/{commandId} {
         allow read: if isFamilyGuardian(familyId) || signedIn();
         allow create: if isFamilyGuardian(familyId);

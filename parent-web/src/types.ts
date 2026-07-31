@@ -154,6 +154,22 @@ export type LocationTrailSample = {
   recordedAtMs: number
 }
 
+export type PlaceKind = 'home' | 'school' | 'work' | 'custom'
+
+// Parent-authored points of interest shown on the Live Map control center
+// (distinct from `GeofenceZone`, which drives on-device enter/exit alerting —
+// a place can optionally be promoted to a geofence, but not every place needs
+// one, e.g. "grandma's house" that a parent just wants labeled on the map).
+export type MapPlace = {
+  id: string
+  name: string
+  kind: PlaceKind
+  lat: number
+  lng: number
+  radiusM: number
+  createdAtMs: number
+}
+
 export type CallSmsPreview = {
   id: string
   kind: string

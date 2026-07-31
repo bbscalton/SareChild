@@ -25,11 +25,13 @@ import { mediaKind } from '../types'
 import type { SafetyCommandType } from '../lib/parentRepo'
 import { alertCategoryLabel, alertIcon, relativeTime, severityTone } from '../lib/alertPresentation'
 import { reverseGeocode } from '../lib/googleMaps'
+import { LiveMapPage } from './LiveMapPage'
 
 type Section =
   | 'home'
   | 'alerts'
   | 'chat'
+  | 'livemap'
   | 'map'
   | 'pair'
   | 'safety'
@@ -571,6 +573,7 @@ export function DashboardPage() {
         { id: 'home', label: 'Home', icon: '\u{1F3E0}' },
         { id: 'alerts', label: 'Alerts', icon: '\u{1F514}', badge: unread },
         { id: 'chat', label: 'Chat', icon: '\u{1F4AC}' },
+        { id: 'livemap', label: 'Live map', icon: '\u{1F6F0}\uFE0F' },
         { id: 'map', label: 'Map & locations', icon: '\u{1F4CD}' },
       ],
     },
@@ -597,6 +600,7 @@ export function DashboardPage() {
     home: 'Home',
     alerts: 'Alerts',
     chat: 'Family chat',
+    livemap: 'Live map control center',
     map: 'Map & locations',
     pair: 'Pair a device',
     safety: 'Safety checks',
@@ -682,7 +686,7 @@ export function DashboardPage() {
         {error && <div className="banner error-banner">{error}</div>}
         {statusMsg && <div className="banner ok-banner">{statusMsg}</div>}
 
-        <main className="panel">
+        <main className={section === 'livemap' ? 'panel panel-flush' : 'panel'}>
           {section === 'home' && (
             <section className="stack">
               {devices.length === 0 ? (
@@ -812,6 +816,17 @@ export function DashboardPage() {
               onTextChange={setChatText}
               onSend={() => void sendChatMessage()}
               busy={chatBusy}
+            />
+          )}
+
+          {section === 'livemap' && familyId && (
+            <LiveMapPage
+              familyId={familyId}
+              devices={devices}
+              alerts={alerts}
+              geofences={geofences}
+              locationTrail={locationTrail}
+              nowTick={nowTick}
             />
           )}
 
