@@ -221,7 +221,7 @@ Set these GitHub repository secrets before enabling workflows:
 - `VITE_FIREBASE_MEASUREMENT_ID`
 - `VITE_R2_MEDIA_PROXY_BASE_URL`
 - `VITE_PLATFORM_HEALTH_URL` (optional; defaults to R2 proxy `/platform-health`)
-- `VITE_GOOGLE_MAPS_API_KEY` (optional; browser-restricted key, enables the Static Maps thumbnail on device cards — see "Google Cloud / Maps Platform APIs" below)
+- `VITE_GOOGLE_MAPS_API_KEY` (optional; browser-restricted key, enables the Static Maps thumbnail + reverse-geocoded address line on device cards. Requires "Maps Static API", "Maps JavaScript API", and "Geocoding API" enabled for the key — see "Google Cloud / Maps Platform APIs" below)
 - `TCD_PARENT_WEB_URL`
 - `TCD_R2_HEALTH_URL`
 - `TCD_PLATFORM_HEALTH_URL`

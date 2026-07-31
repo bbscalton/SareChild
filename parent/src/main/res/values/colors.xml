@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_green">#0F6B4C</color>
+    <color name="brand_green_dark">#0A4F38</color>
+    <color name="brand_green_soft">#E6F2EC</color>
+    <color name="chat_bg">#F2F6F4</color>
+    <color name="chat_surface">#FFFFFF</color>
+    <color name="chat_bubble_out">#0F6B4C</color>
+    <color name="chat_bubble_in">#FFFFFF</color>
+    <color name="chat_text_primary">#1A2E26</color>
+    <color name="chat_text_secondary">#5A7268</color>
+    <color name="chat_text_on_brand">#FFFFFF</color>
+    <color name="chat_divider">#D7E5DE</color>
+    <color name="chat_composer_stroke">#C5D9CF</color>
+    <color name="danger_red">#B3261E</color>
+
+    <!-- App-wide calm/trustworthy palette (parent surfaces: auth, dashboard, map). -->
+    <color name="app_bg">#F2F6F4</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_alt">#E6F2EC</color>
+    <color name="outline">#D7E5DE</color>
+    <color name="text_primary">#1A2E26</color>
+    <color name="text_secondary">#5A7268</color>
+
+    <color name="status_online">#0F6B4C</color>
+    <color name="status_online_bg">#E1F3EA</color>
+    <color name="status_offline">#8A6D3B</color>
+    <color name="status_offline_bg">#FBF1E1</color>
+
+    <color name="severity_critical">#B3261E</color>
+    <color name="severity_critical_bg">#FBEAE8</color>
+    <color name="severity_high">#C4590E</color>
+    <color name="severity_high_bg">#FCEEE1</color>
+    <color name="severity_medium">#8A6D3B</color>
+    <color name="severity_medium_bg">#FBF1E1</color>
+    <color name="severity_low">#0F6B4C</color>
+    <color name="severity_low_bg">#E1F3EA</color>
+</resources>

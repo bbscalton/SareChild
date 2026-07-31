@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="14dp"
+    app:cardCornerRadius="20dp"
+    app:cardElevation="0dp"
+    app:strokeWidth="1dp"
+    app:strokeColor="@color/outline"
+    app:cardBackgroundColor="@color/surface">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/childName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/statusPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_pill"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="5dp"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                tools:text="Online" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/metaLine"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            tools:text="Battery 82% · Screen time today: 45 min" />
+
+        <FrameLayout
+            android:id="@+id/mapFrame"
+            android:layout_width="match_parent"
+            android:layout_height="140dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_map_placeholder"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground">
+
+            <ImageView
+                android:id="@+id/mapThumb"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:contentDescription="@null"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/mapPlaceholderText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="Waiting for first location…"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/addressLine"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:drawablePadding="6dp"
+            android:gravity="center_vertical"
+            app:drawableStartCompat="@drawable/ic_alert_location"
+            app:drawableTint="@color/brand_green"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp"
+            android:visibility="gone"
+            tools:text="Near Lincoln Elementary School" />
+
+        <LinearLayout
+            android:id="@+id/latestAlertRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_map_placeholder"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="10dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/latestAlertIcon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                app:tint="@color/severity_medium"
+                android:contentDescription="@null" />
+
+            <TextView
+                android:id="@+id/latestAlertText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                tools:text="Left the safe zone · 3 min ago" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/actionMap"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Open map" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/actionChat"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:text="Chat"
+                android:textSize="12sp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/actionLock"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="4dp"
+                android:layout_weight="1"
+                android:text="Lock"
+                android:textSize="12sp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/actionScreenShare"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="Screen"
+                android:textSize="12sp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/moreDetails"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:layout_gravity="center_horizontal"
+            android:padding="4dp"
+            android:text="Show more details"
+            android:textColor="@color/brand_green"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/detailText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

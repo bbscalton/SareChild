@@ -1,18 +1,27 @@
 package com.sarechild.parent
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.text.format.DateUtils
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -20,13 +29,19 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import com.google.firebase.messaging.FirebaseMessaging
 import com.sarechild.parent.data.ParentRepository
 import com.sarechild.parent.data.LocationTrailSample
 import com.sarechild.parent.data.UsageDailySummary
 import com.sarechild.parent.databinding.ActivityDashboardBinding
+import com.sarechild.parent.databinding.ItemAlertCardBinding
 import com.sarechild.parent.databinding.ItemCardBinding
+import com.sarechild.parent.databinding.ItemDeviceCardBinding
 import com.sarechild.parent.databinding.TabListBinding
 import com.sarechild.parent.databinding.TabPairBinding
+import com.sarechild.parent.geo.GoogleGeoApi
+import com.sarechild.shared.AlertSeverity
+import com.sarechild.shared.AlertType
 import com.sarechild.shared.AppBlockSchedule
 import com.sarechild.shared.AppLimit
 import com.sarechild.shared.CallSmsPreview
@@ -46,6 +61,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -72,12 +88,27 @@ class DashboardActivity : AppCompatActivity() {
     private var screenShareSchedules: List<ScreenShareSchedule> = emptyList()
     private var screenShareDurationMinutes = 10
 
-    private val tabTitles = listOf("Devices", "Alerts", "Safety", "Usage", "Chat", "Digests", "Guardians", "Geofences", "Pair")
+    /** null = show the "More" menu; otherwise one of MORE_* section keys below. */
+    private var moreDetailKey: String? = null
+    private val addressCache = mutableMapOf<String, String?>()
+    private val mapBitmapCache = mutableMapOf<String, Bitmap?>()
+    private var alertFilter: AlertFilter = AlertFilter.ALL
+
+    private enum class AlertFilter { ALL, CRITICAL, INFO }
+
+    private val tabTitles = listOf("Home", "Alerts", "Chat", "More")
+
+    private val requestNotificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityDashboardBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        ensureNotificationsEnabled()
+        refreshFcmToken()
 
         binding.toolbar.inflateMenu(R.menu.dashboard_menu)
         binding.toolbar.setOnMenuItemClickListener {
@@ -116,6 +147,29 @@ class DashboardActivity : AppCompatActivity() {
                 .onFailure {
                     showJoinFamilyPrompt(it.message)
                 }
+        }
+    }
+
+    /** Android 13+ requires runtime consent to show heads-up family chat / SOS notifications. */
+    private fun ensureNotificationsEnabled() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    /**
+     * Registers/refreshes this device's FCM token so family chat and SOS pushes keep
+     * reaching it even if onNewToken() never fires again on an existing install.
+     */
+    private fun refreshFcmToken() {
+        lifecycleScope.launch {
+            runCatching {
+                val token = FirebaseMessaging.getInstance().token.await()
+                repo.saveFcmToken(token)
+            }
         }
     }
 
@@ -211,31 +265,36 @@ class DashboardActivity : AppCompatActivity() {
         root.addView(status)
     }
 
+    /** True while the "More" section currently on screen is [key] (used to gate refreshes). */
+    private fun moreShowing(key: String) = binding.tabs.selectedTabPosition == 3 && moreDetailKey == key
+
     private fun observe(familyId: String) {
         collectJob?.cancel()
         collectJob = lifecycleScope.launch {
             launch {
                 repo.observeDevices(familyId).collectLatest {
                     devices = it
-                    if (binding.tabs.selectedTabPosition in listOf(0, 2)) showTab(binding.tabs.selectedTabPosition)
+                    val pos = binding.tabs.selectedTabPosition
+                    if (pos == 0 || moreShowing("safety")) showTab(pos)
                 }
             }
             launch {
                 repo.observeAlerts(familyId).collectLatest {
                     alerts = it
-                    if (binding.tabs.selectedTabPosition == 1) showTab(1)
+                    val pos = binding.tabs.selectedTabPosition
+                    if (pos == 0 || pos == 1) showTab(pos)
                 }
             }
             launch {
                 repo.observeCommands(familyId).collectLatest {
                     commands = it
-                    if (binding.tabs.selectedTabPosition == 2) showTab(2)
+                    if (moreShowing("safety")) showTab(3)
                 }
             }
             launch {
                 repo.observeUsageDaily(familyId).collectLatest {
                     usageDaily = it
-                    if (binding.tabs.selectedTabPosition == 3) showTab(3)
+                    if (moreShowing("usage")) showTab(3)
                 }
             }
             launch {
@@ -247,55 +306,56 @@ class DashboardActivity : AppCompatActivity() {
             launch {
                 repo.observeAppLimits(familyId).collectLatest {
                     appLimits = it
-                    if (binding.tabs.selectedTabPosition == 3) showTab(3)
+                    if (moreShowing("usage")) showTab(3)
                 }
             }
             launch {
                 repo.observeAppBlockSchedules(familyId).collectLatest {
                     appBlockSchedules = it
-                    if (binding.tabs.selectedTabPosition == 3) showTab(3)
+                    if (moreShowing("usage")) showTab(3)
                 }
             }
             launch {
                 repo.observeCallSms(familyId).collectLatest {
                     callSmsPreviews = it
-                    if (binding.tabs.selectedTabPosition == 2) showTab(2)
+                    if (moreShowing("safety")) showTab(3)
                 }
             }
             launch {
                 repo.observeDigests(familyId).collectLatest {
                     digests = it
-                    if (binding.tabs.selectedTabPosition == 5) showTab(5)
+                    if (moreShowing("digests")) showTab(3)
                 }
             }
             launch {
                 repo.observeGuardians(familyId).collectLatest {
                     guardians = it
-                    if (binding.tabs.selectedTabPosition == 6) showTab(6)
+                    val pos = binding.tabs.selectedTabPosition
+                    if (pos == 2 || moreShowing("guardians")) showTab(pos)
                 }
             }
             launch {
                 repo.observeSafeContacts(familyId).collectLatest {
                     safeContacts = it
-                    if (binding.tabs.selectedTabPosition == 6) showTab(6)
+                    if (moreShowing("guardians")) showTab(3)
                 }
             }
             launch {
                 repo.observeSafetySettings(familyId).collectLatest {
                     safetySettings = it
-                    if (binding.tabs.selectedTabPosition == 2) showTab(2)
+                    if (moreShowing("safety")) showTab(3)
                 }
             }
             launch {
                 repo.observeGeofences(familyId).collectLatest {
                     geofences = it
-                    if (binding.tabs.selectedTabPosition == 7) showTab(7)
+                    if (moreShowing("geofences")) showTab(3)
                 }
             }
             launch {
                 repo.observeScreenShareSchedules(familyId).collectLatest {
                     screenShareSchedules = it
-                    if (binding.tabs.selectedTabPosition == 2) showTab(2)
+                    if (moreShowing("safety")) showTab(3)
                 }
             }
             // Device "went dark" is a function of wall-clock time, not a new write, so
@@ -303,9 +363,8 @@ class DashboardActivity : AppCompatActivity() {
             launch {
                 while (true) {
                     delay(30_000)
-                    if (binding.tabs.selectedTabPosition in listOf(0, 2)) {
-                        showTab(binding.tabs.selectedTabPosition)
-                    }
+                    val pos = binding.tabs.selectedTabPosition
+                    if (pos == 0 || moreShowing("safety")) showTab(pos)
                 }
             }
         }
@@ -319,16 +378,151 @@ class DashboardActivity : AppCompatActivity() {
         val container = binding.content
         container.removeAllViews()
         when (index) {
-            0 -> showDeviceList(container)
-            1 -> showAlertList(container)
-            2 -> showSafetyTab(container)
-            3 -> showUsageTab(container)
-            4 -> showChatTab(container)
-            5 -> showDigestsTab(container)
-            6 -> showGuardiansTab(container)
-            7 -> showGeofenceList(container)
-            8 -> showPairTab(container)
+            0 -> showHomeTab(container)
+            1 -> showAlertsTab(container)
+            2 -> showChatTab(container)
+            3 -> showMoreRoot(container)
         }
+    }
+
+    /** Secondary/advanced features live behind "More" — one tap in, one tap back out. */
+    private fun showMoreRoot(container: FrameLayout) {
+        val key = moreDetailKey
+        if (key == null) {
+            showMoreMenu(container)
+            return
+        }
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        container.addView(outer, matchFrameParams())
+
+        val backRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(16), dp(4))
+        }
+        backRow.addView(
+            MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "‹ More"
+                setOnClickListener {
+                    moreDetailKey = null
+                    showTab(3)
+                }
+            }
+        )
+        backRow.addView(
+            TextView(this).apply {
+                text = moreSectionTitle(key)
+                textSize = 18f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+        )
+        outer.addView(backRow)
+
+        val inner = FrameLayout(this)
+        outer.addView(inner, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        when (key) {
+            "safety" -> showSafetyTab(inner)
+            "usage" -> showUsageTab(inner)
+            "digests" -> showDigestsTab(inner)
+            "guardians" -> showGuardiansTab(inner)
+            "geofences" -> showGeofenceList(inner)
+            "pair" -> showPairTab(inner)
+        }
+    }
+
+    private fun moreSectionTitle(key: String): String = when (key) {
+        "safety" -> "Safety checks"
+        "usage" -> "App usage & limits"
+        "digests" -> "Weekly digests"
+        "guardians" -> "Guardians & caregivers"
+        "geofences" -> "Safe zones (geofences)"
+        "pair" -> "Pair a device"
+        else -> "More"
+    }
+
+    private fun showMoreMenu(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(
+            TextView(this).apply {
+                text = "More"
+                textSize = 22f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+        )
+        root.addView(
+            TextView(this).apply {
+                text = "Everything else you can do with SareChild — pairing, safe zones, limits, and family setup."
+                setPadding(0, dp(6), 0, dp(16))
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+            }
+        )
+
+        val items = listOf(
+            Triple("safety", "Safety checks", "Screen share, camera/voice checks, lock/unlock, ring device"),
+            Triple("usage", "App usage & limits", "Daily limits, scheduled app blocks, screen time history"),
+            Triple("geofences", "Safe zones (geofences)", "Get notified when your child enters or leaves a place"),
+            Triple("digests", "Weekly digests", "A weekly summary of alerts and activity"),
+            Triple("guardians", "Guardians & caregivers", "Invite family members, manage safe WhatsApp contacts"),
+            Triple("pair", "Pair a device", "Connect a new child phone or add an SOS contact"),
+        )
+        items.forEach { (key, title, subtitle) ->
+            root.addView(moreMenuRow(title, subtitle) {
+                moreDetailKey = key
+                showTab(3)
+            })
+        }
+    }
+
+    private fun moreMenuRow(title: String, subtitle: String, onClick: () -> Unit): View {
+        val card = com.google.android.material.card.MaterialCardView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = dp(10) }
+            radius = dp(16).toFloat()
+            cardElevation = 0f
+            strokeWidth = dp(1)
+            strokeColor = ContextCompat.getColor(this@DashboardActivity, R.color.outline)
+            setCardBackgroundColor(ContextCompat.getColor(this@DashboardActivity, R.color.surface))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        texts.addView(TextView(this).apply {
+            text = title
+            textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        texts.addView(TextView(this).apply {
+            text = subtitle
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+            setPadding(0, dp(2), 0, 0)
+        })
+        row.addView(texts)
+        row.addView(TextView(this).apply {
+            text = "›"
+            textSize = 22f
+            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.brand_green))
+        })
+        card.addView(row)
+        return card
     }
 
     private fun showChatTab(container: FrameLayout) {
@@ -342,138 +536,505 @@ class DashboardActivity : AppCompatActivity() {
         val childOnline = devices.count { it.chatOnline && System.currentTimeMillis() - it.chatLastSeenMs < 120_000L }
         val guardianOnline = guardians.count { it.chatOnline && System.currentTimeMillis() - it.lastSeenMs < 120_000L }
         root.addView(TextView(this).apply {
-            text = "Family group chat"
+            text = "Family chat"
             textSize = 22f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
             text = "Children online: $childOnline · Guardians online: $guardianOnline"
-            setPadding(0, dp(8), 0, dp(10))
+            setPadding(0, dp(8), 0, dp(6))
         })
         root.addView(TextView(this).apply {
-            text = "Share text, images, and voice notes with the child and all guardians."
+            text = "A warm check-in goes a long way. Share encouragement, photos, or a quick voice note with your child and every guardian."
+            setPadding(0, 0, 0, dp(12))
         })
         root.addView(MaterialButton(this@DashboardActivity).apply {
-            text = "Open live chat"
+            text = "Open family chat"
             setOnClickListener { startActivity(Intent(this@DashboardActivity, FamilyChatActivity::class.java)) }
         })
     }
 
-    private fun showDeviceList(container: FrameLayout) {
-        val listBinding = TabListBinding.inflate(layoutInflater, container, true)
-        listBinding.list.layoutManager = LinearLayoutManager(this)
-        listBinding.list.adapter = CardAdapter(
-            devices.map { d ->
-                CardRow(
-                    title = d.childName,
-                    subtitle = buildString {
-                        append(if (isDeviceOnline(d)) "Online" else "Offline / went dark")
-                        append(" · Battery ")
-                        append(if (d.batteryPercent >= 0) "${d.batteryPercent}%" else "—")
-                        append(if (d.charging) " (charging)" else "")
-                        d.activeSession?.let { append(" · Session: $it") }
-                    },
-                    detail = buildString {
-                        append(
-                            d.lastLocation?.let {
-                                "Location: ${"%.5f".format(it.lat)}, ${"%.5f".format(it.lng)}\n"
-                            } ?: "No location yet\n"
-                        )
-                        append("Monitoring: ${d.monitoringActive} · Notif: ${d.notificationAccess}\n")
-                        append("Screen time today: ${d.todayScreenMinutes} min\n")
-                        if (d.batteryHistory.isNotEmpty()) {
-                            append(
-                                "Battery history: " +
-                                    d.batteryHistory.takeLast(6).joinToString(" → ") { "${it.percent}%" } +
-                                    "\n"
-                            )
-                        }
-                        append(
-                            "Consents — screen:${d.screenShareConsent} camera:${d.cameraCheckConsent} " +
-                                "mic:${d.micCheckConsent} messages:${d.messageMonitorConsent}\n"
-                        )
-                        append(
-                            "Consents — installs:${d.installMonitorConsent} usage:${d.usageConsent} " +
-                                "callSms:${d.callSmsConsent} offlineSmsFallback:${d.offlineSmsFallbackConsent} " +
-                                "offlineAutoCall:${d.offlineAutoCallConsent}"
-                        )
-                        val trail = locationTrail.filter { it.deviceId == d.id }.take(5)
-                        if (trail.isNotEmpty()) {
-                            append("\nRecent offline timeline points:")
-                            trail.forEach { sample ->
-                                val loc = sample.location
-                                if (loc != null) {
-                                    append(
-                                        "\n- ${SimpleDateFormat("MMM d HH:mm", Locale.getDefault()).format(Date(sample.recordedAtMs))} " +
-                                            "${"%.5f".format(loc.lat)}, ${"%.5f".format(loc.lng)}" +
-                                            if (!sample.hadNetwork) " (captured offline)" else ""
-                                    )
-                                }
-                            }
-                        }
-                        if (d.offlineCallEnabled) {
-                            append(
-                                "\nOffline auto-call: enabled to ${d.offlineCallNumber ?: "not set"} " +
-                                    "(max attempts ${d.offlineCallMaxAttempts})"
-                            )
-                        }
-                    },
-                    action = d.lastLocation?.let { "Open map" },
-                    onAction = d.lastLocation?.let { loc ->
-                        {
-                            val trail = locationTrail.filter { it.deviceId == d.id }.takeLast(20)
-                            val intent = Intent(this, DeviceMapActivity::class.java).apply {
-                                putExtra(DeviceMapActivity.EXTRA_CHILD_NAME, d.childName)
-                                putExtra(DeviceMapActivity.EXTRA_LAT, loc.lat)
-                                putExtra(DeviceMapActivity.EXTRA_LNG, loc.lng)
-                                putExtra(
-                                    DeviceMapActivity.EXTRA_TRAIL_LATS,
-                                    trail.mapNotNull { it.location?.lat }.toDoubleArray(),
-                                )
-                                putExtra(
-                                    DeviceMapActivity.EXTRA_TRAIL_LNGS,
-                                    trail.mapNotNull { it.location?.lng }.toDoubleArray(),
-                                )
-                            }
-                            startActivity(intent)
-                        }
-                    }
-                )
-            }
-        )
+    /** One-glance parent home: a rich card per child with a map pin, address, and quick actions. */
+    private fun showHomeTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(4))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        if (devices.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "Welcome to SareChild"
+                textSize = 22f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            })
+            root.addView(TextView(this).apply {
+                text = "Pair your child's phone to see their location, alerts, and safety status here."
+                setPadding(0, dp(8), 0, dp(16))
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+            })
+            root.addView(MaterialButton(this).apply {
+                text = "Pair a device"
+                setOnClickListener {
+                    moreDetailKey = "pair"
+                    showTab(3)
+                }
+            })
+            return
+        }
+
+        val onlineCount = devices.count { isDeviceOnline(it) }
+        root.addView(TextView(this).apply {
+            text = if (devices.size == 1) devices[0].childName else "Your family"
+            textSize = 24f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "$onlineCount of ${devices.size} online"
+            setPadding(0, dp(4), 0, dp(4))
+            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+        })
+
+        val latestUnread = alerts.firstOrNull { !it.read }
+        if (latestUnread != null) {
+            root.addView(
+                homeAlertBanner(latestUnread) {
+                    binding.tabs.getTabAt(1)?.select()
+                }
+            )
+        }
+
+        val recycler = RecyclerView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(12) }
+            isNestedScrollingEnabled = false
+            layoutManager = LinearLayoutManager(this@DashboardActivity)
+        }
+        root.addView(recycler)
+        devices.forEach { prefetchLocationMeta(it) }
+        recycler.adapter = DeviceCardAdapter(devices)
     }
 
-    private fun showAlertList(container: FrameLayout) {
-        val listBinding = TabListBinding.inflate(layoutInflater, container, true)
-        val fmt = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
-        listBinding.list.layoutManager = LinearLayoutManager(this)
-        listBinding.list.adapter = CardAdapter(
-            alerts.map { a ->
-                CardRow(
-                    title = a.title,
-                    subtitle = buildString {
-                        append("${a.severity} · ${a.type}")
-                        a.category?.let { append(" · $it") }
-                        a.riskScore?.takeIf { it > 0 }?.let { append(" · risk $it") }
-                    },
-                    detail = listOfNotNull(a.snippet, fmt.format(Date(a.createdAtMs))).joinToString("\n"),
-                    action = when {
-                        !a.mediaUrl.isNullOrBlank() -> "Open media"
-                        !a.read -> "Mark read"
-                        else -> null
-                    },
-                    onAction = {
-                        val fid = familyId ?: return@CardRow
-                        if (!a.mediaUrl.isNullOrBlank()) {
-                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.mediaUrl)))
-                        }
-                        if (!a.read) {
-                            lifecycleScope.launch { runCatching { repo.markAlertRead(fid, a.id) } }
-                        }
-                    }
-                )
+    /** Small reassuring/alerting strip at the top of Home summarizing the newest unread alert. */
+    private fun homeAlertBanner(alert: FamilyAlert, onClick: () -> Unit): View {
+        val (fg, bg) = severityColors(alert.severity)
+        val card = com.google.android.material.card.MaterialCardView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(8) }
+            radius = dp(14).toFloat()
+            cardElevation = 0f
+            setCardBackgroundColor(bg)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        row.addView(ImageView(this).apply {
+            setImageResource(alertIconRes(alert.type))
+            imageTintList = android.content.res.ColorStateList.valueOf(fg)
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+        })
+        row.addView(TextView(this).apply {
+            text = "${alert.title} · ${relativeTime(alert.createdAtMs)}"
+            setTextColor(fg)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            textSize = 13f
+            setPadding(dp(10), 0, 0, 0)
+        })
+        card.addView(row)
+        return card
+    }
+
+    /** Kicks off (cached) reverse-geocoding + a map-pin thumbnail for a device's last known spot. */
+    private fun prefetchLocationMeta(device: DeviceStatus) {
+        val loc = device.lastLocation ?: return
+        val key = "%.4f,%.4f".format(loc.lat, loc.lng)
+        if (addressCache.containsKey(key) && mapBitmapCache.containsKey(key)) return
+        lifecycleScope.launch {
+            if (!addressCache.containsKey(key)) {
+                addressCache[key] = runCatching { GoogleGeoApi.reverseGeocode(this@DashboardActivity, loc.lat, loc.lng) }.getOrNull()
             }
-        )
+            if (!mapBitmapCache.containsKey(key)) {
+                mapBitmapCache[key] = runCatching {
+                    GoogleGeoApi.staticMapBitmap(this@DashboardActivity, loc.lat, loc.lng, 640, 280)
+                }.getOrNull()
+            }
+            if (binding.tabs.selectedTabPosition == 0) showTab(0)
+        }
+    }
+
+    private inner class DeviceCardAdapter(private val rows: List<DeviceStatus>) :
+        RecyclerView.Adapter<DeviceCardAdapter.VH>() {
+        inner class VH(val binding: ItemDeviceCardBinding) : RecyclerView.ViewHolder(binding.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
+            VH(ItemDeviceCardBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+        override fun getItemCount() = rows.size
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val d = rows[position]
+            val b = holder.binding
+            val online = isDeviceOnline(d)
+
+            b.childName.text = d.childName
+            b.statusPill.text = if (online) "Online" else "Offline"
+            val (fg, bg) = if (online) {
+                ContextCompat.getColor(this@DashboardActivity, R.color.status_online) to
+                    ContextCompat.getColor(this@DashboardActivity, R.color.status_online_bg)
+            } else {
+                ContextCompat.getColor(this@DashboardActivity, R.color.status_offline) to
+                    ContextCompat.getColor(this@DashboardActivity, R.color.status_offline_bg)
+            }
+            b.statusPill.setTextColor(fg)
+            (b.statusPill.background as? android.graphics.drawable.GradientDrawable)?.mutate()
+                ?.let { (it as android.graphics.drawable.GradientDrawable).setColor(bg) }
+
+            b.metaLine.text = buildString {
+                append(if (d.batteryPercent >= 0) "Battery ${d.batteryPercent}%" else "Battery unknown")
+                if (d.charging) append(" (charging)")
+                append(" · Screen time today: ${d.todayScreenMinutes} min")
+            }
+
+            val loc = d.lastLocation
+            if (loc != null) {
+                val key = "%.4f,%.4f".format(loc.lat, loc.lng)
+                val bitmap = mapBitmapCache[key]
+                val address = addressCache[key]
+                b.mapPlaceholderText.visibility = if (bitmap != null) View.GONE else View.VISIBLE
+                b.mapPlaceholderText.text = address ?: "Loading map…"
+                b.mapThumb.visibility = if (bitmap != null) View.VISIBLE else View.GONE
+                if (bitmap != null) b.mapThumb.setImageBitmap(bitmap)
+                if (!address.isNullOrBlank()) {
+                    b.addressLine.visibility = View.VISIBLE
+                    b.addressLine.text = address
+                } else {
+                    b.addressLine.visibility = View.GONE
+                }
+                b.mapFrame.setOnClickListener { openDeviceMap(d) }
+                b.actionMap.visibility = View.VISIBLE
+                b.actionMap.setOnClickListener { openDeviceMap(d) }
+            } else {
+                b.mapThumb.visibility = View.GONE
+                b.mapPlaceholderText.visibility = View.VISIBLE
+                b.mapPlaceholderText.text = "Waiting for first location…"
+                b.addressLine.visibility = View.GONE
+                b.actionMap.visibility = View.GONE
+                b.mapFrame.setOnClickListener(null)
+            }
+
+            val latestAlert = alerts.filter { it.deviceId == d.id }.maxByOrNull { it.createdAtMs }
+            if (latestAlert != null) {
+                b.latestAlertRow.visibility = View.VISIBLE
+                b.latestAlertIcon.setImageResource(alertIconRes(latestAlert.type))
+                val (fgSev, _) = severityColors(latestAlert.severity)
+                b.latestAlertIcon.imageTintList = android.content.res.ColorStateList.valueOf(fgSev)
+                b.latestAlertText.text = "${latestAlert.title} · ${relativeTime(latestAlert.createdAtMs)}"
+                b.latestAlertRow.setOnClickListener { binding.tabs.getTabAt(1)?.select() }
+            } else {
+                b.latestAlertRow.visibility = View.GONE
+            }
+
+            b.actionChat.setOnClickListener {
+                startActivity(Intent(this@DashboardActivity, FamilyChatActivity::class.java))
+            }
+            val locked = isDeviceLocked(d.id)
+            b.actionLock.text = if (locked) "Unlock" else "Lock"
+            b.actionLock.setOnClickListener {
+                sendQuickCommand(d, if (locked) SafetyCommandType.UNLOCK_DEVICE else SafetyCommandType.LOCK_DEVICE)
+            }
+            b.actionScreenShare.setOnClickListener {
+                sendQuickCommand(d, SafetyCommandType.SCREEN_SHARE, screenShareDurationMinutes)
+            }
+
+            b.detailText.text = buildString {
+                append("Monitoring: ${if (d.monitoringActive) "on" else "off"} · Notification access: ${if (d.notificationAccess) "on" else "off"}\n")
+                append(
+                    "Consents — screen:${d.screenShareConsent} camera:${d.cameraCheckConsent} " +
+                        "mic:${d.micCheckConsent} messages:${d.messageMonitorConsent} usage:${d.usageConsent}"
+                )
+                if (d.offlineCallEnabled) {
+                    append("\nOffline auto-call enabled to ${d.offlineCallNumber ?: "not set"}")
+                }
+            }
+            b.detailText.visibility = View.GONE
+            b.moreDetails.text = "Show more details"
+            b.moreDetails.setOnClickListener {
+                val show = b.detailText.visibility != View.VISIBLE
+                b.detailText.visibility = if (show) View.VISIBLE else View.GONE
+                b.moreDetails.text = if (show) "Hide details" else "Show more details"
+            }
+        }
+    }
+
+    /** Best-effort "is it locked right now" from the most recent LOCK/UNLOCK command for this device. */
+    private fun isDeviceLocked(deviceId: String): Boolean {
+        val latest = commands
+            .filter { it.deviceId == deviceId && (it.type == SafetyCommandType.LOCK_DEVICE || it.type == SafetyCommandType.UNLOCK_DEVICE) }
+            .maxByOrNull { it.requestedAtMs }
+            ?: return false
+        return latest.type == SafetyCommandType.LOCK_DEVICE &&
+            latest.status != com.sarechild.shared.SafetyCommandStatus.DECLINED &&
+            latest.status != com.sarechild.shared.SafetyCommandStatus.FAILED &&
+            latest.status != com.sarechild.shared.SafetyCommandStatus.CANCELLED
+    }
+
+    private fun openDeviceMap(d: DeviceStatus) {
+        val loc = d.lastLocation ?: return
+        val trail = locationTrail.filter { it.deviceId == d.id }.takeLast(20)
+        val intent = Intent(this, DeviceMapActivity::class.java).apply {
+            putExtra(DeviceMapActivity.EXTRA_CHILD_NAME, d.childName)
+            putExtra(DeviceMapActivity.EXTRA_LAT, loc.lat)
+            putExtra(DeviceMapActivity.EXTRA_LNG, loc.lng)
+            putExtra(DeviceMapActivity.EXTRA_TRAIL_LATS, trail.mapNotNull { it.location?.lat }.toDoubleArray())
+            putExtra(DeviceMapActivity.EXTRA_TRAIL_LNGS, trail.mapNotNull { it.location?.lng }.toDoubleArray())
+        }
+        startActivity(intent)
+    }
+
+    private fun sendQuickCommand(device: DeviceStatus, type: SafetyCommandType, durationMinutes: Int? = null) {
+        val fid = familyId ?: return
+        lifecycleScope.launch {
+            runCatching { repo.createSafetyCommand(fid, device.id, type, durationMinutes) }
+                .onSuccess {
+                    Toast.makeText(this@DashboardActivity, "Request sent — child must Accept on their phone", Toast.LENGTH_LONG).show()
+                }
+                .onFailure { Toast.makeText(this@DashboardActivity, it.message, Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    /** "3 min ago" style relative time, falling back to a date for anything older than a week. */
+    private fun relativeTime(atMs: Long): String {
+        if (atMs <= 0L) return "unknown time"
+        val now = System.currentTimeMillis()
+        val diff = now - atMs
+        if (diff < 0 || diff > 7L * 24 * 60 * 60 * 1000) {
+            return SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(atMs))
+        }
+        return DateUtils.getRelativeTimeSpanString(
+            atMs, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE
+        ).toString()
+    }
+
+    /** (foreground, background) color pair for a severity, used for icon tint + chip fill. */
+    private fun severityColors(severity: AlertSeverity): Pair<Int, Int> {
+        val (fgRes, bgRes) = when (severity) {
+            AlertSeverity.CRITICAL -> R.color.severity_critical to R.color.severity_critical_bg
+            AlertSeverity.HIGH -> R.color.severity_high to R.color.severity_high_bg
+            AlertSeverity.MEDIUM -> R.color.severity_medium to R.color.severity_medium_bg
+            AlertSeverity.LOW -> R.color.severity_low to R.color.severity_low_bg
+        }
+        return ContextCompat.getColor(this, fgRes) to ContextCompat.getColor(this, bgRes)
+    }
+
+    /** Groups the (already technical) AlertType enum into a small set of plain-language icons. */
+    private fun alertIconRes(type: AlertType): Int = when (type) {
+        AlertType.SOS -> R.drawable.ic_alert_sos
+        AlertType.GEOFENCE_ENTER, AlertType.GEOFENCE_EXIT -> R.drawable.ic_alert_location
+        AlertType.LOW_BATTERY -> R.drawable.ic_alert_battery
+        AlertType.WENT_DARK -> R.drawable.ic_offline
+        AlertType.TAMPER, AlertType.PERMISSION_REVOKED, AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED,
+        AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE -> R.drawable.ic_alert_shield
+        AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> R.drawable.ic_alert_message
+        AlertType.APP_INSTALL, AlertType.APP_UNINSTALL, AlertType.USAGE_LIMIT, AlertType.APP_BLOCKED -> R.drawable.ic_alert_app
+        AlertType.CHECK_IN, AlertType.OFFLINE_EVIDENCE, AlertType.CALL_SMS_SYNC -> R.drawable.ic_alert_info
+    }
+
+    /** Human, plain-language summary of an alert category — avoids parents needing to know enum jargon. */
+    private fun alertCategoryLabel(type: AlertType): String = when (type) {
+        AlertType.SOS -> "Emergency SOS"
+        AlertType.GEOFENCE_ENTER, AlertType.GEOFENCE_EXIT -> "Safe zone"
+        AlertType.LOW_BATTERY -> "Battery"
+        AlertType.WENT_DARK -> "Connection"
+        AlertType.TAMPER, AlertType.PERMISSION_REVOKED -> "Device tampering"
+        AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE,
+        AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED -> "Safety check"
+        AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> "Message safety"
+        AlertType.APP_INSTALL, AlertType.APP_UNINSTALL -> "App activity"
+        AlertType.USAGE_LIMIT, AlertType.APP_BLOCKED -> "Screen time"
+        AlertType.CHECK_IN -> "Check-in"
+        AlertType.OFFLINE_EVIDENCE, AlertType.CALL_SMS_SYNC -> "Update"
+    }
+
+    private fun showAlertsTab(container: FrameLayout) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), 0)
+        }
+        container.addView(root, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Alerts"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+
+        val filterRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, dp(10))
+        }
+        val criticalCount = alerts.count { it.severity == AlertSeverity.CRITICAL || it.severity == AlertSeverity.HIGH }
+        filterRow.addView(filterChip("All (${alerts.size})", alertFilter == AlertFilter.ALL) {
+            alertFilter = AlertFilter.ALL
+            showTab(1)
+        })
+        filterRow.addView(filterChip("Critical ($criticalCount)", alertFilter == AlertFilter.CRITICAL) {
+            alertFilter = AlertFilter.CRITICAL
+            showTab(1)
+        })
+        filterRow.addView(filterChip("Info", alertFilter == AlertFilter.INFO) {
+            alertFilter = AlertFilter.INFO
+            showTab(1)
+        })
+        root.addView(filterRow)
+
+        val filtered = when (alertFilter) {
+            AlertFilter.ALL -> alerts
+            AlertFilter.CRITICAL -> alerts.filter { it.severity == AlertSeverity.CRITICAL || it.severity == AlertSeverity.HIGH }
+            AlertFilter.INFO -> alerts.filter { it.severity == AlertSeverity.LOW || it.severity == AlertSeverity.MEDIUM }
+        }
+
+        if (filtered.isEmpty()) {
+            val emptyBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(16), dp(48), dp(16), dp(24))
+            }
+            emptyBox.addView(ImageView(this).apply {
+                setImageResource(R.drawable.ic_alert_shield)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(this@DashboardActivity, R.color.brand_green)
+                )
+                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+            })
+            emptyBox.addView(TextView(this).apply {
+                text = if (alerts.isEmpty()) "All quiet — no alerts yet" else "No alerts in this filter"
+                textSize = 17f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, dp(12), 0, dp(4))
+            })
+            emptyBox.addView(TextView(this).apply {
+                text = "That's a good thing! Safety alerts from your child's device will show up here."
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+                gravity = Gravity.CENTER_HORIZONTAL
+            })
+            root.addView(emptyBox)
+            return
+        }
+
+        val recycler = RecyclerView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            layoutManager = LinearLayoutManager(this@DashboardActivity)
+            setPadding(0, 0, 0, dp(16))
+            clipToPadding = false
+        }
+        root.addView(recycler)
+        recycler.adapter = AlertCardAdapter(filtered)
+    }
+
+    private fun filterChip(label: String, selected: Boolean, onClick: () -> Unit): View {
+        return MaterialButton(
+            this,
+            null,
+            if (selected) 0 else com.google.android.material.R.attr.materialButtonOutlinedStyle
+        ).apply {
+            text = label
+            textSize = 12f
+            insetTop = 0
+            insetBottom = 0
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.marginEnd = dp(8) }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private inner class AlertCardAdapter(private val rows: List<FamilyAlert>) :
+        RecyclerView.Adapter<AlertCardAdapter.VH>() {
+        inner class VH(val binding: ItemAlertCardBinding) : RecyclerView.ViewHolder(binding.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
+            VH(ItemAlertCardBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+        override fun getItemCount() = rows.size
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val a = rows[position]
+            val b = holder.binding
+            val (fg, bg) = severityColors(a.severity)
+
+            b.alertIcon.setImageResource(alertIconRes(a.type))
+            b.alertIcon.imageTintList = android.content.res.ColorStateList.valueOf(fg)
+            (b.alertIcon.parent as? View)?.background?.mutate()
+                ?.let { (it as? android.graphics.drawable.GradientDrawable)?.setColor(bg) }
+
+            b.alertTitle.text = a.title
+            val deviceName = devices.firstOrNull { it.id == a.deviceId }?.childName
+            b.alertMeta.text = buildString {
+                append(alertCategoryLabel(a.type))
+                if (!deviceName.isNullOrBlank()) append(" · $deviceName")
+                append(" · ${relativeTime(a.createdAtMs)}")
+            }
+            if (!a.snippet.isNullOrBlank()) {
+                b.alertSnippet.visibility = View.VISIBLE
+                b.alertSnippet.text = a.snippet
+            } else {
+                b.alertSnippet.visibility = View.GONE
+            }
+            b.unreadDot.visibility = if (a.read) View.GONE else View.VISIBLE
+            (b.unreadDot.background as? android.graphics.drawable.GradientDrawable)?.mutate()
+                ?.let { (it as android.graphics.drawable.GradientDrawable).setColor(fg) }
+
+            val device = devices.firstOrNull { it.id == a.deviceId }
+            val hasLocation = a.location != null || device?.lastLocation != null
+            if (hasLocation) {
+                b.alertActionMap.visibility = View.VISIBLE
+                b.alertActionMap.setOnClickListener {
+                    val loc = a.location ?: device?.lastLocation ?: return@setOnClickListener
+                    val intent = Intent(this@DashboardActivity, DeviceMapActivity::class.java).apply {
+                        putExtra(DeviceMapActivity.EXTRA_CHILD_NAME, deviceName ?: "Child")
+                        putExtra(DeviceMapActivity.EXTRA_LAT, loc.lat)
+                        putExtra(DeviceMapActivity.EXTRA_LNG, loc.lng)
+                    }
+                    startActivity(intent)
+                }
+            } else {
+                b.alertActionMap.visibility = View.GONE
+            }
+
+            when {
+                !a.mediaUrl.isNullOrBlank() -> {
+                    b.alertActionSecondary.visibility = View.VISIBLE
+                    b.alertActionSecondary.text = "Open media"
+                    b.alertActionSecondary.setOnClickListener {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.mediaUrl)))
+                        if (!a.read) markAlertReadSilently(a)
+                    }
+                }
+                !a.read -> {
+                    b.alertActionSecondary.visibility = View.VISIBLE
+                    b.alertActionSecondary.text = "Mark read"
+                    b.alertActionSecondary.setOnClickListener { markAlertReadSilently(a) }
+                }
+                else -> b.alertActionSecondary.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun markAlertReadSilently(alert: FamilyAlert) {
+        val fid = familyId ?: return
+        lifecycleScope.launch { runCatching { repo.markAlertRead(fid, alert.id) } }
     }
 
     private fun showSafetyTab(container: FrameLayout) {
@@ -607,7 +1168,7 @@ class DashboardActivity : AppCompatActivity() {
                             30 -> 60
                             else -> 5
                         }
-                        showTab(2)
+                        showTab(3)
                     }
                 }
             )
@@ -1200,7 +1761,8 @@ class DashboardActivity : AppCompatActivity() {
                                 familyId = fid
                                 acceptResult.text = "Joined family successfully."
                                 observe(fid)
-                                showTab(6)
+                                moreDetailKey = "guardians"
+                                showTab(3)
                             }
                             .onFailure { acceptResult.text = it.message }
                     }
@@ -1331,8 +1893,8 @@ class DashboardActivity : AppCompatActivity() {
             geofences.map { z ->
                 CardRow(
                     title = z.name,
-                    subtitle = "${z.radiusM.toInt()}m · ${formatSchedule(z)}",
-                    detail = "${"%.4f".format(z.lat)}, ${"%.4f".format(z.lng)}",
+                    subtitle = "${z.radiusM.toInt()}m radius · ${formatSchedule(z)}",
+                    detail = "Center point: ${"%.4f".format(z.lat)}, ${"%.4f".format(z.lng)}",
                     action = "Delete",
                     onAction = {
                         val fid = familyId ?: return@CardRow

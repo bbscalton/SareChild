@@ -22,7 +22,8 @@ enum class AlertType {
     CHECK_IN,
     OFFLINE_EVIDENCE,
     CALL_SMS_SYNC,
-    DEVICE_LOCKED
+    DEVICE_LOCKED,
+    DEVICE_UNLOCKED
 }
 
 enum class AlertSeverity {

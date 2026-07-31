@@ -1,0 +1,86 @@
+// Loads the Google Maps JavaScript API once (idempotent) so we can use the
+// google.maps.Geocoder for reverse-geocoding — the web-service Geocoding REST
+// endpoint doesn't return CORS headers for HTTP-referrer-restricted keys, but
+// the JS SDK's Geocoder is explicitly designed to work with them from a browser.
+// See: https://developers.google.com/maps/documentation/javascript/geocoding
+//
+// We declare only the tiny slice of the Maps JS API surface we actually call,
+// instead of pulling in the full @types/google.maps dependency.
+type GeocoderResult = { formatted_address?: string }
+type GeocoderResponse = { results: GeocoderResult[] }
+type GeocoderRequest = { location: { lat: number; lng: number } }
+type MinimalGoogleMaps = {
+  maps: {
+    Geocoder: new () => {
+      geocode: (request: GeocoderRequest) => Promise<GeocoderResponse>
+    }
+  }
+}
+
+const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined)?.trim()
+
+declare global {
+  interface Window {
+    google?: MinimalGoogleMaps
+  }
+}
+
+let loadPromise: Promise<boolean> | null = null
+
+/** Resolves true once `window.google.maps` is ready, or false if no key is configured / load failed. */
+export function loadGoogleMaps(): Promise<boolean> {
+  if (!GOOGLE_MAPS_BROWSER_KEY) return Promise.resolve(false)
+  if (window.google?.maps) return Promise.resolve(true)
+  if (loadPromise) return loadPromise
+
+  loadPromise = new Promise<boolean>((resolve) => {
+    const existing = document.getElementById('sarechild-google-maps-script')
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true))
+      existing.addEventListener('error', () => resolve(false))
+      return
+    }
+    const script = document.createElement('script')
+    script.id = 'sarechild-google-maps-script'
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_BROWSER_KEY}&v=weekly&loading=async`
+    script.async = true
+    script.defer = true
+    script.onload = () => resolve(true)
+    script.onerror = () => resolve(false)
+    document.head.appendChild(script)
+  })
+  return loadPromise
+}
+
+const geocodeCache = new Map<string, string | null>()
+const geocodeInFlight = new Map<string, Promise<string | null>>()
+
+/** Reverse-geocodes a lat/lng into a short human address, cached per rounded coordinate. */
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`
+  if (geocodeCache.has(key)) return geocodeCache.get(key) ?? null
+  const inFlight = geocodeInFlight.get(key)
+  if (inFlight) return inFlight
+
+  const promise = (async () => {
+    const ready = await loadGoogleMaps()
+    if (!ready || !window.google?.maps) {
+      geocodeCache.set(key, null)
+      return null
+    }
+    try {
+      const geocoder = new window.google.maps.Geocoder()
+      const response = await geocoder.geocode({ location: { lat, lng } })
+      const address = response.results?.[0]?.formatted_address ?? null
+      geocodeCache.set(key, address)
+      return address
+    } catch {
+      geocodeCache.set(key, null)
+      return null
+    } finally {
+      geocodeInFlight.delete(key)
+    }
+  })()
+  geocodeInFlight.set(key, promise)
+  return promise
+}

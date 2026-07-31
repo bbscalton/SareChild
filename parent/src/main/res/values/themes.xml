@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SareChild" parent="Theme.Material3.Light.NoActionBar" />
+    <style name="Theme.SareChild" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/brand_green</item>
+        <item name="colorPrimaryDark">@color/brand_green_dark</item>
+        <item name="colorOnPrimary">@color/surface</item>
+        <item name="colorSecondary">@color/brand_green_dark</item>
+        <item name="colorOnSecondary">@color/surface</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="android:colorBackground">@color/app_bg</item>
+        <item name="colorOnBackground">@color/text_primary</item>
+        <item name="colorError">@color/danger_red</item>
+        <item name="android:statusBarColor">@color/brand_green_dark</item>
+        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
 </resources>

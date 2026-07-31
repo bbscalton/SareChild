@@ -2,6 +2,8 @@ package com.sarechild.parent.geo
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import com.google.android.gms.maps.model.LatLng
 import com.sarechild.parent.BuildConfig
@@ -82,6 +84,48 @@ object GoogleGeoApi {
                 points
             }
         }
+
+    /**
+     * Fetches a "map with a pin" thumbnail bitmap via the Static Maps API — the whole
+     * point being that parents see a picture of where their child is, never a raw
+     * lat/lng pair, without the cost of embedding a full interactive MapView per card.
+     */
+    suspend fun staticMapBitmap(
+        context: Context,
+        lat: Double,
+        lng: Double,
+        widthPx: Int,
+        heightPx: Int,
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL(
+                "https://maps.googleapis.com/maps/api/staticmap" +
+                    "?center=$lat,$lng&zoom=15&size=${widthPx}x$heightPx&scale=2" +
+                    "&maptype=roadmap&markers=color:0x0F6B4C%7C$lat,$lng" +
+                    "&key=${BuildConfig.MAPS_API_KEY}",
+            )
+            val bytes = getBytes(context, url) ?: return@withContext null
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getBytes(context: Context, url: URL): ByteArray? {
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = TIMEOUT_MS
+            readTimeout = TIMEOUT_MS
+            setRequestProperty("X-Android-Package", context.packageName)
+            androidCertSha1(context)?.let { setRequestProperty("X-Android-Cert", it) }
+        }
+        return try {
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+            conn.inputStream.use { it.readBytes() }
+        } finally {
+            conn.disconnect()
+        }
+    }
 
     private fun get(context: Context, url: URL): String? {
         val conn = (url.openConnection() as HttpURLConnection).apply {

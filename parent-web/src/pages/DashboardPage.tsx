@@ -22,12 +22,18 @@ import type {
 } from '../types'
 import { mediaKind } from '../types'
 import type { SafetyCommandType } from '../lib/parentRepo'
+import { alertCategoryLabel, alertIcon, relativeTime, severityTone } from '../lib/alertPresentation'
+import { reverseGeocode } from '../lib/googleMaps'
 
-type Tab = 'devices' | 'alerts' | 'safety' | 'usage' | 'digests' | 'guardians' | 'geofences' | 'pair' | 'tcd'
+type Tab = 'home' | 'alerts' | 'more'
+type MoreSection = 'safety' | 'usage' | 'digests' | 'guardians' | 'geofences' | 'pair' | 'tcd'
+type AlertFilter = 'all' | 'critical' | 'info'
 
 export function DashboardPage() {
   const { user, familyId, trialInfo, signOut, refreshFamilyId } = useAuth()
-  const [tab, setTab] = useState<Tab>('devices')
+  const [tab, setTab] = useState<Tab>('home')
+  const [moreSection, setMoreSection] = useState<MoreSection | null>(null)
+  const [alertFilter, setAlertFilter] = useState<AlertFilter>('all')
   const [devices, setDevices] = useState<DeviceStatus[]>([])
   const [alerts, setAlerts] = useState<FamilyAlert[]>([])
   const [geofences, setGeofences] = useState<GeofenceZone[]>([])
@@ -64,7 +70,7 @@ export function DashboardPage() {
   // trial-cleanup rule cares about this signal, not just login. Throttled to once/hour
   // inside recordParentCheckIn, so this is safe to call on every relevant render.
   useEffect(() => {
-    if (!user || (tab !== 'devices' && tab !== 'alerts')) return
+    if (!user || (tab !== 'home' && tab !== 'alerts')) return
     void repo.recordParentCheckIn(user.uid)
   }, [user, tab])
 
@@ -139,6 +145,18 @@ export function DashboardPage() {
   }, [devices, limitDeviceId, scheduleDeviceId])
 
   const unread = useMemo(() => alerts.filter((a) => !a.read).length, [alerts])
+  const latestUnreadAlert = useMemo(
+    () => alerts.filter((a) => !a.read).sort((a, b) => b.createdAtMs - a.createdAtMs)[0],
+    [alerts],
+  )
+  const filteredAlerts = useMemo(() => {
+    const sorted = [...alerts].sort((a, b) => b.createdAtMs - a.createdAtMs)
+    if (alertFilter === 'all') return sorted
+    if (alertFilter === 'critical') {
+      return sorted.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high')
+    }
+    return sorted.filter((a) => severityTone(a.severity) === 'low' || severityTone(a.severity) === 'medium')
+  }, [alerts, alertFilter])
 
   // Live fleet snapshot derived from the same Firestore listeners already
   // driving the Devices/Alerts tabs, so TCD reflects changes instantly
@@ -531,15 +549,9 @@ export function DashboardPage() {
       <nav className="tabs">
         {(
           [
-            ['devices', 'Devices'],
+            ['home', 'Home'],
             ['alerts', `Alerts${unread ? ` (${unread})` : ''}`],
-            ['safety', 'Safety checks'],
-            ['usage', 'Usage'],
-            ['digests', 'Digests'],
-            ['guardians', 'Guardians'],
-            ['geofences', 'Geofences'],
-            ['pair', 'Pair'],
-            ['tcd', 'TCD Ops'],
+            ['more', 'More'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -554,63 +566,167 @@ export function DashboardPage() {
       </nav>
 
       <main className="panel">
-        {tab === 'devices' && (
+        {tab === 'home' && (
           <section className="stack">
             {devices.length === 0 ? (
               <Empty
                 title="No child devices yet"
-                body="Open the Pair tab, create a code, and enter it on the child phone."
+                body="Open More → Pair a device, create a code, and enter it on the child phone."
               />
             ) : (
-              devices.map((d) => (
-                <DeviceCard
-                  key={d.id}
-                  device={d}
-                  online={isDeviceOnline(d, nowTick)}
-                  trail={locationTrail.filter((s) => s.deviceId === d.id).slice(0, 5)}
-                />
-              ))
+              <>
+                <div className="home-summary">
+                  <div>
+                    <p className="eyebrow">{devices.length === 1 ? devices[0]!.childName : 'Your family'}</p>
+                    <h2>
+                      {devices.filter((d) => isDeviceOnline(d, nowTick)).length} of {devices.length} online
+                    </h2>
+                  </div>
+                  {latestUnreadAlert && (
+                    <button
+                      type="button"
+                      className={`home-alert-banner tone-${severityTone(latestUnreadAlert.severity)}`}
+                      onClick={() => setTab('alerts')}
+                    >
+                      <span className="alert-glyph" aria-hidden>
+                        {alertIcon(latestUnreadAlert.type)}
+                      </span>
+                      <span>
+                        {latestUnreadAlert.title} · {relativeTime(latestUnreadAlert.createdAtMs)}
+                      </span>
+                    </button>
+                  )}
+                </div>
+                {devices.map((d) => (
+                  <DeviceCard
+                    key={d.id}
+                    device={d}
+                    online={isDeviceOnline(d, nowTick)}
+                    trail={locationTrail.filter((s) => s.deviceId === d.id).slice(0, 5)}
+                    latestAlert={alerts.filter((a) => a.deviceId === d.id).sort((a, b) => b.createdAtMs - a.createdAtMs)[0]}
+                    onOpenAlerts={() => setTab('alerts')}
+                    onOpenSafety={() => {
+                      setTab('more')
+                      setMoreSection('safety')
+                    }}
+                  />
+                ))}
+              </>
             )}
           </section>
         )}
 
         {tab === 'alerts' && (
           <section className="stack">
-            {alerts.length === 0 ? (
-              <Empty title="No alerts yet" body="Safety alerts from the child device will appear here." />
+            <div className="filter-row">
+              {(
+                [
+                  ['all', `All (${alerts.length})`],
+                  ['critical', `Critical (${alerts.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high').length})`],
+                  ['info', 'Info'],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={alertFilter === id ? 'chip active' : 'chip'}
+                  onClick={() => setAlertFilter(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {filteredAlerts.length === 0 ? (
+              <Empty
+                title={alerts.length === 0 ? 'All quiet — no alerts yet' : 'No alerts in this filter'}
+                body="That's a good thing! Safety alerts from your child's device will show up here."
+              />
             ) : (
-              alerts.map((a) => (
-                <article key={a.id} className={`card ${a.read ? '' : 'unread'}`}>
-                  <div className="card-head">
-                    <h3>{a.title}</h3>
-                    <span className={`pill sev-${a.severity.toLowerCase()}`}>{a.severity}</span>
-                  </div>
-                  <p className="muted small">
-                    {a.type}
-                    {a.category ? ` · ${a.category}` : ''} ·{' '}
-                    {new Date(a.createdAtMs).toLocaleString()}
-                  </p>
-                  {a.snippet && <p>{a.snippet}</p>}
-                  {a.riskScore != null && a.riskScore > 0 && (
-                    <p className="muted small">Risk score: {a.riskScore}</p>
-                  )}
-                  {a.mediaUrl && <AlertMedia url={a.mediaUrl} />}
-                  {!a.read && familyId && (
-                    <button
-                      className="btn ghost compact"
-                      type="button"
-                      onClick={() => void repo.markAlertRead(familyId, a.id)}
-                    >
-                      Mark read
-                    </button>
-                  )}
-                </article>
-              ))
+              filteredAlerts.map((a) => {
+                const device = devices.find((d) => d.id === a.deviceId)
+                const location = a.location ?? device?.lastLocation ?? null
+                return (
+                  <article key={a.id} className={`card alert-card tone-${severityTone(a.severity)} ${a.read ? '' : 'unread'}`}>
+                    <div className="alert-icon" aria-hidden>
+                      {alertIcon(a.type)}
+                    </div>
+                    <div className="alert-body">
+                      <div className="card-head">
+                        <h3>{a.title}</h3>
+                        {!a.read && <span className="unread-dot" aria-label="Unread" />}
+                      </div>
+                      <p className="muted small">
+                        {alertCategoryLabel(a.type)}
+                        {device ? ` · ${device.childName}` : ''} · {relativeTime(a.createdAtMs)}
+                      </p>
+                      {a.snippet && <p>{a.snippet}</p>}
+                      {a.mediaUrl && <AlertMedia url={a.mediaUrl} />}
+                      <div className="btn-row">
+                        {location && (
+                          <a
+                            className="btn ghost compact"
+                            href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open map
+                          </a>
+                        )}
+                        {!a.read && familyId && (
+                          <button
+                            className="btn ghost compact"
+                            type="button"
+                            onClick={() => void repo.markAlertRead(familyId, a.id)}
+                          >
+                            Mark read
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                )
+              })
             )}
           </section>
         )}
 
-        {tab === 'safety' && (
+        {tab === 'more' && moreSection === null && (
+          <section className="stack">
+            <h2>More</h2>
+            <p className="muted">Everything else — pairing, safe zones, limits, and family setup.</p>
+            {(
+              [
+                ['safety', 'Safety checks', 'Screen share, camera/voice checks, lock/unlock, ring device'],
+                ['usage', 'App usage & limits', 'Daily limits, scheduled app blocks, screen time history'],
+                ['geofences', 'Safe zones (geofences)', 'Get notified when your child enters or leaves a place'],
+                ['digests', 'Weekly digests', 'A weekly summary of alerts and activity'],
+                ['guardians', 'Guardians & caregivers', 'Invite family members, manage safe WhatsApp contacts'],
+                ['pair', 'Pair a device', 'Connect a new child phone or add an SOS contact'],
+                ['tcd', 'TCD Ops', 'Technical control dashboard for live platform health'],
+              ] as const
+            ).map(([id, title, subtitle]) => (
+              <button key={id} type="button" className="card row-card more-row" onClick={() => setMoreSection(id)}>
+                <div>
+                  <h3>{title}</h3>
+                  <p className="muted small">{subtitle}</p>
+                </div>
+                <span className="chevron" aria-hidden>
+                  ›
+                </span>
+              </button>
+            ))}
+          </section>
+        )}
+
+        {tab === 'more' && moreSection !== null && (
+          <div className="more-back-row">
+            <button className="btn ghost compact" type="button" onClick={() => setMoreSection(null)}>
+              ‹ More
+            </button>
+          </div>
+        )}
+
+        {tab === 'more' && moreSection === 'safety' && (
           <section className="stack">
             <div className="card form-card">
               <h3>Visible safety checks</h3>
@@ -929,7 +1045,7 @@ export function DashboardPage() {
           </section>
         )}
 
-        {tab === 'usage' && (
+        {tab === 'more' && moreSection === 'usage' && (
           <section className="stack">
             <div className="card form-card">
               <h3>Add app time limit</h3>
@@ -1136,7 +1252,7 @@ export function DashboardPage() {
           </section>
         )}
 
-        {tab === 'digests' && (
+        {tab === 'more' && moreSection === 'digests' && (
           <section className="stack">
             {digests.length === 0 ? (
               <Empty
@@ -1163,7 +1279,7 @@ export function DashboardPage() {
           </section>
         )}
 
-        {tab === 'guardians' && (
+        {tab === 'more' && moreSection === 'guardians' && (
           <section className="stack">
             <div className="card form-card">
               <h3>Invite a caregiver</h3>
@@ -1219,7 +1335,7 @@ export function DashboardPage() {
           </section>
         )}
 
-        {tab === 'geofences' && (
+        {tab === 'more' && moreSection === 'geofences' && (
           <section className="stack">
             <div className="card form-card">
               <h3>Add geofence at child’s last location</h3>
@@ -1275,7 +1391,7 @@ export function DashboardPage() {
           </section>
         )}
 
-        {tab === 'pair' && (
+        {tab === 'more' && moreSection === 'pair' && (
           <section className="stack">
             <div className="card form-card">
               <h3>Generate pairing code</h3>
@@ -1397,7 +1513,7 @@ export function DashboardPage() {
           </section>
         )}
 
-        {tab === 'tcd' && (
+        {tab === 'more' && moreSection === 'tcd' && (
           <section className="stack">
             <div className="card form-card">
               <h3>Technical Control Dashboard (TCD)</h3>
@@ -1591,10 +1707,16 @@ function DeviceCard({
   device,
   online,
   trail,
+  latestAlert,
+  onOpenAlerts,
+  onOpenSafety,
 }: {
   device: DeviceStatus
   online: boolean
   trail: LocationTrailSample[]
+  latestAlert?: FamilyAlert
+  onOpenAlerts: () => void
+  onOpenSafety: () => void
 }) {
   const mapsUrl = device.lastLocation
     ? `https://www.google.com/maps?q=${device.lastLocation.lat},${device.lastLocation.lng}`
@@ -1602,44 +1724,96 @@ function DeviceCard({
   const thumbUrl = device.lastLocation
     ? staticMapThumbUrl(device.lastLocation.lat, device.lastLocation.lng)
     : null
+  const [address, setAddress] = useState<string | null>(null)
+  const [showDetails, setShowDetails] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    if (!device.lastLocation) {
+      setAddress(null)
+      return
+    }
+    void reverseGeocode(device.lastLocation.lat, device.lastLocation.lng).then((result) => {
+      if (!cancelled) setAddress(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [device.lastLocation?.lat, device.lastLocation?.lng])
 
   return (
-    <article className="card">
+    <article className="card device-card">
       <div className="card-head">
         <h3>{device.childName}</h3>
         <span className={`pill ${online ? 'online' : 'offline'}`}>
           {online ? 'Online' : 'Offline / went dark'}
         </span>
       </div>
-      <ul className="meta">
-        <li>
-          Battery: {device.batteryPercent >= 0 ? `${device.batteryPercent}%` : '—'}
-          {device.charging ? ' (charging)' : ''}
-        </li>
-        <li>Screen time today: {device.todayScreenMinutes} min</li>
-        <li>Monitoring: {device.monitoringActive ? 'on' : 'off'}</li>
-        <li>Session: {device.activeSession || 'none'}</li>
-        <li>Notification access: {device.notificationAccess ? 'yes' : 'no'}</li>
-        <li>Location permission: {device.locationPermission ? 'yes' : 'no'}</li>
-        <li>
-          Consents — screen: {yesNo(device.screenShareConsent)}, camera:{' '}
-          {yesNo(device.cameraCheckConsent)}, mic: {yesNo(device.micCheckConsent)}, messages:{' '}
-          {yesNo(device.messageMonitorConsent)}, installs: {yesNo(device.installMonitorConsent)},
-          usage: {yesNo(device.usageConsent)}, call/SMS: {yesNo(device.callSmsConsent)}, offline SMS
-          fallback: {yesNo(device.offlineSmsFallbackConsent)}, offline auto-call:{' '}
-          {yesNo(device.offlineAutoCallConsent)}
-        </li>
-        {device.lastLocation && (
-          <li>
-            Last location: {device.lastLocation.lat.toFixed(5)},{' '}
-            {device.lastLocation.lng.toFixed(5)}
-          </li>
-        )}
-      </ul>
-      {thumbUrl && (
-        <a href={mapsUrl ?? undefined} target="_blank" rel="noreferrer" className="frame-preview">
+      <p className="muted small">
+        Battery: {device.batteryPercent >= 0 ? `${device.batteryPercent}%` : '—'}
+        {device.charging ? ' (charging)' : ''} · Screen time today: {device.todayScreenMinutes} min
+      </p>
+
+      {thumbUrl ? (
+        <a href={mapsUrl ?? undefined} target="_blank" rel="noreferrer" className="map-thumb">
           <img src={thumbUrl} alt={`Map thumbnail for ${device.childName}`} loading="lazy" />
         </a>
+      ) : (
+        <div className="map-thumb map-thumb-placeholder">
+          <span aria-hidden>📍</span>
+          <span>{device.lastLocation ? 'Loading map…' : 'Waiting for first location…'}</span>
+        </div>
+      )}
+      {address && (
+        <p className="address-line">
+          <span aria-hidden>📍 </span>
+          {address}
+        </p>
+      )}
+
+      {latestAlert && (
+        <button type="button" className={`mini-alert-row tone-${severityTone(latestAlert.severity)}`} onClick={onOpenAlerts}>
+          <span aria-hidden>{alertIcon(latestAlert.type)}</span>
+          <span>
+            {latestAlert.title} · {relativeTime(latestAlert.createdAtMs)}
+          </span>
+        </button>
+      )}
+
+      <div className="btn-row">
+        {mapsUrl && (
+          <a className="btn primary compact" href={mapsUrl} target="_blank" rel="noreferrer">
+            Open map
+          </a>
+        )}
+        <button className="btn ghost compact" type="button" onClick={onOpenSafety}>
+          Safety checks
+        </button>
+      </div>
+
+      <button type="button" className="details-toggle" onClick={() => setShowDetails((v) => !v)}>
+        {showDetails ? 'Hide details' : 'Show more details'}
+      </button>
+      {showDetails && (
+        <ul className="meta">
+          <li>Monitoring: {device.monitoringActive ? 'on' : 'off'}</li>
+          <li>Session: {device.activeSession || 'none'}</li>
+          <li>Notification access: {device.notificationAccess ? 'yes' : 'no'}</li>
+          <li>Location permission: {device.locationPermission ? 'yes' : 'no'}</li>
+          <li>
+            Consents — screen: {yesNo(device.screenShareConsent)}, camera:{' '}
+            {yesNo(device.cameraCheckConsent)}, mic: {yesNo(device.micCheckConsent)}, messages:{' '}
+            {yesNo(device.messageMonitorConsent)}, installs: {yesNo(device.installMonitorConsent)},
+            usage: {yesNo(device.usageConsent)}, call/SMS: {yesNo(device.callSmsConsent)}, offline SMS
+            fallback: {yesNo(device.offlineSmsFallbackConsent)}, offline auto-call:{' '}
+            {yesNo(device.offlineAutoCallConsent)}
+          </li>
+          {device.lastLocation && (
+            <li>
+              Raw coordinates: {device.lastLocation.lat.toFixed(5)}, {device.lastLocation.lng.toFixed(5)}
+            </li>
+          )}
+        </ul>
       )}
       {device.batteryHistory.length > 0 && (
         <details className="battery-history">

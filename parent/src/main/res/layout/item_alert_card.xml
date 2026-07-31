@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp"
+    app:cardCornerRadius="18dp"
+    app:cardElevation="0dp"
+    app:strokeWidth="1dp"
+    app:strokeColor="@color/outline"
+    app:cardBackgroundColor="@color/surface">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="14dp">
+
+        <FrameLayout
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_icon_circle">
+
+            <ImageView
+                android:id="@+id/alertIcon"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:contentDescription="@null" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/alertTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                tools:text="Calton left the safe zone" />
+
+            <TextView
+                android:id="@+id/alertMeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                tools:text="3 min ago" />
+
+            <TextView
+                android:id="@+id/alertSnippet"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:visibility="gone"
+                tools:text="Left Lincoln Elementary School's safe zone" />
+
+            <LinearLayout
+                android:id="@+id/alertActions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/alertActionMap"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:text="Open map"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/alertActionSecondary"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:textSize="12sp"
+                    android:visibility="gone"
+                    tools:text="Mark read" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <View
+            android:id="@+id/unreadDot"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:layout_marginStart="6dp"
+            android:layout_gravity="top"
+            android:background="@drawable/bg_icon_circle"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>
