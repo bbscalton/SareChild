@@ -419,6 +419,98 @@ data class WhatsAppEvent(
     )
 }
 
+/**
+ * One row in the "Typing safety / message shield" timeline (families/{familyId}/typingEvents).
+ * Written by [com.sarechild.child.monitoring.MessageMonitorAccessibilityService] on the child
+ * device from on-screen text it can already legally see via Android's Accessibility API — never
+ * from a keylogger, root, or WhatsApp's (encrypted) database. Written for every settled text
+ * change in a monitored app (debounced, not per-keystroke) so the parent timeline is complete;
+ * [matchedWords]/[severity] are only non-empty/above LOW when a prohibited word matched.
+ * Password/PIN fields ([AccessibilityNodeInfo.isPassword]) are always skipped before this is built.
+ */
+data class TypingSafetyEvent(
+    val id: String = "",
+    val deviceId: String = "",
+    val packageName: String = "",
+    val appLabel: String = "",
+    /** Truncated on-screen text snippet — never the full raw text history, just the latest settle. */
+    val snippet: String = "",
+    val matchedWords: List<String> = emptyList(),
+    val category: String? = null,
+    val severity: AlertSeverity = AlertSeverity.LOW,
+    val riskScore: Int = 0,
+    /** "communication" (heuristic messaging-app list) or "360" (all-apps mode). */
+    val mode: String = "communication",
+    val reviewed: Boolean = false,
+    val createdAtMs: Long = System.currentTimeMillis(),
+    val retainUntilMs: Long = System.currentTimeMillis() +
+        SareChildConstants.ALERT_RETENTION_DAYS * 24L * 60L * 60L * 1000L
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "deviceId" to deviceId,
+        "packageName" to packageName,
+        "appLabel" to appLabel,
+        "snippet" to snippet,
+        "matchedWords" to matchedWords,
+        "category" to category,
+        "severity" to severity.name,
+        "riskScore" to riskScore,
+        "mode" to mode,
+        "reviewed" to reviewed,
+        "createdAtMs" to createdAtMs,
+        "retainUntilMs" to retainUntilMs
+    )
+}
+
+/**
+ * Parent-configurable rules for the Typing safety monitor (families/{familyId}/typingSafetySettings/default).
+ * [prohibitedWords] are added on top of the baseline defaults in [DefaultKeywords] / the shared
+ * `keywordLists/default` doc — this list is per-family so a parent can tailor it without affecting
+ * every other family. [mode360] flips monitoring from "communication apps only" to "every
+ * foreground app except the whitelist" (still never passwords, never SareChild itself).
+ */
+data class TypingSafetySettings(
+    val prohibitedWords: List<String> = emptyList(),
+    val alwaysMonitorPackages: List<String> = emptyList(),
+    val whitelistPackages: List<String> = emptyList(),
+    val mode360: Boolean = false,
+    val autoBlockEnabled: Boolean = false,
+    /** LOW | MEDIUM | HIGH | CRITICAL — minimum severity that triggers an automatic app block. */
+    val autoBlockSeverity: AlertSeverity = AlertSeverity.HIGH
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "prohibitedWords" to prohibitedWords,
+        "alwaysMonitorPackages" to alwaysMonitorPackages,
+        "whitelistPackages" to whitelistPackages,
+        "mode360" to mode360,
+        "autoBlockEnabled" to autoBlockEnabled,
+        "autoBlockSeverity" to autoBlockSeverity.name
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>?): TypingSafetySettings {
+            if (map == null) return TypingSafetySettings()
+            @Suppress("UNCHECKED_CAST")
+            val words = (map["prohibitedWords"] as? List<String>) ?: emptyList()
+            @Suppress("UNCHECKED_CAST")
+            val always = (map["alwaysMonitorPackages"] as? List<String>) ?: emptyList()
+            @Suppress("UNCHECKED_CAST")
+            val whitelist = (map["whitelistPackages"] as? List<String>) ?: emptyList()
+            val severity = runCatching {
+                AlertSeverity.valueOf(map["autoBlockSeverity"] as? String ?: "HIGH")
+            }.getOrDefault(AlertSeverity.HIGH)
+            return TypingSafetySettings(
+                prohibitedWords = words,
+                alwaysMonitorPackages = always,
+                whitelistPackages = whitelist,
+                mode360 = map["mode360"] as? Boolean ?: false,
+                autoBlockEnabled = map["autoBlockEnabled"] as? Boolean ?: false,
+                autoBlockSeverity = severity
+            )
+        }
+    }
+}
+
 data class GuardianInfo(
     val uid: String = "",
     val email: String = "",

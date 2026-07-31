@@ -230,6 +230,37 @@ export type TrialInfo = {
   lastParentCheckInAt: number | null
 }
 
+// ---------------------------------------------------------------------------
+// Typing safety / message shield section (families/{familyId}/typingEvents +
+// .../typingSafetySettings). Written by the child app from on-screen text exposed via
+// Android's Accessibility API (never password/PIN fields, never an app's encrypted
+// database) — see child/monitoring/MessageMonitorAccessibilityService.kt.
+// ---------------------------------------------------------------------------
+
+export type TypingSafetyEvent = {
+  id: string
+  deviceId: string
+  packageName: string
+  appLabel: string
+  snippet: string
+  matchedWords: string[]
+  category?: string | null
+  severity: string
+  riskScore: number
+  mode: string
+  reviewed: boolean
+  createdAtMs: number
+}
+
+export type TypingSafetySettings = {
+  prohibitedWords: string[]
+  alwaysMonitorPackages: string[]
+  whitelistPackages: string[]
+  mode360: boolean
+  autoBlockEnabled: boolean
+  autoBlockSeverity: string
+}
+
 export type GuardianRole = 'OWNER' | 'CAREGIVER'
 
 export type GuardianInfo = {

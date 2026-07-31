@@ -39,17 +39,33 @@ class KeywordMatcher(
     }
 
     companion object {
-        fun fromFirestoreMap(map: Map<String, Any?>?): KeywordMatcher {
-            if (map == null) return KeywordMatcher()
+        /**
+         * Builds a matcher from the shared `keywordLists/default` Firestore doc, optionally
+         * merging in a family's own custom "prohibited words" (see [com.sarechild.shared
+         * .TypingSafetySettings.prohibitedWords]) under [KeywordCategory.OTHER] so a parent can
+         * extend detection without needing write access to the app-wide default list.
+         */
+        fun fromFirestoreMap(map: Map<String, Any?>?, extraWords: List<String> = emptyList()): KeywordMatcher {
             val categories = mutableMapOf<KeywordCategory, List<String>>()
-            KeywordCategory.entries.forEach { cat ->
-                val key = cat.name.lowercase()
-                @Suppress("UNCHECKED_CAST")
-                val list = (map[key] as? List<*>)?.mapNotNull { it as? String }
-                    ?: (map[cat.name] as? List<*>)?.mapNotNull { it as? String }
-                if (!list.isNullOrEmpty()) {
-                    categories[cat] = list
+            if (map != null) {
+                KeywordCategory.entries.forEach { cat ->
+                    val key = cat.name.lowercase()
+                    @Suppress("UNCHECKED_CAST")
+                    val list = (map[key] as? List<*>)?.mapNotNull { it as? String }
+                        ?: (map[cat.name] as? List<*>)?.mapNotNull { it as? String }
+                    if (!list.isNullOrEmpty()) {
+                        categories[cat] = list
+                    }
                 }
+            } else if (extraWords.isNotEmpty()) {
+                // No remote list reachable (offline / not seeded yet) but a family has custom
+                // words configured — still fall back to the on-device defaults for every other
+                // category rather than silently dropping them.
+                categories.putAll(DefaultKeywords.lists)
+            }
+            val cleanExtra = extraWords.map { it.trim() }.filter { it.isNotEmpty() }
+            if (cleanExtra.isNotEmpty()) {
+                categories[KeywordCategory.OTHER] = (categories[KeywordCategory.OTHER] ?: emptyList()) + cleanExtra
             }
             return if (categories.isEmpty()) KeywordMatcher() else KeywordMatcher(categories)
         }

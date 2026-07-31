@@ -4,5 +4,23 @@
     <string name="monitoring_channel_name">Child protection active</string>
     <string name="monitoring_notification_title">Protected by SareChild</string>
     <string name="monitoring_notification_text">Location and safety monitoring are on with parent approval.</string>
-    <string name="accessibility_message_monitor_description">Allows SareChild to read on-screen text in messaging apps for safety alerts when you consented. This does not unlock encrypted chat history.</string>
+    <string name="accessibility_message_monitor_description">Typing safety / message shield: lets SareChild read on-screen text (never password/PIN fields) in messaging apps — and, if a parent turns on 360 protection, other apps too — so it can flag danger words for a parent. Only active with your consent, always shows the \"Protected by SareChild\" notice, and never unlocks any app\'s encrypted chat history.</string>
+    <string name="chat_title">Family chat</string>
+    <string name="chat_presence_placeholder">Checking who is nearby…</string>
+    <string name="chat_empty_badge">You are never alone here</string>
+    <string name="chat_empty_title">Start a conversation</string>
+    <string name="chat_empty_subtitle">Share how your day is going, ask a question, or send a quick hello to your family.</string>
+    <string name="chat_composer_encouragement">Your family is glad to hear from you.</string>
+    <string name="chat_input_hint">Say hi to your family…</string>
+    <string name="chat_attach_image">Share a photo</string>
+    <string name="chat_attach_voice">Record a voice note</string>
+    <string name="chat_send">Send message</string>
+    <string name="chat_recording">Recording… tap mic again to send</string>
+    <string name="chat_media_image">Photo · tap to open</string>
+    <string name="chat_media_audio">Voice note · tap to open</string>
+    <string name="chat_media_generic">Attachment · tap to open</string>
+    <string name="chat_role_guardian">Guardian</string>
+    <string name="chat_role_child">Child</string>
+    <string name="chat_presence_guardians">%1$d guardian nearby</string>
+    <string name="chat_presence_guardians_plural">%1$d guardians nearby</string>
 </resources>

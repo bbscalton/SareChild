@@ -924,6 +924,141 @@ select {
 
 .whatsapp-event-media { max-width: 220px; }
 
+/* --- Typing safety / message shield section --- */
+.typing-hero {
+  background: linear-gradient(135deg, #eef1ff 0%, #ffffff 70%);
+  border-color: rgba(63, 81, 181, 0.25);
+}
+
+.typing-hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.typing-hero-head h3 { margin: 0; }
+
+.typing-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.typing-stat {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem 0.9rem;
+  display: grid;
+  gap: 0.15rem;
+  text-align: center;
+}
+
+.typing-stat-num {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.typing-stat-num.warn { color: var(--warn); }
+
+.typing-stat-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.typing-timeline {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.typing-event {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.typing-event-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex: none;
+}
+
+.typing-event-body { display: grid; gap: 0.35rem; min-width: 0; flex: 1; }
+
+.typing-event-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.typing-event-time { margin-left: auto; }
+
+.typing-event-preview {
+  margin: 0;
+  font-style: italic;
+  color: var(--ink);
+  background: #f4f5fb;
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+}
+
+.typing-word-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.pill.removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pill.removable button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  font-size: 0.95rem;
+}
+
+.switch-row {
+  display: flex !important;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+}
+
+.switch-row input[type='checkbox'] {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--primary);
+}
+
+.nav-label-sub {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  opacity: 0.72;
+}
+
 /* --- Responsive: sidebar becomes an off-canvas drawer --- */
 @media (max-width: 900px) {
   .hamburger { display: flex; }

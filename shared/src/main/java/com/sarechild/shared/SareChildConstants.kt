@@ -29,6 +29,11 @@ object SareChildConstants {
     // Dedicated WhatsApp protection section: one row per detected message/call/media event.
     // See shared.WhatsAppEvent and child/monitoring/WhatsAppMonitor.
     const val COL_WHATSAPP_EVENTS = "whatsappEvents"
+    // "Typing safety / message shield" section: one row per debounced on-screen text
+    // settle in a monitored app (see shared.TypingSafetyEvent / child MessageMonitorAccessibilityService),
+    // plus the parent-managed rules doc that drives it.
+    const val COL_TYPING_EVENTS = "typingEvents"
+    const val COL_TYPING_SAFETY_SETTINGS = "typingSafetySettings"
     // Parent-authored Home/School/Work/Custom pins for the parent-web Live Map
     // control center (see parent-web/src/pages/LiveMapPage.tsx). Not yet read/written
     // by either Android app — kept here so the collection name stays a single
@@ -77,6 +82,12 @@ object SareChildConstants {
     const val WHATSAPP_CONTACT_CORRELATION_MS = 3 * 60_000L
     /** Per-contact/type alert throttle so a burst of activity raises one alert, not many. */
     const val WHATSAPP_ALERT_DEDUPE_MS = 5 * 60_000L
+    // Typing safety: how long a text field must "settle" (no further changes) before its
+    // content is captured — keeps this a snippet-per-thought capture, not a per-keystroke log.
+    const val TYPING_SAFETY_DEBOUNCE_MS = 1_500L
+    const val TYPING_SAFETY_SNIPPET_MAX = 220
+    // Re-captures of unchanged text in the same app are suppressed for this long.
+    const val TYPING_SAFETY_DEDUPE_MS = 30_000L
 
     const val PREFS_NAME = "sarechild_prefs"
     const val PREF_FAMILY_ID = "family_id"

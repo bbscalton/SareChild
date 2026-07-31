@@ -96,7 +96,7 @@ class HomeActivity : AppCompatActivity() {
             if (repo.screenShareConsent) add("Screen share")
             if (repo.cameraCheckConsent) add("Camera")
             if (repo.micCheckConsent) add("Voice")
-            if (repo.messageMonitorConsent) add("Messages")
+            if (repo.messageMonitorConsent) add("Typing safety")
             if (repo.installMonitorConsent) add("App installs")
             if (repo.usageConsent) add("Screen time")
             if (repo.callSmsConsent) add("Call/SMS summaries")

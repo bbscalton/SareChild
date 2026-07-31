@@ -453,6 +453,194 @@ export const purgeExpiredMedia = onSchedule("every 24 hours", async () => {
   logger.info(`purgeExpiredMedia deleted ${deleted} file(s)`);
 });
 
+// ---------- Family chat push (emergency-aware) ----------
+// Any chat message — from a guardian's phone or the child's device — should reach
+// every *other* device in the family with a loud, high-priority notification, even
+// if that device's app is backgrounded or fully killed. Deliberately separate from
+// sendToFamily()/onAlertCreated above: chat has its own recipient set (child devices
+// are real push targets here, not just guardians) and its own urgency escalation.
+const URGENT_CHAT_KEYWORDS = [
+  "help", "emergency", "911", "sos", "danger", "unsafe", "scared",
+  "hurt me", "please help", "call the police", "i'm in trouble", "im in trouble",
+  "can't breathe", "cant breathe", "kidnap", "following me", "someone is here",
+  "i need help", "not safe", "he hit me", "she hit me", "bleeding",
+];
+
+function isUrgentChatText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const normalized = text.toLowerCase();
+  return URGENT_CHAT_KEYWORDS.some((kw) => normalized.includes(kw));
+}
+
+interface TokenOwner {
+  ref: FirebaseFirestore.DocumentReference;
+  tokens: string[];
+}
+
+/** Every guardian/parent profile in the family that has FCM tokens, minus [excludeUid]. */
+async function collectGuardianTokenRefs(
+  familyId: string,
+  parentUid?: string | null,
+  excludeUid?: string | null
+): Promise<Map<string, TokenOwner>> {
+  const uids = new Set<string>();
+  if (parentUid) uids.add(parentUid);
+  const guardians = await db.collection("families").doc(familyId).collection("guardians").get();
+  guardians.docs.forEach((g) => uids.add(g.id));
+  if (excludeUid) uids.delete(excludeUid);
+
+  const result = new Map<string, TokenOwner>();
+  await Promise.all(
+    Array.from(uids).map(async (uid) => {
+      const ref = db.collection("parentProfiles").doc(uid);
+      const profile = await ref.get();
+      const tokens = (profile.get("fcmTokens") as string[] | undefined) ?? [];
+      if (tokens.length) result.set(uid, { ref, tokens });
+    })
+  );
+  return result;
+}
+
+/** Every child device in the family that has FCM tokens, minus [excludeDeviceId] (the sender). */
+async function collectChildDeviceTokens(
+  familyId: string,
+  excludeDeviceId?: string | null
+): Promise<Map<string, TokenOwner>> {
+  const result = new Map<string, TokenOwner>();
+  const devices = await db.collection("families").doc(familyId).collection("devices").get();
+  devices.docs.forEach((d) => {
+    if (excludeDeviceId && d.id === excludeDeviceId) return;
+    const tokens = (d.get("fcmTokens") as string[] | undefined) ?? [];
+    if (tokens.length) result.set(d.id, { ref: d.ref, tokens });
+  });
+  return result;
+}
+
+/** Generic multicast sender that prunes dead tokens off whichever doc registered them. */
+async function sendMulticastAndPrune(
+  tokens: string[],
+  ownerOfToken: Map<string, FirebaseFirestore.DocumentReference>,
+  message: FcmMessage,
+  androidNotification: admin.messaging.AndroidNotification
+): Promise<void> {
+  if (tokens.length === 0) return;
+  const response = await admin.messaging().sendEachForMulticast({
+    tokens,
+    notification: message.notification,
+    data: message.data,
+    android: {
+      priority: "high",
+      notification: androidNotification,
+    },
+  });
+
+  const badByPath = new Map<string, { ref: FirebaseFirestore.DocumentReference; tokens: string[] }>();
+  response.responses.forEach((r, i) => {
+    if (!r.success) {
+      const token = tokens[i];
+      const ref = ownerOfToken.get(token);
+      if (!ref) return;
+      const entry = badByPath.get(ref.path) ?? { ref, tokens: [] };
+      entry.tokens.push(token);
+      badByPath.set(ref.path, entry);
+    }
+  });
+  await Promise.all(
+    Array.from(badByPath.values()).map(({ ref, tokens: bad }) =>
+      ref.update({ fcmTokens: admin.firestore.FieldValue.arrayRemove(...bad) }).catch(() => undefined)
+    )
+  );
+}
+
+/**
+ * Fan out a push to everyone in the family *except* the sender whenever a family
+ * chat message is created — a guardian's message reaches every child device, and a
+ * child's message reaches every guardian/parent device. Messages that look urgent
+ * (keyword match) escalate to the louder "family_chat_urgent" channel/sound.
+ */
+export const onFamilyChatMessageCreated = onDocumentCreated(
+  "families/{familyId}/familyChat/{messageId}",
+  async (event) => {
+    const familyId = event.params.familyId;
+    const data = event.data?.data();
+    if (!data) return;
+
+    const senderUid = String(data.senderUid ?? "");
+    const senderName = String(data.senderName ?? "Family member");
+    const senderRole = String(data.senderRole ?? "GUARDIAN").toUpperCase();
+    const senderDeviceId = data.deviceId ? String(data.deviceId) : null;
+    const text = (data.text as string | undefined) ?? null;
+    const mediaType = (data.mediaType as string | undefined) ?? null;
+
+    const bodyPreview = text
+      ? text.length > 160
+        ? `${text.slice(0, 157)}...`
+        : text
+      : mediaType === "image"
+        ? "📷 Sent a photo"
+        : mediaType === "audio"
+          ? "🎤 Sent a voice message"
+          : "Sent a message";
+
+    const urgent = isUrgentChatText(text);
+    const title = urgent ? `🚨 Urgent — ${senderName}` : `${senderName} · Family chat`;
+
+    const familySnap = await db.collection("families").doc(familyId).get();
+    const parentUid = familySnap.get("parentUid") as string | undefined;
+
+    const [guardianRefs, deviceRefs] = await Promise.all([
+      collectGuardianTokenRefs(familyId, parentUid, senderUid || undefined),
+      collectChildDeviceTokens(familyId, senderDeviceId),
+    ]);
+
+    const tokens: string[] = [];
+    const ownerOfToken = new Map<string, FirebaseFirestore.DocumentReference>();
+    [guardianRefs, deviceRefs].forEach((map) => {
+      map.forEach(({ ref, tokens: t }) => {
+        t.forEach((tok) => {
+          tokens.push(tok);
+          ownerOfToken.set(tok, ref);
+        });
+      });
+    });
+
+    if (tokens.length === 0) {
+      logger.info("onFamilyChatMessageCreated: no recipient tokens", familyId);
+      return;
+    }
+
+    const channelId = urgent ? "family_chat_urgent" : "family_chat";
+    await sendMulticastAndPrune(
+      tokens,
+      ownerOfToken,
+      {
+        notification: { title, body: bodyPreview },
+        data: {
+          type: "FAMILY_CHAT",
+          screen: "family_chat",
+          familyId,
+          messageId: event.params.messageId,
+          senderUid,
+          senderRole,
+          urgent: String(urgent),
+          title,
+          body: bodyPreview,
+        },
+      },
+      {
+        channelId,
+        visibility: "public",
+        sound: "default",
+        priority: urgent ? "max" : "high",
+      }
+    );
+
+    logger.info(
+      `onFamilyChatMessageCreated: family=${familyId} sender=${senderRole} urgent=${urgent} recipients=${tokens.length}`
+    );
+  }
+);
+
 export const platformHealth = onRequest(
   { cors: true },
   async (_req, res) => {
@@ -529,6 +717,7 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
   USAGE_LIMIT: "Usage limit reached",
   UNIDENTIFIED_CONTACT: "Unidentified contact",
   CALL_SMS_SYNC: "Call/SMS sync",
+  TYPING_SAFETY: "Typing safety flag",
 };
 
 function weekIdFor(weekStartMs: number): string {

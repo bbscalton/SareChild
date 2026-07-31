@@ -43,6 +43,8 @@ export function alertIcon(type: string): string {
     case 'MESSAGE_PREVIEW':
     case 'UNIDENTIFIED_CONTACT':
       return '💬'
+    case 'TYPING_SAFETY':
+      return '⌨️'
     case 'WHATSAPP_MEDIA':
       return '📷'
     case 'WHATSAPP_CALL':
@@ -82,6 +84,8 @@ export function alertCategoryLabel(type: string): string {
     case 'MESSAGE_PREVIEW':
     case 'UNIDENTIFIED_CONTACT':
       return 'Message safety'
+    case 'TYPING_SAFETY':
+      return 'Typing safety'
     case 'WHATSAPP_MEDIA':
     case 'WHATSAPP_CALL':
       return 'WhatsApp'

@@ -25,7 +25,12 @@ enum class AlertType {
     DEVICE_LOCKED,
     DEVICE_UNLOCKED,
     WHATSAPP_MEDIA,
-    WHATSAPP_CALL
+    WHATSAPP_CALL,
+    // A prohibited-word match from the Typing safety / message shield monitor
+    // (see TypingSafetyEvent / MessageMonitorAccessibilityService). Distinct from
+    // KEYWORD (legacy on-screen risk alert) so parent-web/parent-Android can route
+    // it to the dedicated "Typing safety" section instead of the generic feed.
+    TYPING_SAFETY
 }
 
 enum class AlertSeverity {

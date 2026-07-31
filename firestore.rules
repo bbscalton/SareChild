@@ -143,6 +143,22 @@ service cloud.firestore {
         allow create: if signedIn();
       }
 
+      // Typing safety / message shield timeline (debounced on-screen text settles from
+      // monitored apps). Written by the (anonymously signed-in) child device; read by the
+      // parent's Typing safety dashboard section.
+      match /typingEvents/{eventId} {
+        allow read, update: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
+      // Parent-managed Typing safety rules (custom prohibited words, always-monitor /
+      // whitelist app lists, 360 mode, auto-block threshold). The child device only needs
+      // read access to enforce them; only a guardian may change them.
+      match /typingSafetySettings/{docId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
       // Written by the weeklySafetyDigest Cloud Function only.
       match /digests/{digestId} {
         allow read: if isFamilyGuardian(familyId);

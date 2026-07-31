@@ -3,6 +3,7 @@ package com.sarechild.child.monitoring
 import android.accessibilityservice.AccessibilityService
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.pm.PackageManager
 import android.os.Build
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -16,27 +17,45 @@ import com.sarechild.shared.FamilySafetySettings
 import com.sarechild.shared.KeywordMatcher
 import com.sarechild.shared.RiskClassifier
 import com.sarechild.shared.SareChildConstants
+import com.sarechild.shared.TypingSafetyEvent
+import com.sarechild.shared.TypingSafetySettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Consent-gated on-screen text monitor for messaging apps.
- * Does NOT read encrypted chat databases — only currently visible UI text.
+ * "Typing safety / message shield" — a consent-gated on-screen text monitor.
+ *
+ * Honesty about what this is and isn't: this is NOT a keylogger. It never captures individual
+ * keystrokes, it never reads password/PIN fields ([AccessibilityNodeInfo.isPassword] is checked
+ * and skipped before any text is collected), and it never touches an app's encrypted database —
+ * it only reads on-screen text that Android's Accessibility API already exposes to any granted
+ * accessibility service, the same API screen readers use. Text is captured once per "settle"
+ * (a short debounce after typing pauses), not per keystroke, so this behaves like a periodic
+ * screenshot-of-text rather than a stream of every key pressed. Requires the child's explicit
+ * "Typing safety" consent (see ConsentActivity) plus the OS-level Accessibility permission grant,
+ * both of which show a persistent "Protected by SareChild" notification while active.
  */
 class MessageMonitorAccessibilityService : AccessibilityService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var repo: ChildRepository
     @Volatile private var classifier: RiskClassifier = RiskClassifier()
-    private val recent = ConcurrentHashMap<String, Long>()
     private val recentUnidentified = ConcurrentHashMap<String, Long>()
+    private val lastCapturedHash = ConcurrentHashMap<String, Long>()
+    private val pendingCaptures = ConcurrentHashMap<String, Job>()
+    private val appLabelCache = ConcurrentHashMap<String, String>()
     @Volatile private var cachedSafeContacts: List<String> = emptyList()
     @Volatile private var cachedSafeContactsAtMs: Long = 0L
     @Volatile private var cachedSettings: FamilySafetySettings = FamilySafetySettings()
     @Volatile private var cachedSettingsAtMs: Long = 0L
+    @Volatile private var cachedTypingSettings: TypingSafetySettings = TypingSafetySettings()
+    @Volatile private var cachedTypingSettingsAtMs: Long = 0L
 
+    /** Heuristic "communication app" list used when 360 mode is off — messaging/social apps only. */
     private val messagingPackages = setOf(
         "com.whatsapp",
         "com.whatsapp.w4b",
@@ -47,11 +66,32 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         "com.snapchat.android",
         "com.facebook.orca",
         "com.facebook.mlite",
+        "com.facebook.katana",
         "com.discord",
         "com.viber.voip",
         "com.google.android.apps.messaging",
         "com.samsung.android.messaging",
-        "com.android.mms"
+        "com.android.mms",
+        "com.skype.raider",
+        "com.kakao.talk",
+        "jp.naver.line.android",
+        "com.tencent.mm"
+    )
+
+    /**
+     * Never monitored, regardless of parent settings: our own app, the system keyboard(s), and
+     * the Settings app. Prevents both a nonsensical "SareChild reads its own screen" loop and
+     * accidental capture of the on-screen keyboard's own accessibility nodes.
+     */
+    private val hardWhitelist = setOf(
+        "com.android.settings",
+        "com.google.android.inputmethod.latin",
+        "com.android.inputmethod.latin",
+        "com.samsung.android.honeyboard",
+        "com.touchtype.swiftkey",
+        "com.google.android.googlequicksearchbox",
+        "com.android.systemui",
+        "com.android.launcher3"
     )
 
     override fun onServiceConnected() {
@@ -63,68 +103,117 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         }
         ensureChannel()
         showOngoingNotification()
-        scope.launch {
-            runCatching {
-                val matcher = repo.loadKeywordMatcher()
-                classifier = RiskClassifier(matcher)
-            }
-        }
+        scope.launch { refreshRules(force = true) }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (!repo.messageMonitorConsent) return
         val pkg = event.packageName?.toString() ?: return
-        if (pkg !in messagingPackages) return
+        if (pkg == packageName) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
             event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         ) return
 
+        scope.launch {
+            refreshRules(force = false)
+            if (!shouldMonitor(pkg, cachedTypingSettings)) return@launch
+            scheduleCapture(pkg)
+        }
+    }
+
+    /** Debounces rapid-fire accessibility events into a single capture per settle. */
+    private fun scheduleCapture(pkg: String) {
+        pendingCaptures[pkg]?.cancel()
+        pendingCaptures[pkg] = scope.launch {
+            delay(SareChildConstants.TYPING_SAFETY_DEBOUNCE_MS)
+            runCatching { captureAndProcess(pkg) }
+        }
+    }
+
+    private suspend fun captureAndProcess(pkg: String) {
         val root = rootInActiveWindow ?: return
+        if (root.packageName?.toString() != pkg) {
+            root.recycle()
+            return
+        }
         val text = collectText(root).trim()
         root.recycle()
         if (text.length < 4) return
 
-        val key = "$pkg|${text.hashCode()}"
         val now = System.currentTimeMillis()
-        val last = recent[key]
-        if (last != null && now - last < 45_000L) return
-        recent[key] = now
-        recent.entries.removeIf { now - it.value > 10 * 60_000L }
+        val hashKey = "$pkg|${text.hashCode()}"
+        val lastSeen = lastCapturedHash[hashKey]
+        if (lastSeen != null && now - lastSeen < SareChildConstants.TYPING_SAFETY_DEDUPE_MS) return
+        lastCapturedHash[hashKey] = now
+        lastCapturedHash.entries.removeIf { now - it.value > 10 * 60_000L }
 
+        val appLabel = resolveAppLabel(pkg)
         val assessment = classifier.assess(text)
-        val snippet = text.take(180)
-        scope.launch {
-            maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
-            runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
-            if (assessment.score > 0) {
-                if (isCategorySnoozed("KEYWORD")) return@launch
-                assessment.hits.forEach { hit ->
-                    repo.postAlert(
-                        FamilyAlert(
-                            type = AlertType.KEYWORD,
-                            severity = assessment.severity,
-                            title = "On-screen risk (${hit.category.name.lowercase()})",
-                            snippet = snippet,
-                            category = hit.category.name,
-                            riskScore = assessment.score
-                        )
-                    )
-                }
-                if (assessment.hits.isEmpty()) {
-                    repo.postAlert(
-                        FamilyAlert(
-                            type = AlertType.KEYWORD,
-                            severity = assessment.severity,
-                            title = "On-screen pattern risk — ${repo.childName}",
-                            snippet = snippet,
-                            category = "PATTERN",
-                            riskScore = assessment.score
-                        )
-                    )
-                }
-            }
+        val snippet = text.take(SareChildConstants.TYPING_SAFETY_SNIPPET_MAX)
+        val mode = if (cachedTypingSettings.mode360) "360" else "communication"
+
+        maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
+        runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
+
+        runCatching {
+            repo.postTypingEvent(
+                TypingSafetyEvent(
+                    packageName = pkg,
+                    appLabel = appLabel,
+                    snippet = snippet,
+                    matchedWords = assessment.hits.map { it.phrase }.distinct(),
+                    category = assessment.hits.firstOrNull()?.category?.name,
+                    severity = assessment.severity,
+                    riskScore = assessment.score,
+                    mode = mode
+                )
+            )
         }
+
+        if (assessment.score > 0 && assessment.hits.isNotEmpty()) {
+            if (isCategorySnoozed("TYPING_SAFETY")) return
+            val matched = assessment.hits.map { it.phrase }.distinct()
+            repo.postAlert(
+                FamilyAlert(
+                    type = AlertType.TYPING_SAFETY,
+                    severity = assessment.severity,
+                    title = "Typing safety flag in $appLabel — ${repo.childName}",
+                    // Deliberately a short "app + matched words" summary, not the raw typed text —
+                    // the full snippet lives in the Typing safety timeline for a parent who opens it.
+                    snippet = "Matched: ${matched.joinToString(limit = 5) { it }}",
+                    category = assessment.hits.first().category.name,
+                    riskScore = assessment.score
+                )
+            )
+            maybeAutoBlock(pkg, appLabel, assessment.severity)
+        }
+    }
+
+    private suspend fun maybeAutoBlock(pkg: String, appLabel: String, severity: AlertSeverity) {
+        val settings = cachedTypingSettings
+        if (!settings.autoBlockEnabled) return
+        if (severity.ordinal < settings.autoBlockSeverity.ordinal) return
+        runCatching {
+            repo.blockAppNow(pkg, appLabel, "typing_safety_auto")
+            repo.postAlert(
+                FamilyAlert(
+                    type = AlertType.APP_BLOCKED,
+                    severity = AlertSeverity.HIGH,
+                    title = "$appLabel auto-blocked — ${repo.childName}",
+                    snippet = "Blocked automatically after a $severity typing safety flag.",
+                    category = "TYPING_SAFETY_AUTO_BLOCK"
+                )
+            )
+        }
+    }
+
+    /** Communication-app heuristic (or 360 mode) minus hard/parent whitelists — never passwords. */
+    private fun shouldMonitor(pkg: String, settings: TypingSafetySettings): Boolean {
+        if (pkg in hardWhitelist) return false
+        if (settings.whitelistPackages.contains(pkg)) return false
+        if (settings.mode360) return true
+        return pkg in messagingPackages || settings.alwaysMonitorPackages.contains(pkg)
     }
 
     private suspend fun maybeAlertUnidentifiedWhatsapp(pkg: String, text: String, riskScore: Int) {
@@ -164,8 +253,10 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    /** Skips password/PIN/secure fields entirely — their text is never read, even transiently. */
     private fun collectText(node: AccessibilityNodeInfo, depth: Int = 0): String {
         if (depth > 12) return ""
+        if (node.isPassword) return ""
         val sb = StringBuilder()
         node.text?.let { if (it.isNotBlank()) sb.append(it).append(' ') }
         node.contentDescription?.let { if (it.isNotBlank()) sb.append(it).append(' ') }
@@ -175,6 +266,16 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
             child.recycle()
         }
         return sb.toString()
+    }
+
+    private fun resolveAppLabel(pkg: String): String {
+        appLabelCache[pkg]?.let { return it }
+        val label = runCatching {
+            val pm: PackageManager = packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg)
+        appLabelCache[pkg] = label
+        return label
     }
 
     private fun extractContactIdentifier(text: String): String? {
@@ -208,11 +309,23 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         return now < cachedSettings.snoozeUntilMs && cachedSettings.snoozedCategories.contains(category)
     }
 
+    /** Refreshes the Typing safety rules + prohibited-word matcher at most once a minute. */
+    private suspend fun refreshRules(force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - cachedTypingSettingsAtMs < 60_000L) return
+        cachedTypingSettingsAtMs = now
+        runCatching {
+            val settings = repo.loadTypingSafetySettings()
+            cachedTypingSettings = settings
+            classifier = RiskClassifier(repo.loadKeywordMatcher(settings.prohibitedWords))
+        }
+    }
+
     private fun showOngoingNotification() {
         val notification = NotificationCompat.Builder(this, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("Message monitoring on")
-            .setContentText("Protected by SareChild — on-screen message previews may be shared.")
+            .setContentTitle("Typing safety is on")
+            .setContentText("Protected by SareChild — message shield may report words typed in monitored apps.")
             .setOngoing(true)
             .build()
         getSystemService(NotificationManager::class.java)

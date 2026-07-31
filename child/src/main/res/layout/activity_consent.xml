@@ -151,7 +151,7 @@
                     android:id="@+id/checkMessages"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Allow message-screen / notification preview monitoring (not full chat dump)" />
+                    android:text="Typing safety / message shield: my parent can see words I type in messaging apps (and notification previews) to catch danger words — not a full private chat dump, and never my passwords" />
 
                 <com.google.android.material.checkbox.MaterialCheckBox
                     android:id="@+id/checkInstalls"

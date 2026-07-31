@@ -18,6 +18,8 @@ import type {
   SosContact,
   TcdReport,
   TcdOverview,
+  TypingSafetyEvent,
+  TypingSafetySettings,
   UsageDaily,
   WeeklyDigest,
   WhatsAppEvent,
@@ -38,6 +40,7 @@ type Section =
   | 'pair'
   | 'safety'
   | 'whatsapp'
+  | 'typing'
   | 'usage'
   | 'geofences'
   | 'digests'
@@ -45,12 +48,15 @@ type Section =
   | 'tcd'
 type AlertFilter = 'all' | 'critical' | 'info'
 type WhatsAppFilter = 'all' | 'messages' | 'calls' | 'media' | 'voice' | 'video' | 'unknown'
+type TypingFilter = 'all' | 'flagged' | 'unreviewed'
 
 type NavItem = {
   id: Section
   label: string
   icon: string
   badge?: number
+  /** Small secondary line under the label, e.g. "Keyboard & message shield". */
+  sub?: string
 }
 
 type NavGroup = {
@@ -76,6 +82,16 @@ export function DashboardPage() {
   const [safeContacts, setSafeContacts] = useState<SafeContact[]>([])
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppFilter, setWhatsAppFilter] = useState<WhatsAppFilter>('all')
+  const [typingEvents, setTypingEvents] = useState<TypingSafetyEvent[]>([])
+  const [typingFilter, setTypingFilter] = useState<TypingFilter>('all')
+  const [typingSettings, setTypingSettings] = useState<TypingSafetySettings>({
+    prohibitedWords: [],
+    alwaysMonitorPackages: [],
+    whitelistPackages: [],
+    mode360: false,
+    autoBlockEnabled: false,
+    autoBlockSeverity: 'HIGH',
+  })
   const [chatMessages, setChatMessages] = useState<FamilyChatMessage[]>([])
   const [chatText, setChatText] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
@@ -129,6 +145,9 @@ export function DashboardPage() {
   const [blockEnd, setBlockEnd] = useState('900')
   const [offlineCallNumber, setOfflineCallNumber] = useState('')
   const [offlineCallAttempts, setOfflineCallAttempts] = useState('2')
+  const [newProhibitedWord, setNewProhibitedWord] = useState('')
+  const [newAlwaysMonitorApp, setNewAlwaysMonitorApp] = useState('')
+  const [newTypingWhitelistApp, setNewTypingWhitelistApp] = useState('')
 
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteCode, setInviteCode] = useState<string | null>(null)
@@ -164,6 +183,8 @@ export function DashboardPage() {
       repo.observeSosContacts(familyId, setSosContacts, (e) => setError(e.message)),
       repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
       repo.observeWhatsAppEvents(familyId, setWhatsAppEvents, (e) => setError(e.message)),
+      repo.observeTypingSafetyEvents(familyId, setTypingEvents, (e) => setError(e.message)),
+      repo.observeTypingSafetySettings(familyId, setTypingSettings, (e) => setError(e.message)),
       repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
       repo.observeScreenShareSchedules(familyId, setScreenShareSchedules, (e) => setError(e.message)),
       repo.observeFamilyChat(familyId, setChatMessages, (e) => setError(e.message)),
@@ -235,6 +256,47 @@ export function DashboardPage() {
     const types = typeMap[whatsAppFilter as Exclude<WhatsAppFilter, 'all' | 'unknown'>]
     return whatsAppEvents.filter((e) => types.includes(e.eventType))
   }, [whatsAppEvents, whatsAppFilter])
+
+  const typingFlaggedCount = useMemo(
+    () => typingEvents.filter((e) => e.matchedWords.length > 0).length,
+    [typingEvents],
+  )
+  const typingUnreviewedFlaggedCount = useMemo(
+    () => typingEvents.filter((e) => e.matchedWords.length > 0 && !e.reviewed).length,
+    [typingEvents],
+  )
+  const filteredTypingEvents = useMemo(() => {
+    if (typingFilter === 'flagged') return typingEvents.filter((e) => e.matchedWords.length > 0)
+    if (typingFilter === 'unreviewed') {
+      return typingEvents.filter((e) => e.matchedWords.length > 0 && !e.reviewed)
+    }
+    return typingEvents
+  }, [typingEvents, typingFilter])
+
+  // Extra protection idea: a simple per-app "risk score" (% of captured snippets that matched a
+  // prohibited word) so a parent can see at a glance which apps deserve the closest attention —
+  // computed client-side from the same timeline already being observed above, so it's free.
+  const typingAppRiskScores = useMemo(() => {
+    const counts = new Map<string, { label: string; flagged: number; total: number }>()
+    typingEvents.forEach((e) => {
+      const key = e.packageName || e.appLabel
+      const entry = counts.get(key) || { label: e.appLabel || key, flagged: 0, total: 0 }
+      entry.total += 1
+      if (e.matchedWords.length > 0) entry.flagged += 1
+      counts.set(key, entry)
+    })
+    return Array.from(counts.entries())
+      .map(([packageName, v]) => ({
+        packageName,
+        label: v.label,
+        flagged: v.flagged,
+        total: v.total,
+        score: v.total ? Math.round((v.flagged / v.total) * 100) : 0,
+      }))
+      .filter((r) => r.flagged > 0)
+      .sort((a, b) => b.score - a.score || b.flagged - a.flagged)
+      .slice(0, 6)
+  }, [typingEvents])
 
   const galleryItems = useMemo(() => {
     const fromAlerts = alerts
@@ -524,6 +586,82 @@ export function DashboardPage() {
     }
   }
 
+  const submitProhibitedWord = async () => {
+    if (!familyId || !newProhibitedWord.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      await repo.addProhibitedWord(familyId, newProhibitedWord)
+      setNewProhibitedWord('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add word')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitAlwaysMonitorApp = async () => {
+    if (!familyId || !newAlwaysMonitorApp.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      await repo.addAlwaysMonitorApp(familyId, newAlwaysMonitorApp)
+      setNewAlwaysMonitorApp('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add app')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitTypingWhitelistApp = async () => {
+    if (!familyId || !newTypingWhitelistApp.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      await repo.addTypingWhitelistApp(familyId, newTypingWhitelistApp)
+      setNewTypingWhitelistApp('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add app')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleTypingMode360 = async (enabled: boolean) => {
+    if (!familyId) return
+    setError(null)
+    try {
+      await repo.setTypingMode360(familyId, enabled)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update 360 protection')
+    }
+  }
+
+  const saveTypingAutoBlock = async (enabled: boolean, severity: string) => {
+    if (!familyId) return
+    setError(null)
+    try {
+      await repo.setTypingAutoBlock(familyId, enabled, severity)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update auto-block setting')
+    }
+  }
+
+  const blockAppForTypingEvent = async (ev: TypingSafetyEvent) => {
+    if (!familyId) return
+    setBusy(true)
+    setError(null)
+    try {
+      await repo.blockAppFromTypingEvent(familyId, ev.deviceId, ev.packageName, ev.appLabel)
+      setStatusMsg(`${ev.appLabel || ev.packageName} blocked on that device.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to block app')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const saveSafetySettings = async () => {
     if (!familyId) return
     setBusy(true)
@@ -617,6 +755,18 @@ export function DashboardPage() {
       ],
     },
     {
+      label: 'Typing safety',
+      items: [
+        {
+          id: 'typing',
+          label: 'Typing safety',
+          sub: 'Keyboard & message shield',
+          icon: '\u2328\uFE0F',
+          badge: typingUnreviewedFlaggedCount,
+        },
+      ],
+    },
+    {
       label: 'Safety tools',
       items: [
         { id: 'safety', label: 'Safety checks', icon: '\u{1F6E1}\uFE0F' },
@@ -637,6 +787,7 @@ export function DashboardPage() {
     pair: 'Pair a device',
     safety: 'Safety checks',
     whatsapp: 'WhatsApp protection',
+    typing: 'Typing safety',
     usage: 'App usage & limits',
     geofences: 'Safe zones (geofences)',
     digests: 'Weekly digests',
@@ -672,7 +823,10 @@ export function DashboardPage() {
                   <span className="nav-icon" aria-hidden>
                     {item.icon}
                   </span>
-                  <span className="nav-label">{item.label}</span>
+                  <span className="nav-label">
+                    {item.label}
+                    {item.sub && <span className="nav-label-sub">{item.sub}</span>}
+                  </span>
                   {!!item.badge && <span className="nav-badge">{item.badge}</span>}
                 </button>
               ))}
@@ -1363,6 +1517,337 @@ export function DashboardPage() {
                   </ul>
                 </div>
               )}
+            </section>
+          )}
+
+          {section === 'typing' && (
+            <section className="stack">
+              <div className="card typing-hero">
+                <div className="typing-hero-head">
+                  <h3>Typing safety — keyboard &amp; message shield</h3>
+                  <span className="pill online">Live</span>
+                </div>
+                <p className="muted">
+                  With your child&apos;s consent, SareChild can see words typed in messaging apps —
+                  and, if you turn on 360 protection below, other apps too — using the same
+                  on-screen-reading permission (Accessibility) screen readers use. It is not a
+                  keylogger: there is no per-keystroke capture, no password/PIN fields are ever
+                  read, and no app&apos;s encrypted database is touched. Text is captured once a
+                  child stops typing for a moment, not while they&apos;re actively typing.
+                </p>
+                <p className="muted small">
+                  This exists so a prohibited-word match still gets caught even when a child uses
+                  an app you don&apos;t otherwise monitor closely (Notes, a game chat, a browser).
+                  Your child sees a persistent &quot;Protected by SareChild&quot; notice the whole
+                  time this is active.
+                </p>
+                <div className="typing-stats">
+                  <div className="typing-stat">
+                    <span className="typing-stat-num">{typingEvents.length}</span>
+                    <span className="typing-stat-label">Snippets (300 latest)</span>
+                  </div>
+                  <div className="typing-stat">
+                    <span className="typing-stat-num warn">{typingFlaggedCount}</span>
+                    <span className="typing-stat-label">Flagged for prohibited words</span>
+                  </div>
+                  <div className="typing-stat">
+                    <span className="typing-stat-num warn">{typingUnreviewedFlaggedCount}</span>
+                    <span className="typing-stat-label">Awaiting your review</span>
+                  </div>
+                  <div className="typing-stat">
+                    <span className="typing-stat-num">{typingSettings.mode360 ? 'On' : 'Off'}</span>
+                    <span className="typing-stat-label">360 protection (all apps)</span>
+                  </div>
+                  <div className="typing-stat">
+                    <span className="typing-stat-num">{typingSettings.autoBlockEnabled ? 'On' : 'Off'}</span>
+                    <span className="typing-stat-label">Auto-block on severe flags</span>
+                  </div>
+                </div>
+              </div>
+
+              {devices.length > 0 && devices.every((d) => !d.messageMonitorConsent) && (
+                <Empty
+                  title="Typing safety not enabled yet"
+                  body="Ask your child to open SareChild, agree to the Typing safety / message shield item during setup, and grant the Accessibility permission. No snippets will appear until consent + permission are both on."
+                />
+              )}
+
+              {typingAppRiskScores.length > 0 && (
+                <div className="card">
+                  <h3>Risk score by app</h3>
+                  <p className="muted small">
+                    Share of captured snippets in each app that matched a prohibited word — a quick
+                    way to see which apps deserve the closest look.
+                  </p>
+                  <ul className="meta">
+                    {typingAppRiskScores.map((r) => (
+                      <li key={r.packageName}>
+                        <strong>{r.label}</strong> ({r.packageName}) · {r.score}% flagged · {r.flagged}/
+                        {r.total} snippets
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="card">
+                <h3>Timeline</h3>
+                <div className="filter-row">
+                  {(
+                    [
+                      ['all', `All (${typingEvents.length})`],
+                      ['flagged', `Flagged (${typingFlaggedCount})`],
+                      ['unreviewed', `Needs review (${typingUnreviewedFlaggedCount})`],
+                    ] as [TypingFilter, string][]
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={typingFilter === id ? 'chip active' : 'chip'}
+                      onClick={() => setTypingFilter(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredTypingEvents.length === 0 ? (
+                  <Empty
+                    title="No typing safety snippets yet"
+                    body="Snippets appear here as soon as the child device captures a settled text change in a monitored app."
+                  />
+                ) : (
+                  <ul className="typing-timeline">
+                    {filteredTypingEvents.map((ev) => {
+                      const name = devices.find((d) => d.id === ev.deviceId)?.childName || ev.deviceId
+                      const flagged = ev.matchedWords.length > 0
+                      return (
+                        <li
+                          key={ev.id}
+                          className={`typing-event ${flagged ? `tone-${severityTone(ev.severity)}` : ''}`}
+                        >
+                          <span className="typing-event-icon" aria-hidden="true">
+                            {flagged ? '\u26A0\uFE0F' : '\u2328\uFE0F'}
+                          </span>
+                          <div className="typing-event-body">
+                            <div className="typing-event-top">
+                              <strong>{ev.appLabel}</strong>
+                              <span className="pill">{ev.mode === '360' ? '360 mode' : 'Communication'}</span>
+                              {flagged && <span className={`pill tone-${severityTone(ev.severity)}`}>{ev.severity}</span>}
+                              {flagged && !ev.reviewed && <span className="pill offline">Needs review</span>}
+                              <span className="muted small typing-event-time">{relativeTime(ev.createdAtMs)}</span>
+                            </div>
+                            <p className="muted small">
+                              {name} · {ev.packageName}
+                            </p>
+                            {ev.snippet && <p className="typing-event-preview">&ldquo;{ev.snippet}&rdquo;</p>}
+                            {flagged && (
+                              <div className="typing-word-badges">
+                                {ev.matchedWords.map((w) => (
+                                  <span key={w} className="pill offline">
+                                    {w}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <div className="btn-row">
+                              {flagged && !ev.reviewed && familyId && (
+                                <button
+                                  className="btn ghost compact"
+                                  type="button"
+                                  onClick={() => void repo.markTypingEventReviewed(familyId, ev.id)}
+                                >
+                                  Mark reviewed
+                                </button>
+                              )}
+                              {ev.packageName && (
+                                <button
+                                  className="btn ghost compact"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void blockAppForTypingEvent(ev)}
+                                >
+                                  Block this app
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              <div className="card form-card">
+                <h3>Protection mode</h3>
+                <p className="muted small">
+                  By default only common messaging/social apps are watched. Turn on 360 protection
+                  to watch every foreground app except your whitelist below — useful if your child
+                  moves risky chats into an app you wouldn&apos;t normally suspect (a game, a notes
+                  app, a browser).
+                </p>
+                <label className="switch-row">
+                  <input
+                    type="checkbox"
+                    checked={typingSettings.mode360}
+                    onChange={(e) => void toggleTypingMode360(e.target.checked)}
+                  />
+                  360 protection — monitor all apps except system apps and my whitelist
+                </label>
+              </div>
+
+              <div className="card form-card">
+                <h3>Block automatically on severe flags</h3>
+                <p className="muted small">
+                  Off by default. When on, SareChild blocks the offending app on the child&apos;s
+                  device the moment a snippet reaches this severity — you&apos;ll still get the
+                  alert either way, and can always block manually from the timeline above instead.
+                </p>
+                <label className="switch-row">
+                  <input
+                    type="checkbox"
+                    checked={typingSettings.autoBlockEnabled}
+                    onChange={(e) => void saveTypingAutoBlock(e.target.checked, typingSettings.autoBlockSeverity)}
+                  />
+                  Auto-block the app on a severe flag
+                </label>
+                <label>
+                  Minimum severity to auto-block
+                  <select
+                    value={typingSettings.autoBlockSeverity}
+                    onChange={(e) => void saveTypingAutoBlock(typingSettings.autoBlockEnabled, e.target.value)}
+                  >
+                    <option value="MEDIUM">Medium</option>
+                    <option value="HIGH">High</option>
+                    <option value="CRITICAL">Critical</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="card form-card">
+                <h3>Prohibited words</h3>
+                <p className="muted small">
+                  These are checked in addition to SareChild&apos;s built-in defaults (violence,
+                  self-harm, drugs, sexual content, grooming language). Add anything specific to
+                  your family — nicknames, slang, or a name you want flagged.
+                </p>
+                <label>
+                  Add a word or phrase
+                  <input
+                    value={newProhibitedWord}
+                    onChange={(e) => setNewProhibitedWord(e.target.value)}
+                    placeholder="e.g. a slang term you want flagged"
+                  />
+                </label>
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={busy || !familyId}
+                  onClick={() => void submitProhibitedWord()}
+                >
+                  Add word
+                </button>
+                {typingSettings.prohibitedWords.length > 0 && (
+                  <div className="typing-word-badges" style={{ marginTop: '0.75rem' }}>
+                    {typingSettings.prohibitedWords.map((w) => (
+                      <span key={w} className="pill offline removable">
+                        {w}
+                        {familyId && (
+                          <button type="button" onClick={() => void repo.removeProhibitedWord(familyId, w)}>
+                            &times;
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="card form-card">
+                <h3>Always-monitor apps</h3>
+                <p className="muted small">
+                  Beyond the built-in messaging-app list (WhatsApp, Telegram, Messenger, Discord,
+                  Snapchat, Instagram, SMS, etc.), add any other app&apos;s package name to always
+                  watch it — even with 360 protection off.
+                </p>
+                <label>
+                  Package name
+                  <input
+                    value={newAlwaysMonitorApp}
+                    onChange={(e) => setNewAlwaysMonitorApp(e.target.value)}
+                    placeholder="com.example.chatapp"
+                  />
+                </label>
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={busy || !familyId}
+                  onClick={() => void submitAlwaysMonitorApp()}
+                >
+                  Add app
+                </button>
+                {typingSettings.alwaysMonitorPackages.length > 0 && (
+                  <ul className="meta" style={{ marginTop: '0.75rem' }}>
+                    {typingSettings.alwaysMonitorPackages.map((p) => (
+                      <li key={p}>
+                        {p}{' '}
+                        {familyId && (
+                          <button
+                            className="btn ghost compact"
+                            type="button"
+                            onClick={() => void repo.removeAlwaysMonitorApp(familyId, p)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="card form-card">
+                <h3>Whitelist apps (never monitored)</h3>
+                <p className="muted small">
+                  System keyboards, Settings, and SareChild itself are never monitored regardless of
+                  this list. Add anything else you want fully exempt (e.g. a banking app).
+                </p>
+                <label>
+                  Package name
+                  <input
+                    value={newTypingWhitelistApp}
+                    onChange={(e) => setNewTypingWhitelistApp(e.target.value)}
+                    placeholder="com.example.bank"
+                  />
+                </label>
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={busy || !familyId}
+                  onClick={() => void submitTypingWhitelistApp()}
+                >
+                  Add to whitelist
+                </button>
+                {typingSettings.whitelistPackages.length > 0 && (
+                  <ul className="meta" style={{ marginTop: '0.75rem' }}>
+                    {typingSettings.whitelistPackages.map((p) => (
+                      <li key={p}>
+                        {p}{' '}
+                        {familyId && (
+                          <button
+                            className="btn ghost compact"
+                            type="button"
+                            onClick={() => void repo.removeTypingWhitelistApp(familyId, p)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </section>
           )}
 

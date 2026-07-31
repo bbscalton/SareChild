@@ -30,6 +30,8 @@ import com.sarechild.shared.SareChildConstants
 import com.sarechild.shared.ScreenShareSchedule
 import com.sarechild.shared.SafeContact
 import com.sarechild.shared.SosContact
+import com.sarechild.shared.TypingSafetyEvent
+import com.sarechild.shared.TypingSafetySettings
 import com.sarechild.shared.UsageAppEntry
 import com.sarechild.shared.WhatsAppEvent
 import kotlinx.coroutines.Dispatchers
@@ -300,14 +302,70 @@ class ChildRepository(
             .await()
     }
 
-    suspend fun loadKeywordMatcher(): KeywordMatcher {
+    suspend fun loadKeywordMatcher(extraWords: List<String> = emptyList()): KeywordMatcher {
         val snap = db.collection(SareChildConstants.COL_KEYWORD_LISTS)
             .document(SareChildConstants.KEYWORD_LIST_DEFAULT)
             .get()
             .await()
         @Suppress("UNCHECKED_CAST")
         val categories = snap.get("categories") as? Map<String, Any?>
-        return KeywordMatcher.fromFirestoreMap(categories)
+        return KeywordMatcher.fromFirestoreMap(categories, extraWords)
+    }
+
+    /**
+     * Loads the family's Typing safety rules (prohibited-word additions, whitelist/always-monitor
+     * app lists, 360 mode, auto-block threshold). Falls back to all-defaults (communication-apps
+     * only, no auto-block) if the family hasn't configured anything yet.
+     */
+    suspend fun loadTypingSafetySettings(): TypingSafetySettings {
+        val fid = familyId ?: return TypingSafetySettings()
+        val doc = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_TYPING_SAFETY_SETTINGS)
+            .document("default")
+            .get()
+            .await()
+        return TypingSafetySettings.fromMap(doc.data)
+    }
+
+    /**
+     * Writes one row to the Typing safety / message shield timeline. Called for every settled
+     * text change in a monitored app — whether or not it matched a prohibited word — so the
+     * parent timeline is a complete "what was typed, when, in what app" view; matched-word rows
+     * additionally get a companion [FamilyAlert] via [postAlert].
+     */
+    suspend fun postTypingEvent(event: TypingSafetyEvent) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_TYPING_EVENTS)
+            .add(event.copy(deviceId = did).toMap())
+            .await()
+    }
+
+    /**
+     * Blocks an app on this device immediately by writing an always-on (every day, full 24h)
+     * [AppBlockSchedule] row — reusing the exact same enforcement loop as parent-scheduled app
+     * blocks ([com.sarechild.child.monitoring.UsageMonitorHelper.enforceScheduledBlocks]) rather
+     * than a second, parallel blocking mechanism. Requires the child's usage-access permission
+     * (same as any other app block/limit) to actually be enforced on-device.
+     */
+    suspend fun blockAppNow(packageName: String, label: String, reason: String) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_APP_BLOCK_SCHEDULES)
+            .add(
+                mapOf(
+                    "packageName" to packageName,
+                    "label" to label.ifBlank { packageName },
+                    "deviceId" to did,
+                    "daysOfWeek" to emptyList<Int>(),
+                    "startMinute" to 0,
+                    "endMinute" to 1439,
+                    "active" to true,
+                    "source" to reason
+                )
+            ).await()
     }
 
     suspend fun loadGeofences(): List<GeofenceZone> {

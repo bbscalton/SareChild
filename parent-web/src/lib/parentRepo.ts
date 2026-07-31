@@ -7,6 +7,8 @@ import {
 } from 'firebase/auth'
 import {
   addDoc,
+  arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -43,6 +45,8 @@ import type {
   TcdOverview,
   TcdReport,
   TrialInfo,
+  TypingSafetyEvent,
+  TypingSafetySettings,
   UsageDaily,
   WeeklyDigest,
   WhatsAppEvent,
@@ -839,6 +843,167 @@ export function observeWhatsAppEvents(
     },
     (err) => onError?.(err),
   )
+}
+
+// ---------- Typing safety / message shield ----------
+//
+// families/{familyId}/typingEvents: one row per debounced on-screen text settle in a
+// monitored app on the child device (see child/monitoring/MessageMonitorAccessibilityService.kt).
+// families/{familyId}/typingSafetySettings/default: parent-managed rules (custom prohibited
+// words, always-monitor/whitelist app lists, 360 mode, auto-block threshold).
+
+export function observeTypingSafetyEvents(
+  familyId: string,
+  onData: (rows: TypingSafetyEvent[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.typingEvents),
+    orderBy('createdAtMs', 'desc'),
+    limit(300),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          deviceId: (data.deviceId as string) || '',
+          packageName: (data.packageName as string) || '',
+          appLabel: (data.appLabel as string) || (data.packageName as string) || 'Unknown app',
+          snippet: (data.snippet as string) || '',
+          matchedWords: Array.isArray(data.matchedWords)
+            ? (data.matchedWords as unknown[]).map((w) => String(w))
+            : [],
+          category: (data.category as string | null) ?? null,
+          severity: (data.severity as string) || 'LOW',
+          riskScore: Number(data.riskScore ?? 0),
+          mode: (data.mode as string) || 'communication',
+          reviewed: Boolean(data.reviewed),
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        } satisfies TypingSafetyEvent
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export async function markTypingEventReviewed(familyId: string, id: string): Promise<void> {
+  await updateDoc(doc(db, COL.families, familyId, COL.typingEvents, id), { reviewed: true })
+}
+
+/** Blocks an app on a device immediately — reuses the same all-day AppBlockSchedule enforcement
+ *  loop as a parent-scheduled block, so no second on-device mechanism is needed. */
+export async function blockAppFromTypingEvent(
+  familyId: string,
+  deviceId: string,
+  packageName: string,
+  label: string,
+): Promise<void> {
+  await addAppBlockSchedule(familyId, {
+    packageName,
+    label: label || packageName,
+    deviceId,
+    daysOfWeek: [],
+    startMinute: 0,
+    endMinute: 1439,
+    active: true,
+  })
+}
+
+const DEFAULT_TYPING_SAFETY_SETTINGS: TypingSafetySettings = {
+  prohibitedWords: [],
+  alwaysMonitorPackages: [],
+  whitelistPackages: [],
+  mode360: false,
+  autoBlockEnabled: false,
+  autoBlockSeverity: 'HIGH',
+}
+
+export function observeTypingSafetySettings(
+  familyId: string,
+  onData: (settings: TypingSafetySettings) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, COL.families, familyId, COL.typingSafetySettings, 'default'),
+    (snap) => {
+      const data = snap.data() || {}
+      onData({
+        prohibitedWords: Array.isArray(data.prohibitedWords)
+          ? (data.prohibitedWords as unknown[]).map((w) => String(w))
+          : [],
+        alwaysMonitorPackages: Array.isArray(data.alwaysMonitorPackages)
+          ? (data.alwaysMonitorPackages as unknown[]).map((w) => String(w))
+          : [],
+        whitelistPackages: Array.isArray(data.whitelistPackages)
+          ? (data.whitelistPackages as unknown[]).map((w) => String(w))
+          : [],
+        mode360: Boolean(data.mode360),
+        autoBlockEnabled: Boolean(data.autoBlockEnabled),
+        autoBlockSeverity: (data.autoBlockSeverity as string) || 'HIGH',
+      })
+    },
+    (err) => onError?.(err),
+  )
+}
+
+async function typingSettingsDoc(familyId: string) {
+  const ref = doc(db, COL.families, familyId, COL.typingSafetySettings, 'default')
+  await setDoc(ref, DEFAULT_TYPING_SAFETY_SETTINGS, { merge: true })
+  return ref
+}
+
+export async function addProhibitedWord(familyId: string, word: string): Promise<void> {
+  const trimmed = word.trim().toLowerCase()
+  if (!trimmed) return
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { prohibitedWords: arrayUnion(trimmed) })
+}
+
+export async function removeProhibitedWord(familyId: string, word: string): Promise<void> {
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { prohibitedWords: arrayRemove(word) })
+}
+
+export async function addAlwaysMonitorApp(familyId: string, packageName: string): Promise<void> {
+  const trimmed = packageName.trim()
+  if (!trimmed) return
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { alwaysMonitorPackages: arrayUnion(trimmed) })
+}
+
+export async function removeAlwaysMonitorApp(familyId: string, packageName: string): Promise<void> {
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { alwaysMonitorPackages: arrayRemove(packageName) })
+}
+
+export async function addTypingWhitelistApp(familyId: string, packageName: string): Promise<void> {
+  const trimmed = packageName.trim()
+  if (!trimmed) return
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { whitelistPackages: arrayUnion(trimmed) })
+}
+
+export async function removeTypingWhitelistApp(familyId: string, packageName: string): Promise<void> {
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { whitelistPackages: arrayRemove(packageName) })
+}
+
+export async function setTypingMode360(familyId: string, enabled: boolean): Promise<void> {
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { mode360: enabled })
+}
+
+export async function setTypingAutoBlock(
+  familyId: string,
+  enabled: boolean,
+  severity: string,
+): Promise<void> {
+  const ref = await typingSettingsDoc(familyId)
+  await updateDoc(ref, { autoBlockEnabled: enabled, autoBlockSeverity: severity })
 }
 
 // ---------- Weekly digests ----------
