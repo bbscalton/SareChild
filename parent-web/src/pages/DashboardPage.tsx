@@ -1833,6 +1833,7 @@ function LocationCard({
   trail: LocationTrailSample[]
 }) {
   const [address, setAddress] = useState<string | null>(null)
+  const [mapFailed, setMapFailed] = useState(false)
   useEffect(() => {
     let cancelled = false
     if (!device.lastLocation) {
@@ -1851,6 +1852,9 @@ function LocationCard({
     ? `https://www.google.com/maps?q=${device.lastLocation.lat},${device.lastLocation.lng}`
     : null
   const thumbUrl = device.lastLocation ? staticMapThumbUrl(device.lastLocation.lat, device.lastLocation.lng, 'large') : null
+  useEffect(() => {
+    setMapFailed(false)
+  }, [thumbUrl])
 
   return (
     <article className="card location-card">
@@ -1858,14 +1862,25 @@ function LocationCard({
         <h3>{device.childName}</h3>
         <span className={`pill ${online ? 'online' : 'offline'}`}>{online ? 'Online' : 'Offline'}</span>
       </div>
-      {thumbUrl ? (
+      {thumbUrl && !mapFailed ? (
         <a href={mapsUrl ?? undefined} target="_blank" rel="noreferrer" className="map-thumb map-thumb-large">
-          <img src={thumbUrl} alt={`Map for ${device.childName}`} loading="lazy" />
+          <img
+            src={thumbUrl}
+            alt={`Map for ${device.childName}`}
+            loading="lazy"
+            onError={() => setMapFailed(true)}
+          />
         </a>
       ) : (
         <div className="map-thumb map-thumb-placeholder map-thumb-large">
           <span aria-hidden>📍</span>
-          <span>{device.lastLocation ? 'Loading map…' : 'Waiting for first location…'}</span>
+          <span>
+            {!device.lastLocation
+              ? 'Waiting for first location…'
+              : mapFailed
+                ? 'Map preview unavailable — see raw coordinates below'
+                : 'Map preview unavailable (no Maps API key configured)'}
+          </span>
         </div>
       )}
       {address && (
@@ -2009,6 +2024,7 @@ function DeviceCard({
     : null
   const [address, setAddress] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
+  const [mapFailed, setMapFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -2024,6 +2040,10 @@ function DeviceCard({
     }
   }, [device.lastLocation?.lat, device.lastLocation?.lng])
 
+  useEffect(() => {
+    setMapFailed(false)
+  }, [thumbUrl])
+
   return (
     <article className="card device-card">
       <div className="card-head">
@@ -2037,14 +2057,25 @@ function DeviceCard({
         {device.charging ? ' (charging)' : ''} · Screen time today: {device.todayScreenMinutes} min
       </p>
 
-      {thumbUrl ? (
+      {thumbUrl && !mapFailed ? (
         <a href={mapsUrl ?? undefined} target="_blank" rel="noreferrer" className="map-thumb">
-          <img src={thumbUrl} alt={`Map thumbnail for ${device.childName}`} loading="lazy" />
+          <img
+            src={thumbUrl}
+            alt={`Map thumbnail for ${device.childName}`}
+            loading="lazy"
+            onError={() => setMapFailed(true)}
+          />
         </a>
       ) : (
         <div className="map-thumb map-thumb-placeholder">
           <span aria-hidden>📍</span>
-          <span>{device.lastLocation ? 'Loading map…' : 'Waiting for first location…'}</span>
+          <span>
+            {!device.lastLocation
+              ? 'Waiting for first location…'
+              : mapFailed
+                ? 'Map preview unavailable — use "Open map" below'
+                : 'Map preview unavailable (no Maps API key configured)'}
+          </span>
         </div>
       )}
       {address && (
