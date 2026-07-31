@@ -54,6 +54,18 @@ class DeviceMapActivity : AppCompatActivity(), OnMapReadyCallback {
 
         binding.toolbar.title = "$childName location"
         binding.toolbar.setNavigationOnClickListener { finish() }
+        binding.toolbar.inflateMenu(R.menu.device_map_menu)
+        binding.toolbar.setOnMenuItemClickListener { item ->
+            val type = when (item.itemId) {
+                R.id.action_map_type_road -> GoogleMap.MAP_TYPE_NORMAL
+                R.id.action_map_type_satellite -> GoogleMap.MAP_TYPE_SATELLITE
+                R.id.action_map_type_hybrid -> GoogleMap.MAP_TYPE_HYBRID
+                R.id.action_map_type_terrain -> GoogleMap.MAP_TYPE_TERRAIN
+                else -> return@setOnMenuItemClickListener false
+            }
+            map?.mapType = type
+            true
+        }
         updateMeta(address = null, nearby = null)
 
         val mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
@@ -95,7 +107,9 @@ class DeviceMapActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onMapReady(googleMap: GoogleMap) {
         map = googleMap
         val current = LatLng(lat, lng)
+        googleMap.mapType = GoogleMap.MAP_TYPE_HYBRID
         googleMap.uiSettings.isZoomControlsEnabled = true
+        googleMap.uiSettings.isMapToolbarEnabled = false
         googleMap.addMarker(
             MarkerOptions()
                 .position(current)

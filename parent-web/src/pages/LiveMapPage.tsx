@@ -24,6 +24,22 @@ import type {
 type Mode = 'live' | 'playback'
 type RangeOption = 'today' | '24h' | '7d' | 'custom'
 type SeverityGroup = 'critical' | 'medium' | 'low'
+type MapTypeOption = 'roadmap' | 'satellite' | 'hybrid' | 'terrain'
+
+const MAP_TYPE_STORAGE_KEY = 'sarechild.livemap.mapType'
+const MAP_TYPE_META: Record<MapTypeOption, { label: string; glyph: string }> = {
+  roadmap: { label: 'Road', glyph: '🗺️' },
+  satellite: { label: 'Satellite', glyph: '🛰️' },
+  hybrid: { label: 'Hybrid', glyph: '🌍' },
+  terrain: { label: 'Terrain', glyph: '⛰️' },
+}
+
+function loadStoredMapType(): MapTypeOption {
+  if (typeof window === 'undefined') return 'hybrid'
+  const stored = window.localStorage.getItem(MAP_TYPE_STORAGE_KEY)
+  if (stored === 'roadmap' || stored === 'satellite' || stored === 'hybrid' || stored === 'terrain') return stored
+  return 'hybrid'
+}
 
 type Selection =
   | { kind: 'stop'; stop: Stop }
@@ -275,6 +291,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   const fitKeyRef = useRef<string>('')
   const [mapsReady, setMapsReady] = useState(false)
   const mapsAvailable = hasGoogleMapsKey()
+  const [mapType, setMapType] = useState<MapTypeOption>(loadStoredMapType)
 
   useEffect(() => {
     let cancelled = false
@@ -291,6 +308,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     mapObjRef.current = new google.maps.Map(mapDivRef.current, {
       center: { lat: 20, lng: 0 },
       zoom: 3,
+      mapTypeId: mapType,
       disableDefaultUI: false,
       streetViewControl: false,
       mapTypeControl: false,
@@ -299,7 +317,20 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       gestureHandling: 'greedy',
       styles: CALM_MAP_STYLE,
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapsReady])
+
+  // Keep the live map type in sync with the switcher (and persist the parent's choice).
+  useEffect(() => {
+    const map = mapObjRef.current
+    if (!map || !mapsReady) return
+    map.setMapTypeId(mapType)
+    try {
+      window.localStorage.setItem(MAP_TYPE_STORAGE_KEY, mapType)
+    } catch {
+      // localStorage may be unavailable (private browsing) — not critical.
+    }
+  }, [mapType, mapsReady])
 
   // "Add place" click-to-drop: only listens while the parent has explicitly
   // clicked "+ Add place", so normal map panning/clicking elsewhere is unaffected.
@@ -719,6 +750,20 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
             <p className="muted">Map preview unavailable (no Maps API key configured).</p>
           </div>
         )}
+        <div className="livemap-maptype-switcher" role="group" aria-label="Map view type">
+          {(Object.keys(MAP_TYPE_META) as MapTypeOption[]).map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={mapType === type ? 'chip active' : 'chip'}
+              disabled={!mapsReady}
+              onClick={() => setMapType(type)}
+              title={MAP_TYPE_META[type].label}
+            >
+              <span aria-hidden>{MAP_TYPE_META[type].glyph}</span> {MAP_TYPE_META[type].label}
+            </button>
+          ))}
+        </div>
         <button type="button" className="btn ghost compact livemap-recenter" onClick={recenter} disabled={!mapsReady}>
           🎯 Recenter
         </button>
