@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../AuthContext'
 import * as repo from '../lib/parentRepo'
 import { WENT_DARK_AFTER_MS } from '../firebase'
@@ -7,6 +7,7 @@ import type {
   AppLimit,
   DeviceStatus,
   FamilyAlert,
+  FamilyChatMessage,
   FamilySafetySettings,
   GeofenceZone,
   GuardianInfo,
@@ -25,14 +26,36 @@ import type { SafetyCommandType } from '../lib/parentRepo'
 import { alertCategoryLabel, alertIcon, relativeTime, severityTone } from '../lib/alertPresentation'
 import { reverseGeocode } from '../lib/googleMaps'
 
-type Tab = 'home' | 'alerts' | 'more'
-type MoreSection = 'safety' | 'usage' | 'digests' | 'guardians' | 'geofences' | 'pair' | 'tcd'
+type Section =
+  | 'home'
+  | 'alerts'
+  | 'chat'
+  | 'map'
+  | 'pair'
+  | 'safety'
+  | 'usage'
+  | 'geofences'
+  | 'digests'
+  | 'guardians'
+  | 'tcd'
 type AlertFilter = 'all' | 'critical' | 'info'
+
+type NavItem = {
+  id: Section
+  label: string
+  icon: string
+  badge?: number
+}
+
+type NavGroup = {
+  label: string
+  items: NavItem[]
+}
 
 export function DashboardPage() {
   const { user, familyId, trialInfo, signOut, refreshFamilyId } = useAuth()
-  const [tab, setTab] = useState<Tab>('home')
-  const [moreSection, setMoreSection] = useState<MoreSection | null>(null)
+  const [section, setSection] = useState<Section>('home')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all')
   const [devices, setDevices] = useState<DeviceStatus[]>([])
   const [alerts, setAlerts] = useState<FamilyAlert[]>([])
@@ -45,6 +68,9 @@ export function DashboardPage() {
   const [digests, setDigests] = useState<WeeklyDigest[]>([])
   const [guardians, setGuardians] = useState<GuardianInfo[]>([])
   const [safeContacts, setSafeContacts] = useState<SafeContact[]>([])
+  const [chatMessages, setChatMessages] = useState<FamilyChatMessage[]>([])
+  const [chatText, setChatText] = useState('')
+  const [chatBusy, setChatBusy] = useState(false)
   const [safetySettings, setSafetySettings] = useState<FamilySafetySettings>({
     escalationEnabled: true,
     escalationRiskThreshold: 60,
@@ -70,9 +96,9 @@ export function DashboardPage() {
   // trial-cleanup rule cares about this signal, not just login. Throttled to once/hour
   // inside recordParentCheckIn, so this is safe to call on every relevant render.
   useEffect(() => {
-    if (!user || (tab !== 'home' && tab !== 'alerts')) return
+    if (!user || (section !== 'home' && section !== 'alerts')) return
     void repo.recordParentCheckIn(user.uid)
-  }, [user, tab])
+  }, [user, section])
 
   const [childName, setChildName] = useState('')
   const [pairingCode, setPairingCode] = useState<string | null>(null)
@@ -131,6 +157,7 @@ export function DashboardPage() {
       repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
       repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
       repo.observeScreenShareSchedules(familyId, setScreenShareSchedules, (e) => setError(e.message)),
+      repo.observeFamilyChat(familyId, setChatMessages, (e) => setError(e.message)),
     ]
     return () => unsubs.forEach((u) => u())
   }, [familyId])
@@ -196,6 +223,11 @@ export function DashboardPage() {
       }))
     return [...fromFrames, ...fromAlerts]
   }, [alerts, devices])
+
+  const openSection = (id: Section) => {
+    setSection(id)
+    setSidebarOpen(false)
+  }
 
   const createCode = async () => {
     setBusy(true)
@@ -518,435 +550,602 @@ export function DashboardPage() {
     }
   }
 
+  const sendChatMessage = async () => {
+    if (!familyId || !chatText.trim()) return
+    setChatBusy(true)
+    setError(null)
+    try {
+      await repo.sendFamilyChatMessage(familyId, chatText)
+      setChatText('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to send message')
+    } finally {
+      setChatBusy(false)
+    }
+  }
+
+  const navGroups: NavGroup[] = [
+    {
+      label: 'Overview',
+      items: [
+        { id: 'home', label: 'Home', icon: '\u{1F3E0}' },
+        { id: 'alerts', label: 'Alerts', icon: '\u{1F514}', badge: unread },
+        { id: 'chat', label: 'Chat', icon: '\u{1F4AC}' },
+        { id: 'map', label: 'Map & locations', icon: '\u{1F4CD}' },
+      ],
+    },
+    {
+      label: 'Family',
+      items: [
+        { id: 'pair', label: 'Pair a device', icon: '\u{1F4F1}' },
+        { id: 'guardians', label: 'Guardians', icon: '\u{1F46A}' },
+      ],
+    },
+    {
+      label: 'Safety tools',
+      items: [
+        { id: 'safety', label: 'Safety checks', icon: '\u{1F6E1}\uFE0F' },
+        { id: 'geofences', label: 'Safe zones', icon: '\u{1F4D0}' },
+        { id: 'usage', label: 'Usage & limits', icon: '\u23F1\uFE0F' },
+        { id: 'digests', label: 'Weekly digests', icon: '\u{1F4F0}' },
+        { id: 'tcd', label: 'TCD ops', icon: '\u{1FA7A}' },
+      ],
+    },
+  ]
+
+  const sectionTitle: Record<Section, string> = {
+    home: 'Home',
+    alerts: 'Alerts',
+    chat: 'Family chat',
+    map: 'Map & locations',
+    pair: 'Pair a device',
+    safety: 'Safety checks',
+    usage: 'App usage & limits',
+    geofences: 'Safe zones (geofences)',
+    digests: 'Weekly digests',
+    guardians: 'Guardians & caregivers',
+    tcd: 'Technical control dashboard',
+  }
+
   return (
-    <div className="dash">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">SareChild</p>
-          <h1>Parent dashboard</h1>
-          <p className="muted small">{user?.email}</p>
+    <div className="app-shell">
+      {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} />}
+      <aside className={sidebarOpen ? 'sidebar open' : 'sidebar'}>
+        <div className="sidebar-brand">
+          <span className="brand-mark" aria-hidden>
+            🛡️
+          </span>
+          <div>
+            <p className="brand-name">SareChild</p>
+            <p className="brand-sub">Parent dashboard</p>
+          </div>
         </div>
-        <button className="btn ghost" type="button" onClick={() => void signOut()}>
-          Sign out
-        </button>
-      </header>
 
-      {trialInfo && trialInfo.plan === 'trial' && trialInfo.status === 'active' && (
-        <div className="banner trial-banner">
-          <TrialBannerText trialInfo={trialInfo} />
-        </div>
-      )}
-      {trialInfo && trialInfo.status === 'at_risk' && (
-        <div className="banner error-banner">
-          We haven't seen a check-in from you in a while — sign in and open the dashboard
-          weekly during your trial, or this account may be automatically removed for
-          inactivity.
-        </div>
-      )}
-      {error && <div className="banner error-banner">{error}</div>}
-      {statusMsg && <div className="banner ok-banner">{statusMsg}</div>}
-
-      <nav className="tabs">
-        {(
-          [
-            ['home', 'Home'],
-            ['alerts', `Alerts${unread ? ` (${unread})` : ''}`],
-            ['more', 'More'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            className={tab === id ? 'tab active' : 'tab'}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-
-      <main className="panel">
-        {tab === 'home' && (
-          <section className="stack">
-            {devices.length === 0 ? (
-              <Empty
-                title="No child devices yet"
-                body="Open More → Pair a device, create a code, and enter it on the child phone."
-              />
-            ) : (
-              <>
-                <div className="home-summary">
-                  <div>
-                    <p className="eyebrow">{devices.length === 1 ? devices[0]!.childName : 'Your family'}</p>
-                    <h2>
-                      {devices.filter((d) => isDeviceOnline(d, nowTick)).length} of {devices.length} online
-                    </h2>
-                  </div>
-                  {latestUnreadAlert && (
-                    <button
-                      type="button"
-                      className={`home-alert-banner tone-${severityTone(latestUnreadAlert.severity)}`}
-                      onClick={() => setTab('alerts')}
-                    >
-                      <span className="alert-glyph" aria-hidden>
-                        {alertIcon(latestUnreadAlert.type)}
-                      </span>
-                      <span>
-                        {latestUnreadAlert.title} · {relativeTime(latestUnreadAlert.createdAtMs)}
-                      </span>
-                    </button>
-                  )}
-                </div>
-                {devices.map((d) => (
-                  <DeviceCard
-                    key={d.id}
-                    device={d}
-                    online={isDeviceOnline(d, nowTick)}
-                    trail={locationTrail.filter((s) => s.deviceId === d.id).slice(0, 5)}
-                    latestAlert={alerts.filter((a) => a.deviceId === d.id).sort((a, b) => b.createdAtMs - a.createdAtMs)[0]}
-                    onOpenAlerts={() => setTab('alerts')}
-                    onOpenSafety={() => {
-                      setTab('more')
-                      setMoreSection('safety')
-                    }}
-                  />
-                ))}
-              </>
-            )}
-          </section>
-        )}
-
-        {tab === 'alerts' && (
-          <section className="stack">
-            <div className="filter-row">
-              {(
-                [
-                  ['all', `All (${alerts.length})`],
-                  ['critical', `Critical (${alerts.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high').length})`],
-                  ['info', 'Info'],
-                ] as const
-              ).map(([id, label]) => (
+        <nav className="sidebar-nav">
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <p className="nav-group-label">{group.label}</p>
+              {group.items.map((item) => (
                 <button
-                  key={id}
+                  key={item.id}
                   type="button"
-                  className={alertFilter === id ? 'chip active' : 'chip'}
-                  onClick={() => setAlertFilter(id)}
+                  className={section === item.id ? 'nav-item active' : 'nav-item'}
+                  onClick={() => openSection(item.id)}
                 >
-                  {label}
+                  <span className="nav-icon" aria-hidden>
+                    {item.icon}
+                  </span>
+                  <span className="nav-label">{item.label}</span>
+                  {!!item.badge && <span className="nav-badge">{item.badge}</span>}
                 </button>
               ))}
             </div>
-            {filteredAlerts.length === 0 ? (
-              <Empty
-                title={alerts.length === 0 ? 'All quiet — no alerts yet' : 'No alerts in this filter'}
-                body="That's a good thing! Safety alerts from your child's device will show up here."
-              />
-            ) : (
-              filteredAlerts.map((a) => {
-                const device = devices.find((d) => d.id === a.deviceId)
-                const location = a.location ?? device?.lastLocation ?? null
-                return (
-                  <article key={a.id} className={`card alert-card tone-${severityTone(a.severity)} ${a.read ? '' : 'unread'}`}>
-                    <div className="alert-icon" aria-hidden>
-                      {alertIcon(a.type)}
-                    </div>
-                    <div className="alert-body">
-                      <div className="card-head">
-                        <h3>{a.title}</h3>
-                        {!a.read && <span className="unread-dot" aria-label="Unread" />}
-                      </div>
-                      <p className="muted small">
-                        {alertCategoryLabel(a.type)}
-                        {device ? ` · ${device.childName}` : ''} · {relativeTime(a.createdAtMs)}
-                      </p>
-                      {a.snippet && <p>{a.snippet}</p>}
-                      {a.mediaUrl && <AlertMedia url={a.mediaUrl} />}
-                      <div className="btn-row">
-                        {location && (
-                          <a
-                            className="btn ghost compact"
-                            href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open map
-                          </a>
-                        )}
-                        {!a.read && familyId && (
-                          <button
-                            className="btn ghost compact"
-                            type="button"
-                            onClick={() => void repo.markAlertRead(familyId, a.id)}
-                          >
-                            Mark read
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </article>
-                )
-              })
-            )}
-          </section>
-        )}
+          ))}
+        </nav>
 
-        {tab === 'more' && moreSection === null && (
-          <section className="stack">
-            <h2>More</h2>
-            <p className="muted">Everything else — pairing, safe zones, limits, and family setup.</p>
-            {(
-              [
-                ['safety', 'Safety checks', 'Screen share, camera/voice checks, lock/unlock, ring device'],
-                ['usage', 'App usage & limits', 'Daily limits, scheduled app blocks, screen time history'],
-                ['geofences', 'Safe zones (geofences)', 'Get notified when your child enters or leaves a place'],
-                ['digests', 'Weekly digests', 'A weekly summary of alerts and activity'],
-                ['guardians', 'Guardians & caregivers', 'Invite family members, manage safe WhatsApp contacts'],
-                ['pair', 'Pair a device', 'Connect a new child phone or add an SOS contact'],
-                ['tcd', 'TCD Ops', 'Technical control dashboard for live platform health'],
-              ] as const
-            ).map(([id, title, subtitle]) => (
-              <button key={id} type="button" className="card row-card more-row" onClick={() => setMoreSection(id)}>
-                <div>
-                  <h3>{title}</h3>
-                  <p className="muted small">{subtitle}</p>
-                </div>
-                <span className="chevron" aria-hidden>
-                  ›
-                </span>
-              </button>
-            ))}
-          </section>
-        )}
+        <div className="sidebar-footer">
+          <p className="muted small sidebar-email">{user?.email}</p>
+          <button className="btn ghost compact" type="button" onClick={() => void signOut()}>
+            Sign out
+          </button>
+        </div>
+      </aside>
 
-        {tab === 'more' && moreSection !== null && (
-          <div className="more-back-row">
-            <button className="btn ghost compact" type="button" onClick={() => setMoreSection(null)}>
-              ‹ More
-            </button>
+      <div className="main-area">
+        <header className="topbar">
+          <button
+            className="hamburger"
+            type="button"
+            aria-label="Open menu"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          <h1>{sectionTitle[section]}</h1>
+          <span className="topbar-spacer" />
+        </header>
+
+        {trialInfo && trialInfo.plan === 'trial' && trialInfo.status === 'active' && (
+          <div className="banner trial-banner">
+            <TrialBannerText trialInfo={trialInfo} />
           </div>
         )}
+        {trialInfo && trialInfo.status === 'at_risk' && (
+          <div className="banner error-banner">
+            We haven't seen a check-in from you in a while — sign in and open the dashboard
+            weekly during your trial, or this account may be automatically removed for
+            inactivity.
+          </div>
+        )}
+        {error && <div className="banner error-banner">{error}</div>}
+        {statusMsg && <div className="banner ok-banner">{statusMsg}</div>}
 
-        {tab === 'more' && moreSection === 'safety' && (
-          <section className="stack">
-            <div className="card form-card">
-              <h3>Visible safety checks</h3>
-              <p className="muted">
-                Each request shows an Accept/Decline screen and an ongoing notification on the child
-                device. This is parental control with disclosure — not a stealth tracker.
-              </p>
-              <p className="muted small">
-                Not available by design: silent/background call recording, hidden ambient mic/camera,
-                and full WhatsApp/Telegram encrypted database dumps (blocked by Android / Play for
-                third-party apps). Message safety uses notification previews and optional on-screen
-                text with consent.
-              </p>
-              <h4>Automation & safeguards</h4>
-              <label>
-                Escalation risk threshold (0-100)
-                <input
-                  value={String(safetySettings.escalationRiskThreshold)}
-                  onChange={(e) =>
-                    setSafetySettings((s) => ({
-                      ...s,
-                      escalationRiskThreshold: Number(e.target.value) || 60,
-                    }))
-                  }
-                  inputMode="numeric"
+        <main className="panel">
+          {section === 'home' && (
+            <section className="stack">
+              {devices.length === 0 ? (
+                <Empty
+                  title="No child devices yet"
+                  body="Open Pair a device, create a code, and enter it on the child phone."
                 />
-              </label>
-              <label>
-                Check-in interval minutes
-                <input
-                  value={String(safetySettings.checkInIntervalMinutes)}
-                  onChange={(e) =>
-                    setSafetySettings((s) => ({
-                      ...s,
-                      checkInIntervalMinutes: Number(e.target.value) || 120,
-                    }))
-                  }
-                  inputMode="numeric"
-                />
-              </label>
-              <label>
-                Alert retention days
-                <input
-                  value={String(safetySettings.alertRetentionDays)}
-                  onChange={(e) =>
-                    setSafetySettings((s) => ({
-                      ...s,
-                      alertRetentionDays: Number(e.target.value) || 30,
-                    }))
-                  }
-                  inputMode="numeric"
-                />
-              </label>
-              <label>
-                Media retention days
-                <input
-                  value={String(safetySettings.mediaRetentionDays)}
-                  onChange={(e) =>
-                    setSafetySettings((s) => ({
-                      ...s,
-                      mediaRetentionDays: Number(e.target.value) || 7,
-                    }))
-                  }
-                  inputMode="numeric"
-                />
-              </label>
-              <label>
-                Snooze categories (comma-separated)
-                <input
-                  value={safetySettings.snoozedCategories.join(',')}
-                  onChange={(e) =>
-                    setSafetySettings((s) => ({
-                      ...s,
-                      snoozedCategories: e.target.value
-                        .split(',')
-                        .map((x) => x.trim())
-                        .filter((x) => x.length > 0),
-                      snoozeUntilMs: Date.now() + 60 * 60 * 1000,
-                    }))
-                  }
-                />
-              </label>
-              <button className="btn ghost" type="button" disabled={busy} onClick={() => void saveSafetySettings()}>
-                Save automation settings
-              </button>
-            </div>
-
-            {devices.length === 0 ? (
-              <Empty title="No devices" body="Pair a child device before requesting safety checks." />
-            ) : (
-              devices.map((d) => (
-                <article key={d.id} className="card">
-                  <div className="card-head">
-                    <h3>{d.childName}</h3>
-                    <span className={`pill ${isDeviceOnline(d, nowTick) ? 'online' : 'offline'}`}>
-                      {isDeviceOnline(d, nowTick) ? 'Online' : 'Offline'}
-                    </span>
+              ) : (
+                <>
+                  <div className="home-summary">
+                    <div>
+                      <p className="eyebrow">{devices.length === 1 ? devices[0]!.childName : 'Your family'}</p>
+                      <h2>
+                        {devices.filter((d) => isDeviceOnline(d, nowTick)).length} of {devices.length} online
+                      </h2>
+                    </div>
+                    {latestUnreadAlert && (
+                      <button
+                        type="button"
+                        className={`home-alert-banner tone-${severityTone(latestUnreadAlert.severity)}`}
+                        onClick={() => openSection('alerts')}
+                      >
+                        <span className="alert-glyph" aria-hidden>
+                          {alertIcon(latestUnreadAlert.type)}
+                        </span>
+                        <span>
+                          {latestUnreadAlert.title} · {relativeTime(latestUnreadAlert.createdAtMs)}
+                        </span>
+                      </button>
+                    )}
                   </div>
-                  <ul className="meta">
-                    <li>Active session: {d.activeSession || 'none'}</li>
-                    <li>
-                      Consents — screen: {yesNo(d.screenShareConsent)}, camera:{' '}
-                      {yesNo(d.cameraCheckConsent)}, mic: {yesNo(d.micCheckConsent)}, messages:{' '}
-                      {yesNo(d.messageMonitorConsent)}
-                    </li>
-                  </ul>
-                  <div className="btn-row">
-                    <button
-                      className="btn ghost compact"
-                      type="button"
-                      onClick={cycleScreenShareDuration}
-                    >
-                      Duration: {screenShareDuration} min
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'SCREEN_SHARE', screenShareDuration)}
-                    >
-                      Request screen share ({screenShareDuration}m)
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'CAMERA_CHECK')}
-                    >
-                      Request camera photo
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'MIC_CHECK')}
-                    >
-                      Request voice check
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'RING_DEVICE')}
-                    >
-                      Ring device
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'LOCK_DEVICE')}
-                    >
-                      Lock device
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'UNLOCK_DEVICE')}
-                    >
-                      Unlock device
-                    </button>
-                    <button
-                      className="btn primary compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'SYNC_CALL_SMS')}
-                    >
-                      Sync call/SMS
-                    </button>
-                    <button
-                      className="btn ghost compact"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void requestCheck(d.id, 'STOP_SCREEN_SHARE')}
-                    >
-                      Stop screen share
-                    </button>
-                  </div>
-                </article>
-              ))
-            )}
+                  {devices.map((d) => (
+                    <DeviceCard
+                      key={d.id}
+                      device={d}
+                      online={isDeviceOnline(d, nowTick)}
+                      trail={locationTrail.filter((s) => s.deviceId === d.id).slice(0, 5)}
+                      latestAlert={alerts.filter((a) => a.deviceId === d.id).sort((a, b) => b.createdAtMs - a.createdAtMs)[0]}
+                      onOpenAlerts={() => openSection('alerts')}
+                      onOpenSafety={() => openSection('safety')}
+                    />
+                  ))}
+                </>
+              )}
+            </section>
+          )}
 
-            {screenShareSchedules.length > 0 && (
-              <div className="card">
-                <h3>Scheduled screen shares</h3>
-                <ul className="meta">
-                  {screenShareSchedules.map((s) => {
-                    const name = devices.find((d) => d.id === s.deviceId)?.childName || s.deviceId
-                    const h = Math.floor(s.startMinute / 60)
-                    const m = s.startMinute % 60
-                    return (
-                      <li key={s.id}>
-                        {s.label} · {name} · {String(h).padStart(2, '0')}:{String(m).padStart(2, '0')} ·{' '}
-                        {s.durationMinutes}m{' '}
-                        {familyId && (
-                          <button
-                            className="btn ghost compact"
-                            type="button"
-                            onClick={() => void repo.deleteScreenShareSchedule(familyId, s.id)}
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
+          {section === 'alerts' && (
+            <section className="stack">
+              <div className="filter-row">
+                {(
+                  [
+                    ['all', `All (${alerts.length})`],
+                    ['critical', `Critical (${alerts.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high').length})`],
+                    ['info', 'Info'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={alertFilter === id ? 'chip active' : 'chip'}
+                    onClick={() => setAlertFilter(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            )}
+              {filteredAlerts.length === 0 ? (
+                <Empty
+                  title={alerts.length === 0 ? 'All quiet — no alerts yet' : 'No alerts in this filter'}
+                  body="That's a good thing! Safety alerts from your child's device will show up here."
+                />
+              ) : (
+                filteredAlerts.map((a) => {
+                  const device = devices.find((d) => d.id === a.deviceId)
+                  const location = a.location ?? device?.lastLocation ?? null
+                  return (
+                    <article key={a.id} className={`card alert-card tone-${severityTone(a.severity)} ${a.read ? '' : 'unread'}`}>
+                      <div className="alert-icon" aria-hidden>
+                        {alertIcon(a.type)}
+                      </div>
+                      <div className="alert-body">
+                        <div className="card-head">
+                          <h3>{a.title}</h3>
+                          {!a.read && <span className="unread-dot" aria-label="Unread" />}
+                        </div>
+                        <p className="muted small">
+                          {alertCategoryLabel(a.type)}
+                          {device ? ` · ${device.childName}` : ''} · {relativeTime(a.createdAtMs)}
+                        </p>
+                        {a.snippet && <p>{a.snippet}</p>}
+                        {a.mediaUrl && <AlertMedia url={a.mediaUrl} />}
+                        <div className="btn-row">
+                          {location && (
+                            <a
+                              className="btn ghost compact"
+                              href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open map
+                            </a>
+                          )}
+                          {!a.read && familyId && (
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              onClick={() => void repo.markAlertRead(familyId, a.id)}
+                            >
+                              Mark read
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })
+              )}
+            </section>
+          )}
 
-            {devices.length > 0 && familyId && (
+          {section === 'chat' && (
+            <ChatSection
+              messages={chatMessages}
+              currentUid={user?.uid}
+              text={chatText}
+              onTextChange={setChatText}
+              onSend={() => void sendChatMessage()}
+              busy={chatBusy}
+            />
+          )}
+
+          {section === 'map' && (
+            <LocationsSection devices={devices} trail={locationTrail} nowTick={nowTick} />
+          )}
+
+          {section === 'safety' && (
+            <section className="stack">
               <div className="card form-card">
-                <h3>Add scheduled screen share</h3>
+                <h3>Visible safety checks</h3>
+                <p className="muted">
+                  Each request shows an Accept/Decline screen and an ongoing notification on the child
+                  device. This is parental control with disclosure — not a stealth tracker.
+                </p>
+                <p className="muted small">
+                  Not available by design: silent/background call recording, hidden ambient mic/camera,
+                  and full WhatsApp/Telegram encrypted database dumps (blocked by Android / Play for
+                  third-party apps). Message safety uses notification previews and optional on-screen
+                  text with consent.
+                </p>
+                <h4>Automation & safeguards</h4>
+                <label>
+                  Escalation risk threshold (0-100)
+                  <input
+                    value={String(safetySettings.escalationRiskThreshold)}
+                    onChange={(e) =>
+                      setSafetySettings((s) => ({
+                        ...s,
+                        escalationRiskThreshold: Number(e.target.value) || 60,
+                      }))
+                    }
+                    inputMode="numeric"
+                  />
+                </label>
+                <label>
+                  Check-in interval minutes
+                  <input
+                    value={String(safetySettings.checkInIntervalMinutes)}
+                    onChange={(e) =>
+                      setSafetySettings((s) => ({
+                        ...s,
+                        checkInIntervalMinutes: Number(e.target.value) || 120,
+                      }))
+                    }
+                    inputMode="numeric"
+                  />
+                </label>
+                <label>
+                  Alert retention days
+                  <input
+                    value={String(safetySettings.alertRetentionDays)}
+                    onChange={(e) =>
+                      setSafetySettings((s) => ({
+                        ...s,
+                        alertRetentionDays: Number(e.target.value) || 30,
+                      }))
+                    }
+                    inputMode="numeric"
+                  />
+                </label>
+                <label>
+                  Media retention days
+                  <input
+                    value={String(safetySettings.mediaRetentionDays)}
+                    onChange={(e) =>
+                      setSafetySettings((s) => ({
+                        ...s,
+                        mediaRetentionDays: Number(e.target.value) || 7,
+                      }))
+                    }
+                    inputMode="numeric"
+                  />
+                </label>
+                <label>
+                  Snooze categories (comma-separated)
+                  <input
+                    value={safetySettings.snoozedCategories.join(',')}
+                    onChange={(e) =>
+                      setSafetySettings((s) => ({
+                        ...s,
+                        snoozedCategories: e.target.value
+                          .split(',')
+                          .map((x) => x.trim())
+                          .filter((x) => x.length > 0),
+                        snoozeUntilMs: Date.now() + 60 * 60 * 1000,
+                      }))
+                    }
+                  />
+                </label>
+                <button className="btn ghost" type="button" disabled={busy} onClick={() => void saveSafetySettings()}>
+                  Save automation settings
+                </button>
+              </div>
+
+              {devices.length === 0 ? (
+                <Empty title="No devices" body="Pair a child device before requesting safety checks." />
+              ) : (
+                devices.map((d) => (
+                  <article key={d.id} className="card">
+                    <div className="card-head">
+                      <h3>{d.childName}</h3>
+                      <span className={`pill ${isDeviceOnline(d, nowTick) ? 'online' : 'offline'}`}>
+                        {isDeviceOnline(d, nowTick) ? 'Online' : 'Offline'}
+                      </span>
+                    </div>
+                    <ul className="meta">
+                      <li>Active session: {d.activeSession || 'none'}</li>
+                      <li>
+                        Consents — screen: {yesNo(d.screenShareConsent)}, camera:{' '}
+                        {yesNo(d.cameraCheckConsent)}, mic: {yesNo(d.micCheckConsent)}, messages:{' '}
+                        {yesNo(d.messageMonitorConsent)}
+                      </li>
+                    </ul>
+                    <div className="btn-row">
+                      <button
+                        className="btn ghost compact"
+                        type="button"
+                        onClick={cycleScreenShareDuration}
+                      >
+                        Duration: {screenShareDuration} min
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'SCREEN_SHARE', screenShareDuration)}
+                      >
+                        Request screen share ({screenShareDuration}m)
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'CAMERA_CHECK')}
+                      >
+                        Request camera photo
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'MIC_CHECK')}
+                      >
+                        Request voice check
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'RING_DEVICE')}
+                      >
+                        Ring device
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'LOCK_DEVICE')}
+                      >
+                        Lock device
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'UNLOCK_DEVICE')}
+                      >
+                        Unlock device
+                      </button>
+                      <button
+                        className="btn primary compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'SYNC_CALL_SMS')}
+                      >
+                        Sync call/SMS
+                      </button>
+                      <button
+                        className="btn ghost compact"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void requestCheck(d.id, 'STOP_SCREEN_SHARE')}
+                      >
+                        Stop screen share
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+
+              {screenShareSchedules.length > 0 && (
+                <div className="card">
+                  <h3>Scheduled screen shares</h3>
+                  <ul className="meta">
+                    {screenShareSchedules.map((s) => {
+                      const name = devices.find((d) => d.id === s.deviceId)?.childName || s.deviceId
+                      const h = Math.floor(s.startMinute / 60)
+                      const m = s.startMinute % 60
+                      return (
+                        <li key={s.id}>
+                          {s.label} · {name} · {String(h).padStart(2, '0')}:{String(m).padStart(2, '0')} ·{' '}
+                          {s.durationMinutes}m{' '}
+                          {familyId && (
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              onClick={() => void repo.deleteScreenShareSchedule(familyId, s.id)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {devices.length > 0 && familyId && (
+                <div className="card form-card">
+                  <h3>Add scheduled screen share</h3>
+                  <label>
+                    Device
+                    <select
+                      value={scheduleDeviceId}
+                      onChange={(e) => setScheduleDeviceId(e.target.value)}
+                    >
+                      {devices.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.childName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Label
+                    <input value={scheduleLabel} onChange={(e) => setScheduleLabel(e.target.value)} />
+                  </label>
+                  <label>
+                    Start time (HH:MM, 24h)
+                    <input value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
+                  </label>
+                  <label>
+                    Days (Sun=1 … Sat=7, comma-separated)
+                    <input value={scheduleDays} onChange={(e) => setScheduleDays(e.target.value)} />
+                  </label>
+                  <button
+                    className="btn primary"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      const parts = scheduleTime.split(':')
+                      if (parts.length !== 2) {
+                        setError('Use HH:MM for start time')
+                        return
+                      }
+                      const hour = Number(parts[0])
+                      const minute = Number(parts[1])
+                      const days = scheduleDays
+                        .split(',')
+                        .map((x) => Number(x.trim()))
+                        .filter((n) => !Number.isNaN(n) && n >= 1 && n <= 7)
+                      void repo
+                        .addScreenShareSchedule(
+                          familyId,
+                          scheduleDeviceId,
+                          scheduleLabel.trim() || 'Scheduled check',
+                          days,
+                          hour * 60 + minute,
+                          screenShareDuration,
+                        )
+                        .then(() => setStatusMsg('Schedule saved'))
+                        .catch((e) =>
+                          setError(e instanceof Error ? e.message : 'Failed to save schedule'),
+                        )
+                    }}
+                  >
+                    Save schedule ({screenShareDuration} min)
+                  </button>
+                </div>
+              )}
+
+              {commands.length > 0 && (
+                <div className="card">
+                  <h3>Recent commands</h3>
+                  <ul className="meta">
+                    {commands.map((c) => {
+                      const name = devices.find((d) => d.id === c.deviceId)?.childName || c.deviceId
+                      return (
+                        <li key={c.id}>
+                          {c.type} · {c.status} · {name} ·{' '}
+                          {new Date(c.requestedAtMs).toLocaleString()}
+                          {c.resultUrl && (
+                            <>
+                              {' '}
+                              ·{' '}
+                              <a href={c.resultUrl} target="_blank" rel="noreferrer">
+                                Open result
+                              </a>
+                            </>
+                          )}
+                          {c.error && <span className="muted"> — {c.error}</span>}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {galleryItems.length > 0 && (
+                <div className="card">
+                  <h3>Media gallery</h3>
+                  <div className="gallery">
+                    {galleryItems.map((item, i) => (
+                      <figure key={`${item.url}-${i}`} className="gallery-item">
+                        <MediaThumb url={item.url} />
+                        <figcaption className="muted small">{item.caption}</figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {section === 'usage' && (
+            <section className="stack">
+              <div className="card form-card">
+                <h3>Add app time limit</h3>
                 <label>
                   Device
-                  <select
-                    value={scheduleDeviceId}
-                    onChange={(e) => setScheduleDeviceId(e.target.value)}
-                  >
+                  <select value={limitDeviceId} onChange={(e) => setLimitDeviceId(e.target.value)}>
+                    {devices.length === 0 && <option value="">No devices</option>}
                     {devices.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.childName}
@@ -955,670 +1154,565 @@ export function DashboardPage() {
                   </select>
                 </label>
                 <label>
+                  Package name
+                  <input
+                    value={limitPackage}
+                    onChange={(e) => setLimitPackage(e.target.value)}
+                    placeholder="com.instagram.android"
+                  />
+                </label>
+                <label>
                   Label
-                  <input value={scheduleLabel} onChange={(e) => setScheduleLabel(e.target.value)} />
+                  <input
+                    value={limitLabel}
+                    onChange={(e) => setLimitLabel(e.target.value)}
+                    placeholder="Instagram"
+                  />
                 </label>
                 <label>
-                  Start time (HH:MM, 24h)
-                  <input value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
+                  Daily limit (minutes)
+                  <input
+                    value={limitMinutes}
+                    onChange={(e) => setLimitMinutes(e.target.value)}
+                    inputMode="numeric"
+                  />
+                </label>
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={busy || devices.length === 0}
+                  onClick={() => void submitAppLimit()}
+                >
+                  Add limit
+                </button>
+              </div>
+
+              {appLimits.length > 0 && (
+                <div className="card">
+                  <h3>App limits</h3>
+                  <ul className="meta">
+                    {appLimits.map((l) => {
+                      const name = devices.find((d) => d.id === l.deviceId)?.childName || l.deviceId
+                      return (
+                        <li key={l.id}>
+                          {l.label || l.packageName} ({l.packageName}) · {l.dailyLimitMinutes} min/day ·{' '}
+                          {name}{' '}
+                          {familyId && (
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              onClick={() => void repo.deleteAppLimit(familyId, l.id)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <div className="card form-card">
+                <h3>Add scheduled app block</h3>
+                <label>
+                  Package name
+                  <input
+                    value={blockPackage}
+                    onChange={(e) => setBlockPackage(e.target.value)}
+                    placeholder="com.whatsapp"
+                  />
                 </label>
                 <label>
-                  Days (Sun=1 … Sat=7, comma-separated)
-                  <input value={scheduleDays} onChange={(e) => setScheduleDays(e.target.value)} />
+                  Label
+                  <input value={blockLabel} onChange={(e) => setBlockLabel(e.target.value)} placeholder="WhatsApp" />
+                </label>
+                <label>
+                  Days (1=Sun ... 7=Sat, comma-separated, blank = every day)
+                  <input value={blockDays} onChange={(e) => setBlockDays(e.target.value)} />
+                </label>
+                <label>
+                  Start minute of day
+                  <input value={blockStart} onChange={(e) => setBlockStart(e.target.value)} inputMode="numeric" />
+                </label>
+                <label>
+                  End minute of day
+                  <input value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} inputMode="numeric" />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void submitAppBlock()}>
+                  Add scheduled block
+                </button>
+                <button className="btn ghost" type="button" disabled={busy} onClick={() => void addBlockPresets()}>
+                  Add school + bedtime presets for TikTok/WhatsApp/Facebook
+                </button>
+              </div>
+
+              {appBlockSchedules.length > 0 && (
+                <div className="card">
+                  <h3>Scheduled app blocks</h3>
+                  <ul className="meta">
+                    {appBlockSchedules.map((r) => {
+                      const name = devices.find((d) => d.id === r.deviceId)?.childName || r.deviceId
+                      return (
+                        <li key={r.id}>
+                          {r.label || r.packageName} ({r.packageName}) · {name} · {r.startMinute}-{r.endMinute} · days:{' '}
+                          {r.daysOfWeek.length ? r.daysOfWeek.join(',') : 'all'}{' '}
+                          {familyId && (
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              onClick={() => void repo.deleteAppBlockSchedule(familyId, r.id)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <div className="card form-card">
+                <h3>Offline auto-call fallback</h3>
+                <p className="muted small">
+                  When internet is unavailable, the child app can place best-effort emergency calls to
+                  this number. Child must have consented and granted call permission.
+                </p>
+                <label>
+                  Parent number to call
+                  <input
+                    value={offlineCallNumber}
+                    onChange={(e) => setOfflineCallNumber(e.target.value)}
+                    placeholder="+1..."
+                  />
+                </label>
+                <label>
+                  Max call attempts per offline session (0-10)
+                  <input
+                    value={offlineCallAttempts}
+                    onChange={(e) => setOfflineCallAttempts(e.target.value)}
+                    inputMode="numeric"
+                  />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void saveOfflineCallConfig()}>
+                  Save offline auto-call config
+                </button>
+                {limitDeviceId && (
+                  <p className="muted small">
+                    Current device setting:{' '}
+                    {(() => {
+                      const d = devices.find((x) => x.id === limitDeviceId)
+                      if (!d) return 'n/a'
+                      return `enabled=${d.offlineCallEnabled ? 'yes' : 'no'} number=${d.offlineCallNumber || 'not set'} max=${d.offlineCallMaxAttempts}`
+                    })()}
+                  </p>
+                )}
+              </div>
+
+              <div className="card">
+                <h3>Screen time by day</h3>
+                {usageDaily.length === 0 ? (
+                  <p className="muted small">No usage data synced yet.</p>
+                ) : (
+                  usageDaily.map((u) => {
+                    const name = devices.find((d) => d.id === u.deviceId)?.childName || u.deviceId
+                    return (
+                      <div key={u.id} className="usage-row">
+                        <div className="card-head">
+                          <h4>
+                            {u.day} · {name}
+                          </h4>
+                          <span className="pill">{u.totalMinutes} min</span>
+                        </div>
+                        {u.apps.length > 0 && (
+                          <ul className="meta">
+                            {u.apps
+                              .slice()
+                              .sort((a, b) => b.minutes - a.minutes)
+                              .map((app) => (
+                                <li key={app.packageName}>
+                                  {app.label || app.packageName}: {app.minutes} min
+                                </li>
+                              ))}
+                          </ul>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+          )}
+
+          {section === 'digests' && (
+            <section className="stack">
+              {digests.length === 0 ? (
+                <Empty
+                  title="No digests yet"
+                  body="A weekly safety summary is generated automatically every Monday."
+                />
+              ) : (
+                digests.map((d) => (
+                  <article key={d.id} className="card">
+                    <div className="card-head">
+                      <h3>
+                        {new Date(d.weekStartMs).toLocaleDateString()} –{' '}
+                        {new Date(d.weekEndMs).toLocaleDateString()}
+                      </h3>
+                      <span className="pill">{d.alertCount} alerts</span>
+                    </div>
+                    <p>{d.summary}</p>
+                    {d.topAlertTypes.length > 0 && (
+                      <p className="muted small">Top types: {d.topAlertTypes.join(', ')}</p>
+                    )}
+                  </article>
+                ))
+              )}
+            </section>
+          )}
+
+          {section === 'guardians' && (
+            <section className="stack">
+              <div className="card form-card">
+                <h3>Invite a caregiver</h3>
+                <p className="muted">
+                  Generates a code that a caregiver can redeem after creating their own SareChild
+                  account to get read/monitor access to this family.
+                </p>
+                <label>
+                  Caregiver email
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="caregiver@example.com"
+                  />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void submitInvite()}>
+                  Create invite
+                </button>
+                {inviteCode && (
+                  <div className="code-box">
+                    <p className="muted small">Invite code</p>
+                    <p className="code">{inviteCode}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="card form-card">
+                <h3>Join a family with an invite code</h3>
+                <label>
+                  Invite code
+                  <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="ABCD1234" />
+                </label>
+                <button className="btn ghost" type="button" disabled={busy} onClick={() => void submitJoin()}>
+                  Join
+                </button>
+              </div>
+
+              <div className="card">
+                <h3>Guardians on this family</h3>
+                {guardians.length === 0 ? (
+                  <p className="muted small">No guardians yet.</p>
+                ) : (
+                  <ul className="meta">
+                    {guardians.map((g) => (
+                      <li key={g.uid}>
+                        {g.email || g.uid} · {g.role}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+          )}
+
+          {section === 'geofences' && (
+            <section className="stack">
+              <div className="card form-card">
+                <h3>Add geofence at child’s last location</h3>
+                <label>
+                  Zone name
+                  <input value={zoneName} onChange={(e) => setZoneName(e.target.value)} />
+                </label>
+                <label>
+                  Radius (meters)
+                  <input value={zoneRadius} onChange={(e) => setZoneRadius(e.target.value)} />
+                </label>
+                <label>
+                  Active days (1=Sun … 7=Sat, comma-separated, blank = every day)
+                  <input value={zoneDays} onChange={(e) => setZoneDays(e.target.value)} placeholder="2,3,4,5,6" />
+                </label>
+                <label>
+                  Start minute of day (blank = always)
+                  <input value={zoneStart} onChange={(e) => setZoneStart(e.target.value)} placeholder="480" />
+                </label>
+                <label>
+                  End minute of day
+                  <input value={zoneEnd} onChange={(e) => setZoneEnd(e.target.value)} placeholder="960" />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void addGeofence()}>
+                  Add geofence
+                </button>
+              </div>
+              {geofences.map((z) => (
+                <article key={z.id} className="card row-card">
+                  <div>
+                    <h3>{z.name}</h3>
+                    <p className="muted small">
+                      {z.radiusM}m · {z.lat.toFixed(4)}, {z.lng.toFixed(4)}
+                    </p>
+                    <p className="muted small">
+                      {z.daysOfWeek.length > 0 ? `Days: ${z.daysOfWeek.join(',')}` : 'Every day'}
+                      {z.startMinute != null && z.endMinute != null
+                        ? ` · ${formatMinute(z.startMinute)}–${formatMinute(z.endMinute)}`
+                        : ' · All day'}
+                    </p>
+                  </div>
+                  {familyId && (
+                    <button
+                      className="btn ghost compact"
+                      type="button"
+                      onClick={() => void repo.deleteGeofence(familyId, z.id)}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </article>
+              ))}
+            </section>
+          )}
+
+          {section === 'pair' && (
+            <section className="stack">
+              <div className="card form-card">
+                <h3>Generate pairing code</h3>
+                <p className="muted">
+                  Enter this code on the SareChild child app. Codes expire in 30 minutes.
+                </p>
+                <label>
+                  Child name
+                  <input
+                    value={childName}
+                    onChange={(e) => setChildName(e.target.value)}
+                    placeholder="Child"
+                  />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void createCode()}>
+                  Create pairing code
+                </button>
+                {pairingCode && (
+                  <div className="code-box">
+                    <p className="muted small">Pairing code</p>
+                    <p className="code">{pairingCode}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="card form-card">
+                <h3>SOS contacts</h3>
+                <p className="muted">
+                  Shown to guardians in the SOS alert when the child presses the SOS button.
+                </p>
+                <label>
+                  Name
+                  <input value={sosName} onChange={(e) => setSosName(e.target.value)} placeholder="Mom" />
+                </label>
+                <label>
+                  Phone note
+                  <input
+                    value={sosPhone}
+                    onChange={(e) => setSosPhone(e.target.value)}
+                    placeholder="555-0100 (or how to reach them)"
+                  />
                 </label>
                 <button
                   className="btn primary"
                   type="button"
                   disabled={busy}
-                  onClick={() => {
-                    const parts = scheduleTime.split(':')
-                    if (parts.length !== 2) {
-                      setError('Use HH:MM for start time')
-                      return
-                    }
-                    const hour = Number(parts[0])
-                    const minute = Number(parts[1])
-                    const days = scheduleDays
-                      .split(',')
-                      .map((x) => Number(x.trim()))
-                      .filter((n) => !Number.isNaN(n) && n >= 1 && n <= 7)
-                    void repo
-                      .addScreenShareSchedule(
-                        familyId,
-                        scheduleDeviceId,
-                        scheduleLabel.trim() || 'Scheduled check',
-                        days,
-                        hour * 60 + minute,
-                        screenShareDuration,
-                      )
-                      .then(() => setStatusMsg('Schedule saved'))
-                      .catch((e) =>
-                        setError(e instanceof Error ? e.message : 'Failed to save schedule'),
-                      )
-                  }}
+                  onClick={() => void submitSosContact()}
                 >
-                  Save schedule ({screenShareDuration} min)
+                  Add contact
                 </button>
               </div>
-            )}
 
-            {commands.length > 0 && (
-              <div className="card">
-                <h3>Recent commands</h3>
-                <ul className="meta">
-                  {commands.map((c) => {
-                    const name = devices.find((d) => d.id === c.deviceId)?.childName || c.deviceId
-                    return (
+              {sosContacts.length > 0 && (
+                <div className="card">
+                  <h3>Current SOS contacts</h3>
+                  <ul className="meta">
+                    {sosContacts.map((c) => (
                       <li key={c.id}>
-                        {c.type} · {c.status} · {name} ·{' '}
-                        {new Date(c.requestedAtMs).toLocaleString()}
-                        {c.resultUrl && (
-                          <>
-                            {' '}
-                            ·{' '}
-                            <a href={c.resultUrl} target="_blank" rel="noreferrer">
-                              Open result
-                            </a>
-                          </>
-                        )}
-                        {c.error && <span className="muted"> — {c.error}</span>}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            )}
-
-            {galleryItems.length > 0 && (
-              <div className="card">
-                <h3>Media gallery</h3>
-                <div className="gallery">
-                  {galleryItems.map((item, i) => (
-                    <figure key={`${item.url}-${i}`} className="gallery-item">
-                      <MediaThumb url={item.url} />
-                      <figcaption className="muted small">{item.caption}</figcaption>
-                    </figure>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
-        {tab === 'more' && moreSection === 'usage' && (
-          <section className="stack">
-            <div className="card form-card">
-              <h3>Add app time limit</h3>
-              <label>
-                Device
-                <select value={limitDeviceId} onChange={(e) => setLimitDeviceId(e.target.value)}>
-                  {devices.length === 0 && <option value="">No devices</option>}
-                  {devices.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.childName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Package name
-                <input
-                  value={limitPackage}
-                  onChange={(e) => setLimitPackage(e.target.value)}
-                  placeholder="com.instagram.android"
-                />
-              </label>
-              <label>
-                Label
-                <input
-                  value={limitLabel}
-                  onChange={(e) => setLimitLabel(e.target.value)}
-                  placeholder="Instagram"
-                />
-              </label>
-              <label>
-                Daily limit (minutes)
-                <input
-                  value={limitMinutes}
-                  onChange={(e) => setLimitMinutes(e.target.value)}
-                  inputMode="numeric"
-                />
-              </label>
-              <button
-                className="btn primary"
-                type="button"
-                disabled={busy || devices.length === 0}
-                onClick={() => void submitAppLimit()}
-              >
-                Add limit
-              </button>
-            </div>
-
-            {appLimits.length > 0 && (
-              <div className="card">
-                <h3>App limits</h3>
-                <ul className="meta">
-                  {appLimits.map((l) => {
-                    const name = devices.find((d) => d.id === l.deviceId)?.childName || l.deviceId
-                    return (
-                      <li key={l.id}>
-                        {l.label || l.packageName} ({l.packageName}) · {l.dailyLimitMinutes} min/day ·{' '}
-                        {name}{' '}
+                        {c.name} — {c.phoneNote || 'no note'}{' '}
                         {familyId && (
                           <button
                             className="btn ghost compact"
                             type="button"
-                            onClick={() => void repo.deleteAppLimit(familyId, l.id)}
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            )}
-
-            <div className="card form-card">
-              <h3>Add scheduled app block</h3>
-              <label>
-                Package name
-                <input
-                  value={blockPackage}
-                  onChange={(e) => setBlockPackage(e.target.value)}
-                  placeholder="com.whatsapp"
-                />
-              </label>
-              <label>
-                Label
-                <input value={blockLabel} onChange={(e) => setBlockLabel(e.target.value)} placeholder="WhatsApp" />
-              </label>
-              <label>
-                Days (1=Sun ... 7=Sat, comma-separated, blank = every day)
-                <input value={blockDays} onChange={(e) => setBlockDays(e.target.value)} />
-              </label>
-              <label>
-                Start minute of day
-                <input value={blockStart} onChange={(e) => setBlockStart(e.target.value)} inputMode="numeric" />
-              </label>
-              <label>
-                End minute of day
-                <input value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} inputMode="numeric" />
-              </label>
-              <button className="btn primary" type="button" disabled={busy} onClick={() => void submitAppBlock()}>
-                Add scheduled block
-              </button>
-              <button className="btn ghost" type="button" disabled={busy} onClick={() => void addBlockPresets()}>
-                Add school + bedtime presets for TikTok/WhatsApp/Facebook
-              </button>
-            </div>
-
-            {appBlockSchedules.length > 0 && (
-              <div className="card">
-                <h3>Scheduled app blocks</h3>
-                <ul className="meta">
-                  {appBlockSchedules.map((r) => {
-                    const name = devices.find((d) => d.id === r.deviceId)?.childName || r.deviceId
-                    return (
-                      <li key={r.id}>
-                        {r.label || r.packageName} ({r.packageName}) · {name} · {r.startMinute}-{r.endMinute} · days:{' '}
-                        {r.daysOfWeek.length ? r.daysOfWeek.join(',') : 'all'}{' '}
-                        {familyId && (
-                          <button
-                            className="btn ghost compact"
-                            type="button"
-                            onClick={() => void repo.deleteAppBlockSchedule(familyId, r.id)}
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            )}
-
-            <div className="card form-card">
-              <h3>Offline auto-call fallback</h3>
-              <p className="muted small">
-                When internet is unavailable, the child app can place best-effort emergency calls to
-                this number. Child must have consented and granted call permission.
-              </p>
-              <label>
-                Parent number to call
-                <input
-                  value={offlineCallNumber}
-                  onChange={(e) => setOfflineCallNumber(e.target.value)}
-                  placeholder="+1..."
-                />
-              </label>
-              <label>
-                Max call attempts per offline session (0-10)
-                <input
-                  value={offlineCallAttempts}
-                  onChange={(e) => setOfflineCallAttempts(e.target.value)}
-                  inputMode="numeric"
-                />
-              </label>
-              <button className="btn primary" type="button" disabled={busy} onClick={() => void saveOfflineCallConfig()}>
-                Save offline auto-call config
-              </button>
-              {limitDeviceId && (
-                <p className="muted small">
-                  Current device setting:{' '}
-                  {(() => {
-                    const d = devices.find((x) => x.id === limitDeviceId)
-                    if (!d) return 'n/a'
-                    return `enabled=${d.offlineCallEnabled ? 'yes' : 'no'} number=${d.offlineCallNumber || 'not set'} max=${d.offlineCallMaxAttempts}`
-                  })()}
-                </p>
-              )}
-            </div>
-
-            <div className="card">
-              <h3>Screen time by day</h3>
-              {usageDaily.length === 0 ? (
-                <p className="muted small">No usage data synced yet.</p>
-              ) : (
-                usageDaily.map((u) => {
-                  const name = devices.find((d) => d.id === u.deviceId)?.childName || u.deviceId
-                  return (
-                    <div key={u.id} className="usage-row">
-                      <div className="card-head">
-                        <h4>
-                          {u.day} · {name}
-                        </h4>
-                        <span className="pill">{u.totalMinutes} min</span>
-                      </div>
-                      {u.apps.length > 0 && (
-                        <ul className="meta">
-                          {u.apps
-                            .slice()
-                            .sort((a, b) => b.minutes - a.minutes)
-                            .map((app) => (
-                              <li key={app.packageName}>
-                                {app.label || app.packageName}: {app.minutes} min
-                              </li>
-                            ))}
-                        </ul>
-                      )}
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </section>
-        )}
-
-        {tab === 'more' && moreSection === 'digests' && (
-          <section className="stack">
-            {digests.length === 0 ? (
-              <Empty
-                title="No digests yet"
-                body="A weekly safety summary is generated automatically every Monday."
-              />
-            ) : (
-              digests.map((d) => (
-                <article key={d.id} className="card">
-                  <div className="card-head">
-                    <h3>
-                      {new Date(d.weekStartMs).toLocaleDateString()} –{' '}
-                      {new Date(d.weekEndMs).toLocaleDateString()}
-                    </h3>
-                    <span className="pill">{d.alertCount} alerts</span>
-                  </div>
-                  <p>{d.summary}</p>
-                  {d.topAlertTypes.length > 0 && (
-                    <p className="muted small">Top types: {d.topAlertTypes.join(', ')}</p>
-                  )}
-                </article>
-              ))
-            )}
-          </section>
-        )}
-
-        {tab === 'more' && moreSection === 'guardians' && (
-          <section className="stack">
-            <div className="card form-card">
-              <h3>Invite a caregiver</h3>
-              <p className="muted">
-                Generates a code that a caregiver can redeem after creating their own SareChild
-                account to get read/monitor access to this family.
-              </p>
-              <label>
-                Caregiver email
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="caregiver@example.com"
-                />
-              </label>
-              <button className="btn primary" type="button" disabled={busy} onClick={() => void submitInvite()}>
-                Create invite
-              </button>
-              {inviteCode && (
-                <div className="code-box">
-                  <p className="muted small">Invite code</p>
-                  <p className="code">{inviteCode}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="card form-card">
-              <h3>Join a family with an invite code</h3>
-              <label>
-                Invite code
-                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="ABCD1234" />
-              </label>
-              <button className="btn ghost" type="button" disabled={busy} onClick={() => void submitJoin()}>
-                Join
-              </button>
-            </div>
-
-            <div className="card">
-              <h3>Guardians on this family</h3>
-              {guardians.length === 0 ? (
-                <p className="muted small">No guardians yet.</p>
-              ) : (
-                <ul className="meta">
-                  {guardians.map((g) => (
-                    <li key={g.uid}>
-                      {g.email || g.uid} · {g.role}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </section>
-        )}
-
-        {tab === 'more' && moreSection === 'geofences' && (
-          <section className="stack">
-            <div className="card form-card">
-              <h3>Add geofence at child’s last location</h3>
-              <label>
-                Zone name
-                <input value={zoneName} onChange={(e) => setZoneName(e.target.value)} />
-              </label>
-              <label>
-                Radius (meters)
-                <input value={zoneRadius} onChange={(e) => setZoneRadius(e.target.value)} />
-              </label>
-              <label>
-                Active days (1=Sun … 7=Sat, comma-separated, blank = every day)
-                <input value={zoneDays} onChange={(e) => setZoneDays(e.target.value)} placeholder="2,3,4,5,6" />
-              </label>
-              <label>
-                Start minute of day (blank = always)
-                <input value={zoneStart} onChange={(e) => setZoneStart(e.target.value)} placeholder="480" />
-              </label>
-              <label>
-                End minute of day
-                <input value={zoneEnd} onChange={(e) => setZoneEnd(e.target.value)} placeholder="960" />
-              </label>
-              <button className="btn primary" type="button" disabled={busy} onClick={() => void addGeofence()}>
-                Add geofence
-              </button>
-            </div>
-            {geofences.map((z) => (
-              <article key={z.id} className="card row-card">
-                <div>
-                  <h3>{z.name}</h3>
-                  <p className="muted small">
-                    {z.radiusM}m · {z.lat.toFixed(4)}, {z.lng.toFixed(4)}
-                  </p>
-                  <p className="muted small">
-                    {z.daysOfWeek.length > 0 ? `Days: ${z.daysOfWeek.join(',')}` : 'Every day'}
-                    {z.startMinute != null && z.endMinute != null
-                      ? ` · ${formatMinute(z.startMinute)}–${formatMinute(z.endMinute)}`
-                      : ' · All day'}
-                  </p>
-                </div>
-                {familyId && (
-                  <button
-                    className="btn ghost compact"
-                    type="button"
-                    onClick={() => void repo.deleteGeofence(familyId, z.id)}
-                  >
-                    Delete
-                  </button>
-                )}
-              </article>
-            ))}
-          </section>
-        )}
-
-        {tab === 'more' && moreSection === 'pair' && (
-          <section className="stack">
-            <div className="card form-card">
-              <h3>Generate pairing code</h3>
-              <p className="muted">
-                Enter this code on the SareChild child app. Codes expire in 30 minutes.
-              </p>
-              <label>
-                Child name
-                <input
-                  value={childName}
-                  onChange={(e) => setChildName(e.target.value)}
-                  placeholder="Child"
-                />
-              </label>
-              <button className="btn primary" type="button" disabled={busy} onClick={() => void createCode()}>
-                Create pairing code
-              </button>
-              {pairingCode && (
-                <div className="code-box">
-                  <p className="muted small">Pairing code</p>
-                  <p className="code">{pairingCode}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="card form-card">
-              <h3>SOS contacts</h3>
-              <p className="muted">
-                Shown to guardians in the SOS alert when the child presses the SOS button.
-              </p>
-              <label>
-                Name
-                <input value={sosName} onChange={(e) => setSosName(e.target.value)} placeholder="Mom" />
-              </label>
-              <label>
-                Phone note
-                <input
-                  value={sosPhone}
-                  onChange={(e) => setSosPhone(e.target.value)}
-                  placeholder="555-0100 (or how to reach them)"
-                />
-              </label>
-              <button
-                className="btn primary"
-                type="button"
-                disabled={busy}
-                onClick={() => void submitSosContact()}
-              >
-                Add contact
-              </button>
-            </div>
-
-            {sosContacts.length > 0 && (
-              <div className="card">
-                <h3>Current SOS contacts</h3>
-                <ul className="meta">
-                  {sosContacts.map((c) => (
-                    <li key={c.id}>
-                      {c.name} — {c.phoneNote || 'no note'}{' '}
-                      {familyId && (
-                        <button
-                          className="btn ghost compact"
-                          type="button"
-                          onClick={() => void repo.deleteSosContact(familyId, c.id)}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="card form-card">
-              <h3>Safe WhatsApp contacts</h3>
-              <p className="muted small">
-                Unidentified WhatsApp contacts not listed here will trigger alerts.
-              </p>
-              <label>
-                Display label
-                <input value={safeLabel} onChange={(e) => setSafeLabel(e.target.value)} placeholder="Aunt Mary" />
-              </label>
-              <label>
-                WhatsApp name / handle / phone fragment
-                <input
-                  value={safeIdentifier}
-                  onChange={(e) => setSafeIdentifier(e.target.value)}
-                  placeholder="+15550100 or john_doe"
-                />
-              </label>
-              <button className="btn primary" type="button" disabled={busy} onClick={() => void submitSafeContact()}>
-                Add safe contact
-              </button>
-            </div>
-            {safeContacts.filter((c) => c.channel === 'WHATSAPP').length > 0 && (
-              <div className="card">
-                <h3>Current safe WhatsApp contacts</h3>
-                <ul className="meta">
-                  {safeContacts
-                    .filter((c) => c.channel === 'WHATSAPP')
-                    .map((c) => (
-                      <li key={c.id}>
-                        {c.label || 'Contact'} — {c.identifier}{' '}
-                        {familyId && (
-                          <button
-                            className="btn ghost compact"
-                            type="button"
-                            onClick={() => void repo.deleteSafeContact(familyId, c.id)}
+                            onClick={() => void repo.deleteSosContact(familyId, c.id)}
                           >
                             Remove
                           </button>
                         )}
                       </li>
                     ))}
-                </ul>
-              </div>
-            )}
-          </section>
-        )}
+                  </ul>
+                </div>
+              )}
 
-        {tab === 'more' && moreSection === 'tcd' && (
-          <section className="stack">
-            <div className="card form-card">
-              <h3>Technical Control Dashboard (TCD)</h3>
-              <p className="muted small">
-                Runs live checks for Firestore connectivity, child heartbeat freshness, alerts stream
-                health, and Cloudflare R2 proxy reachability.
-              </p>
-              <p className="muted small">
-                Dedicated monitor app link: <a href="/SareChild/tcd.html" target="_blank" rel="noreferrer">open standalone TCD</a>
-              </p>
-              <div className="btn-row">
-                <button className="btn primary" type="button" disabled={busy} onClick={() => void runTcdCheck()}>
-                  Run health check
+              <div className="card form-card">
+                <h3>Safe WhatsApp contacts</h3>
+                <p className="muted small">
+                  Unidentified WhatsApp contacts not listed here will trigger alerts.
+                </p>
+                <label>
+                  Display label
+                  <input value={safeLabel} onChange={(e) => setSafeLabel(e.target.value)} placeholder="Aunt Mary" />
+                </label>
+                <label>
+                  WhatsApp name / handle / phone fragment
+                  <input
+                    value={safeIdentifier}
+                    onChange={(e) => setSafeIdentifier(e.target.value)}
+                    placeholder="+15550100 or john_doe"
+                  />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void submitSafeContact()}>
+                  Add safe contact
                 </button>
-                <button className="btn ghost" type="button" disabled={busy} onClick={() => void runTcdRepair()}>
-                  Run auto-repair
-                </button>
               </div>
-            </div>
+              {safeContacts.filter((c) => c.channel === 'WHATSAPP').length > 0 && (
+                <div className="card">
+                  <h3>Current safe WhatsApp contacts</h3>
+                  <ul className="meta">
+                    {safeContacts
+                      .filter((c) => c.channel === 'WHATSAPP')
+                      .map((c) => (
+                        <li key={c.id}>
+                          {c.label || 'Contact'} — {c.identifier}{' '}
+                          {familyId && (
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              onClick={() => void repo.deleteSafeContact(familyId, c.id)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+          )}
 
-            <div className="card">
-              <div className="card-head">
-                <h3>Live fleet status (real-time)</h3>
-                <span className="muted small">{new Date(liveFleet.generatedAtMs).toLocaleTimeString()}</span>
+          {section === 'tcd' && (
+            <section className="stack">
+              <div className="card form-card">
+                <h3>Technical Control Dashboard (TCD)</h3>
+                <p className="muted small">
+                  Runs live checks for Firestore connectivity, child heartbeat freshness, alerts stream
+                  health, and Cloudflare R2 proxy reachability.
+                </p>
+                <p className="muted small">
+                  Dedicated monitor app link: <a href="/SareChild/tcd.html" target="_blank" rel="noreferrer">open standalone TCD</a>
+                </p>
+                <div className="btn-row">
+                  <button className="btn primary" type="button" disabled={busy} onClick={() => void runTcdCheck()}>
+                    Run health check
+                  </button>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => void runTcdRepair()}>
+                    Run auto-repair
+                  </button>
+                </div>
               </div>
-              <p className="muted small">
-                Pushed straight from Firestore listeners — no click or reload needed.
-              </p>
-              <ul className="meta">
-                <li>Registered devices: {liveFleet.registeredDevices}</li>
-                <li>Online devices: {liveFleet.onlineDevices}</li>
-                <li>Offline devices: {liveFleet.offlineDevices}</li>
-                <li>Guardians registered: {liveFleet.guardians}</li>
-                <li>Alerts in last 24h: {liveFleet.alertsLast24h}</li>
-                <li>Critical alerts in last 24h: {liveFleet.criticalAlertsLast24h}</li>
-                <li>Pending commands: {liveFleet.pendingCommands}</li>
-              </ul>
-            </div>
 
-            {tcdReport && (
               <div className="card">
                 <div className="card-head">
-                  <h3>Latest report</h3>
-                  <span className="muted small">{new Date(tcdReport.generatedAtMs).toLocaleString()}</span>
+                  <h3>Live fleet status (real-time)</h3>
+                  <span className="muted small">{new Date(liveFleet.generatedAtMs).toLocaleTimeString()}</span>
                 </div>
+                <p className="muted small">
+                  Pushed straight from Firestore listeners — no click or reload needed.
+                </p>
                 <ul className="meta">
-                  {tcdReport.checks.map((check) => (
-                    <li key={check.id}>
-                      <span className={`pill tcd-${check.status}`}>{check.status.toUpperCase()}</span>{' '}
-                      <strong>{check.label}:</strong> {check.message}
-                      {check.latencyMs != null ? ` (${check.latencyMs} ms)` : ''}
+                  <li>Registered devices: {liveFleet.registeredDevices}</li>
+                  <li>Online devices: {liveFleet.onlineDevices}</li>
+                  <li>Offline devices: {liveFleet.offlineDevices}</li>
+                  <li>Guardians registered: {liveFleet.guardians}</li>
+                  <li>Alerts in last 24h: {liveFleet.alertsLast24h}</li>
+                  <li>Critical alerts in last 24h: {liveFleet.criticalAlertsLast24h}</li>
+                  <li>Pending commands: {liveFleet.pendingCommands}</li>
+                </ul>
+              </div>
+
+              {tcdReport && (
+                <div className="card">
+                  <div className="card-head">
+                    <h3>Latest report</h3>
+                    <span className="muted small">{new Date(tcdReport.generatedAtMs).toLocaleString()}</span>
+                  </div>
+                  <ul className="meta">
+                    {tcdReport.checks.map((check) => (
+                      <li key={check.id}>
+                        <span className={`pill tcd-${check.status}`}>{check.status.toUpperCase()}</span>{' '}
+                        <strong>{check.label}:</strong> {check.message}
+                        {check.latencyMs != null ? ` (${check.latencyMs} ms)` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {tcdOverview && (
+                <div className="card">
+                  <div className="card-head">
+                    <h3>Fleet and application health</h3>
+                    <span className="muted small">{new Date(tcdOverview.generatedAtMs).toLocaleString()}</span>
+                  </div>
+                  <ul className="meta">
+                    <li>Registered devices: {tcdOverview.registeredDevices}</li>
+                    <li>Online devices: {tcdOverview.onlineDevices}</li>
+                    <li>Offline devices: {tcdOverview.offlineDevices}</li>
+                    <li>Guardians registered: {tcdOverview.guardians}</li>
+                    <li>Alerts in last 24h: {tcdOverview.alertsLast24h}</li>
+                    <li>Critical alerts in last 24h: {tcdOverview.criticalAlertsLast24h}</li>
+                    <li>Pending commands: {tcdOverview.pendingCommands}</li>
+                    <li>
+                      Edge cache source: {tcdOverview.edgeSource || 'n/a'}
+                      {tcdOverview.edgeLatencyMs != null ? ` (${tcdOverview.edgeLatencyMs} ms)` : ''}
                     </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {tcdOverview && (
-              <div className="card">
-                <div className="card-head">
-                  <h3>Fleet and application health</h3>
-                  <span className="muted small">{new Date(tcdOverview.generatedAtMs).toLocaleString()}</span>
+                    <li>
+                      Latest heartbeat:{' '}
+                      {tcdOverview.latestHeartbeatMs > 0
+                        ? new Date(tcdOverview.latestHeartbeatMs).toLocaleString()
+                        : 'No heartbeat recorded'}
+                    </li>
+                  </ul>
                 </div>
-                <ul className="meta">
-                  <li>Registered devices: {tcdOverview.registeredDevices}</li>
-                  <li>Online devices: {tcdOverview.onlineDevices}</li>
-                  <li>Offline devices: {tcdOverview.offlineDevices}</li>
-                  <li>Guardians registered: {tcdOverview.guardians}</li>
-                  <li>Alerts in last 24h: {tcdOverview.alertsLast24h}</li>
-                  <li>Critical alerts in last 24h: {tcdOverview.criticalAlertsLast24h}</li>
-                  <li>Pending commands: {tcdOverview.pendingCommands}</li>
-                  <li>
-                    Edge cache source: {tcdOverview.edgeSource || 'n/a'}
-                    {tcdOverview.edgeLatencyMs != null ? ` (${tcdOverview.edgeLatencyMs} ms)` : ''}
-                  </li>
-                  <li>
-                    Latest heartbeat:{' '}
-                    {tcdOverview.latestHeartbeatMs > 0
-                      ? new Date(tcdOverview.latestHeartbeatMs).toLocaleString()
-                      : 'No heartbeat recorded'}
-                  </li>
-                </ul>
-              </div>
-            )}
+              )}
 
-            {repairLog.length > 0 && (
-              <div className="card">
-                <h3>Last auto-repair actions</h3>
-                <ul className="meta">
-                  {repairLog.map((line, idx) => (
-                    <li key={`${line}-${idx}`}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              {repairLog.length > 0 && (
+                <div className="card">
+                  <h3>Last auto-repair actions</h3>
+                  <ul className="meta">
+                    {repairLog.map((line, idx) => (
+                      <li key={`${line}-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
-            {!tcdReport && (
-              <Empty
-                title="No report yet"
-                body="Press Run health check to generate a live status report for this family."
-              />
-            )}
-          </section>
-        )}
-      </main>
+              {!tcdReport && (
+                <Empty
+                  title="No report yet"
+                  body="Press Run health check to generate a live status report for this family."
+                />
+              )}
+            </section>
+          )}
+        </main>
+      </div>
     </div>
   )
 }
@@ -1689,18 +1783,207 @@ function isDeviceOnline(device: DeviceStatus, nowMs: number): boolean {
 
 const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined)?.trim()
 
-function staticMapThumbUrl(lat: number, lng: number): string | null {
+function staticMapThumbUrl(lat: number, lng: number, size: 'small' | 'large' = 'small'): string | null {
   if (!GOOGLE_MAPS_BROWSER_KEY) return null
   const params = new URLSearchParams({
     center: `${lat},${lng}`,
-    zoom: '15',
-    size: '360x180',
+    zoom: size === 'large' ? '14' : '15',
+    size: size === 'large' ? '640x320' : '360x180',
     scale: '2',
     maptype: 'roadmap',
     markers: `color:red|${lat},${lng}`,
     key: GOOGLE_MAPS_BROWSER_KEY,
   })
   return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`
+}
+
+/** Full-page map & locations overview — one bigger map card per paired device. */
+function LocationsSection({
+  devices,
+  trail,
+  nowTick,
+}: {
+  devices: DeviceStatus[]
+  trail: LocationTrailSample[]
+  nowTick: number
+}) {
+  if (devices.length === 0) {
+    return (
+      <section className="stack">
+        <Empty title="No devices yet" body="Pair a child device to see their location here." />
+      </section>
+    )
+  }
+  return (
+    <section className="stack">
+      {devices.map((d) => (
+        <LocationCard key={d.id} device={d} online={isDeviceOnline(d, nowTick)} trail={trail.filter((s) => s.deviceId === d.id).slice(0, 8)} />
+      ))}
+    </section>
+  )
+}
+
+function LocationCard({
+  device,
+  online,
+  trail,
+}: {
+  device: DeviceStatus
+  online: boolean
+  trail: LocationTrailSample[]
+}) {
+  const [address, setAddress] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    if (!device.lastLocation) {
+      setAddress(null)
+      return
+    }
+    void reverseGeocode(device.lastLocation.lat, device.lastLocation.lng).then((result) => {
+      if (!cancelled) setAddress(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [device.lastLocation?.lat, device.lastLocation?.lng])
+
+  const mapsUrl = device.lastLocation
+    ? `https://www.google.com/maps?q=${device.lastLocation.lat},${device.lastLocation.lng}`
+    : null
+  const thumbUrl = device.lastLocation ? staticMapThumbUrl(device.lastLocation.lat, device.lastLocation.lng, 'large') : null
+
+  return (
+    <article className="card location-card">
+      <div className="card-head">
+        <h3>{device.childName}</h3>
+        <span className={`pill ${online ? 'online' : 'offline'}`}>{online ? 'Online' : 'Offline'}</span>
+      </div>
+      {thumbUrl ? (
+        <a href={mapsUrl ?? undefined} target="_blank" rel="noreferrer" className="map-thumb map-thumb-large">
+          <img src={thumbUrl} alt={`Map for ${device.childName}`} loading="lazy" />
+        </a>
+      ) : (
+        <div className="map-thumb map-thumb-placeholder map-thumb-large">
+          <span aria-hidden>📍</span>
+          <span>{device.lastLocation ? 'Loading map…' : 'Waiting for first location…'}</span>
+        </div>
+      )}
+      {address && (
+        <p className="address-line">
+          <span aria-hidden>📍 </span>
+          {address}
+        </p>
+      )}
+      {device.lastLocation && (
+        <p className="muted small">
+          Raw coordinates: {device.lastLocation.lat.toFixed(5)}, {device.lastLocation.lng.toFixed(5)}
+          {device.lastLocation.updatedAtMs ? ` · updated ${relativeTime(device.lastLocation.updatedAtMs)}` : ''}
+        </p>
+      )}
+      {mapsUrl && (
+        <a className="btn primary compact" href={mapsUrl} target="_blank" rel="noreferrer">
+          Open in Google Maps
+        </a>
+      )}
+      {trail.length > 0 && (
+        <details className="battery-history">
+          <summary className="muted small">Recent timeline points ({trail.length})</summary>
+          <ul className="meta">
+            {trail.map((s) => (
+              <li key={s.id}>
+                {new Date(s.recordedAtMs).toLocaleString()} ·{' '}
+                {s.location ? `${s.location.lat.toFixed(5)}, ${s.location.lng.toFixed(5)}` : 'n/a'}
+                {!s.hadNetwork ? ' · captured offline' : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </article>
+  )
+}
+
+/** Family chat — mirrors the Android family chat collection (families/{id}/familyChat). */
+function ChatSection({
+  messages,
+  currentUid,
+  text,
+  onTextChange,
+  onSend,
+  busy,
+}: {
+  messages: FamilyChatMessage[]
+  currentUid: string | undefined
+  text: string
+  onTextChange: (v: string) => void
+  onSend: () => void
+  busy: boolean
+}) {
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: 'end' })
+  }, [messages.length])
+
+  return (
+    <section className="chat-shell">
+      <div className="chat-scroll">
+        {messages.length === 0 ? (
+          <Empty title="No messages yet" body="Send a warm check-in — your family chat is shared with every guardian and child device." />
+        ) : (
+          messages.map((m) => {
+            const mine = m.senderUid === currentUid
+            return (
+              <div key={m.id} className={mine ? 'chat-row mine' : 'chat-row'}>
+                <div className={mine ? 'chat-bubble mine' : 'chat-bubble'}>
+                  <p className="chat-sender">{m.senderName}{m.senderRole === 'CHILD' ? ' · child' : ''}</p>
+                  {m.text && <p className="chat-text">{m.text}</p>}
+                  {m.mediaUrl && <ChatMedia url={m.mediaUrl} />}
+                  <p className="chat-time">{new Date(m.createdAtMs).toLocaleString()}</p>
+                </div>
+              </div>
+            )
+          })
+        )}
+        <div ref={bottomRef} />
+      </div>
+      <form
+        className="chat-composer"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!busy && text.trim()) onSend()
+        }}
+      >
+        <input
+          value={text}
+          onChange={(e) => onTextChange(e.target.value)}
+          placeholder="Send a message to your family…"
+          disabled={busy}
+        />
+        <button className="btn primary compact" type="submit" disabled={busy || !text.trim()}>
+          Send
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function ChatMedia({ url }: { url: string }) {
+  const kind = mediaKind(url)
+  if (kind === 'image') {
+    return (
+      <a href={url} target="_blank" rel="noreferrer">
+        <img className="chat-media-img" src={url} alt="Shared media" />
+      </a>
+    )
+  }
+  if (kind === 'audio') {
+    return <audio controls src={url} className="chat-media-audio" />
+  }
+  return (
+    <a className="btn ghost compact" href={url} target="_blank" rel="noreferrer">
+      Open media
+    </a>
+  )
 }
 
 function DeviceCard({

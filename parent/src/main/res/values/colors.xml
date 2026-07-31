@@ -35,4 +35,11 @@
     <color name="severity_medium_bg">#FBF1E1</color>
     <color name="severity_low">#0F6B4C</color>
     <color name="severity_low_bg">#E1F3EA</color>
+
+    <!-- Sidebar / navigation drawer (matches parent-web sidebar brand) -->
+    <color name="sidebar_text">#EEF6F1</color>
+    <color name="sidebar_text_muted">#A9C3B8</color>
+    <color name="sidebar_item_active_start">#C9A24A</color>
+    <color name="sidebar_item_active_end">#0F6B4C</color>
+    <color name="sidebar_divider">#33FFFFFF</color>
 </resources>

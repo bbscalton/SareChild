@@ -59,5 +59,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.drawerlayout:drawerlayout:1.2.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 }

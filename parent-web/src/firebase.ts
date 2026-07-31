@@ -46,6 +46,7 @@ export const COL = {
   appBlockSchedules: 'appBlockSchedules',
   guardianInvites: 'guardianInvites',
   screenShareSchedules: 'screenShareSchedules',
+  familyChat: 'familyChat',
 } as const
 
 export const WENT_DARK_AFTER_MS = 5 * 60 * 1000

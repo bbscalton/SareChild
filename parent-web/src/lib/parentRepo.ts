@@ -27,6 +27,7 @@ import type {
   CallSmsPreview,
   DeviceStatus,
   FamilyAlert,
+  FamilyChatMessage,
   FamilySafetySettings,
   GeofenceZone,
   GuardianInfo,
@@ -1185,6 +1186,56 @@ export async function runTcdAutoRepair(familyId: string): Promise<string[]> {
   }
 
   return fixes
+}
+
+// ---------- Family chat ----------
+
+export function observeFamilyChat(
+  familyId: string,
+  onData: (rows: FamilyChatMessage[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.familyChat),
+    orderBy('createdAtMs', 'asc'),
+    limit(300),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          senderUid: (data.senderUid as string) || '',
+          senderName: (data.senderName as string) || 'Family',
+          senderRole: ((data.senderRole as FamilyChatMessage['senderRole']) || 'GUARDIAN'),
+          deviceId: (data.deviceId as string | null) ?? null,
+          text: (data.text as string | null) ?? null,
+          mediaUrl: (data.mediaUrl as string | null) ?? null,
+          mediaType: (data.mediaType as string | null) ?? null,
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        } satisfies FamilyChatMessage
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export async function sendFamilyChatMessage(familyId: string, text: string): Promise<void> {
+  const uid = auth.currentUser?.uid
+  if (!uid) throw new Error('Not signed in')
+  const name = auth.currentUser?.email || 'Guardian'
+  await addDoc(collection(db, COL.families, familyId, COL.familyChat), {
+    senderUid: uid,
+    senderName: name,
+    senderRole: 'GUARDIAN',
+    text: text.trim(),
+    mediaUrl: null,
+    mediaType: null,
+    createdAtMs: Date.now(),
+  })
 }
 
 // ---------- Guardians / caregiver invites ----------

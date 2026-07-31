@@ -19,14 +19,15 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.tabs.TabLayout
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.google.firebase.messaging.FirebaseMessaging
@@ -88,15 +89,17 @@ class DashboardActivity : AppCompatActivity() {
     private var screenShareSchedules: List<ScreenShareSchedule> = emptyList()
     private var screenShareDurationMinutes = 10
 
-    /** null = show the "More" menu; otherwise one of MORE_* section keys below. */
-    private var moreDetailKey: String? = null
     private val addressCache = mutableMapOf<String, String?>()
     private val mapBitmapCache = mutableMapOf<String, Bitmap?>()
     private var alertFilter: AlertFilter = AlertFilter.ALL
 
     private enum class AlertFilter { ALL, CRITICAL, INFO }
 
-    private val tabTitles = listOf("Home", "Alerts", "Chat", "More")
+    /** Currently visible sidebar section — mirrors the parent-web sidebar sections. */
+    private var currentSection: String = "home"
+    private var navRows: List<NavRow> = emptyList()
+
+    private data class NavRow(val key: String, val label: String, val icon: String, val button: TextView)
 
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -119,14 +122,20 @@ class DashboardActivity : AppCompatActivity() {
                 true
             } else false
         }
+        binding.toolbar.setNavigationOnClickListener {
+            binding.drawerLayout.openDrawer(GravityCompat.START)
+        }
 
-        tabTitles.forEach { binding.tabs.addTab(binding.tabs.newTab().setText(it)) }
-        binding.tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(tab: TabLayout.Tab) = showTab(tab.position)
-            override fun onTabUnselected(tab: TabLayout.Tab) {}
-            override fun onTabReselected(tab: TabLayout.Tab) {}
-        })
-        binding.tabs.visibility = View.GONE
+        setupDrawer()
+        onBackPressedDispatcher.addCallback(this) {
+            if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                binding.drawerLayout.closeDrawer(GravityCompat.START)
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        }
 
         lifecycleScope.launch {
             runCatching { repo.recordLogin() }
@@ -139,8 +148,7 @@ class DashboardActivity : AppCompatActivity() {
             runCatching { repo.getFamilyId() }
                 .onSuccess {
                     familyId = it
-                    binding.tabs.visibility = View.VISIBLE
-                    showTab(0)
+                    showSection("home")
                     observe(it)
                     runCatching { repo.recordParentCheckIn() }
                 }
@@ -148,6 +156,154 @@ class DashboardActivity : AppCompatActivity() {
                     showJoinFamilyPrompt(it.message)
                 }
         }
+    }
+
+    /** Builds the sidebar (nav drawer) content — grouped rows mirroring the parent-web sidebar. */
+    private fun setupDrawer() {
+        val container = binding.navContainer
+        container.removeAllViews()
+        container.setPadding(0, dp(28), 0, dp(20))
+
+        val brandRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(18))
+        }
+        brandRow.addView(TextView(this).apply {
+            text = "\uD83D\uDEE1\uFE0F"
+            textSize = 22f
+            setPadding(0, 0, dp(10), 0)
+        })
+        val brandTexts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        brandTexts.addView(TextView(this).apply {
+            text = "SareChild"
+            textSize = 18f
+            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_text))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        brandTexts.addView(TextView(this).apply {
+            text = "Parent dashboard"
+            textSize = 12f
+            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_text_muted))
+        })
+        brandRow.addView(brandTexts)
+        container.addView(brandRow)
+        container.addView(sidebarDivider())
+
+        val rows = mutableListOf<NavRow>()
+        fun addGroup(label: String, items: List<Triple<String, String, String>>) {
+            container.addView(TextView(this).apply {
+                text = label.uppercase(Locale.getDefault())
+                textSize = 11f
+                letterSpacing = 0.08f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_text_muted))
+                setPadding(dp(20), dp(14), dp(20), dp(6))
+            })
+            items.forEach { (key, title, icon) ->
+                val button = navRowButton(icon, title) { selectSection(key) }
+                container.addView(button)
+                rows += NavRow(key, title, icon, button)
+            }
+        }
+
+        addGroup(
+            "Overview",
+            listOf(
+                Triple("home", "Home", "\uD83C\uDFE0"),
+                Triple("alerts", "Alerts", "\uD83D\uDD14"),
+                Triple("chat", "Chat", "\uD83D\uDCAC"),
+                Triple("map", "Map & locations", "\uD83D\uDCCD"),
+            )
+        )
+        addGroup(
+            "Family",
+            listOf(
+                Triple("pair", "Pair a device", "\uD83D\uDCF1"),
+                Triple("guardians", "Guardians", "\uD83D\uDC6A"),
+            )
+        )
+        addGroup(
+            "Safety tools",
+            listOf(
+                Triple("safety", "Safety checks", "\uD83D\uDEE1\uFE0F"),
+                Triple("geofences", "Safe zones", "\uD83D\uDCD0"),
+                Triple("usage", "Usage & limits", "\u23F1\uFE0F"),
+                Triple("digests", "Weekly digests", "\uD83D\uDCF0"),
+            )
+        )
+        navRows = rows
+
+        val spacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        container.addView(spacer)
+        container.addView(sidebarDivider())
+        container.addView(
+            MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "Sign out"
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_text))
+                strokeColor = android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_divider)
+                )
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.setMargins(dp(20), dp(14), dp(20), dp(8)) }
+                setOnClickListener {
+                    repo.signOut()
+                    startActivity(Intent(this@DashboardActivity, AuthActivity::class.java))
+                    finish()
+                }
+            }
+        )
+        updateNavHighlight()
+    }
+
+    private fun sidebarDivider(): View = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).also {
+            it.setMargins(dp(20), dp(4), dp(20), dp(4))
+        }
+        setBackgroundColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_divider))
+    }
+
+    private fun navRowButton(icon: String, title: String, onClick: () -> Unit): TextView {
+        val outValue = android.util.TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
+        return TextView(this).apply {
+            text = "$icon   $title"
+            textSize = 14.5f
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_text))
+            isClickable = true
+            isFocusable = true
+            foreground = ContextCompat.getDrawable(this@DashboardActivity, outValue.resourceId)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.setMargins(dp(12), dp(2), dp(12), dp(2)) }
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            clipToOutline = false
+            setOnClickListener { onClick() }
+        }
+    }
+
+    /** Highlights the active sidebar row with the brand gradient pill, like the web sidebar. */
+    private fun updateNavHighlight() {
+        navRows.forEach { row ->
+            if (row.key == currentSection) {
+                row.button.background = ContextCompat.getDrawable(this, R.drawable.bg_nav_item_active)
+                row.button.setTextColor(ContextCompat.getColor(this, R.color.surface))
+            } else {
+                row.button.background = null
+                row.button.setTextColor(ContextCompat.getColor(this, R.color.sidebar_text))
+            }
+        }
+    }
+
+    private fun selectSection(key: String) {
+        binding.drawerLayout.closeDrawer(GravityCompat.START)
+        showSection(key)
     }
 
     /** Android 13+ requires runtime consent to show heads-up family chat / SOS notifications. */
@@ -253,8 +409,7 @@ class DashboardActivity : AppCompatActivity() {
                         repo.acceptGuardianInvite(code)
                             .onSuccess { fid ->
                                 familyId = fid
-                                binding.tabs.visibility = View.VISIBLE
-                                showTab(0)
+                                showSection("home")
                                 observe(fid)
                             }
                             .onFailure { status.text = it.message }
@@ -265,97 +420,91 @@ class DashboardActivity : AppCompatActivity() {
         root.addView(status)
     }
 
-    /** True while the "More" section currently on screen is [key] (used to gate refreshes). */
-    private fun moreShowing(key: String) = binding.tabs.selectedTabPosition == 3 && moreDetailKey == key
-
     private fun observe(familyId: String) {
         collectJob?.cancel()
         collectJob = lifecycleScope.launch {
             launch {
                 repo.observeDevices(familyId).collectLatest {
                     devices = it
-                    val pos = binding.tabs.selectedTabPosition
-                    if (pos == 0 || moreShowing("safety")) showTab(pos)
+                    if (currentSection == "home" || currentSection == "safety" || currentSection == "map") refreshSection()
                 }
             }
             launch {
                 repo.observeAlerts(familyId).collectLatest {
                     alerts = it
-                    val pos = binding.tabs.selectedTabPosition
-                    if (pos == 0 || pos == 1) showTab(pos)
+                    if (currentSection == "home" || currentSection == "alerts") refreshSection()
                 }
             }
             launch {
                 repo.observeCommands(familyId).collectLatest {
                     commands = it
-                    if (moreShowing("safety")) showTab(3)
+                    if (currentSection == "safety") refreshSection()
                 }
             }
             launch {
                 repo.observeUsageDaily(familyId).collectLatest {
                     usageDaily = it
-                    if (moreShowing("usage")) showTab(3)
+                    if (currentSection == "usage") refreshSection()
                 }
             }
             launch {
                 repo.observeLocationTrail(familyId).collectLatest {
                     locationTrail = it
-                    if (binding.tabs.selectedTabPosition == 0) showTab(0)
+                    if (currentSection == "home" || currentSection == "map") refreshSection()
                 }
             }
             launch {
                 repo.observeAppLimits(familyId).collectLatest {
                     appLimits = it
-                    if (moreShowing("usage")) showTab(3)
+                    if (currentSection == "usage") refreshSection()
                 }
             }
             launch {
                 repo.observeAppBlockSchedules(familyId).collectLatest {
                     appBlockSchedules = it
-                    if (moreShowing("usage")) showTab(3)
+                    if (currentSection == "usage") refreshSection()
                 }
             }
             launch {
                 repo.observeCallSms(familyId).collectLatest {
                     callSmsPreviews = it
-                    if (moreShowing("safety")) showTab(3)
+                    if (currentSection == "safety") refreshSection()
                 }
             }
             launch {
                 repo.observeDigests(familyId).collectLatest {
                     digests = it
-                    if (moreShowing("digests")) showTab(3)
+                    if (currentSection == "digests") refreshSection()
                 }
             }
             launch {
                 repo.observeGuardians(familyId).collectLatest {
                     guardians = it
-                    val pos = binding.tabs.selectedTabPosition
-                    if (pos == 2 || moreShowing("guardians")) showTab(pos)
+                    if (currentSection == "chat" || currentSection == "guardians") refreshSection()
                 }
             }
             launch {
                 repo.observeSafeContacts(familyId).collectLatest {
                     safeContacts = it
-                    if (moreShowing("guardians")) showTab(3)
+                    if (currentSection == "guardians") refreshSection()
                 }
             }
             launch {
                 repo.observeSafetySettings(familyId).collectLatest {
                     safetySettings = it
-                    if (moreShowing("safety")) showTab(3)
+                    if (currentSection == "safety") refreshSection()
                 }
             }
             launch {
                 repo.observeGeofences(familyId).collectLatest {
                     geofences = it
-                    if (moreShowing("geofences")) showTab(3)
+                    if (currentSection == "geofences") refreshSection()
                 }
             }
             launch {
                 repo.observeScreenShareSchedules(familyId).collectLatest {
                     screenShareSchedules = it
-                    if (moreShowing("safety")) showTab(3)
+                    if (currentSection == "safety") refreshSection()
                 }
             }
             // Device "went dark" is a function of wall-clock time, not a new write, so
@@ -363,8 +512,7 @@ class DashboardActivity : AppCompatActivity() {
             launch {
                 while (true) {
                     delay(30_000)
-                    val pos = binding.tabs.selectedTabPosition
-                    if (pos == 0 || moreShowing("safety")) showTab(pos)
+                    if (currentSection == "home" || currentSection == "safety" || currentSection == "map") refreshSection()
                 }
             }
         }
@@ -374,73 +522,47 @@ class DashboardActivity : AppCompatActivity() {
         device.lastHeartbeatMs > 0 &&
             System.currentTimeMillis() - device.lastHeartbeatMs < SareChildConstants.WENT_DARK_AFTER_MS
 
-    private fun showTab(index: Int) {
+    private fun refreshSection() = showSection(currentSection)
+
+    /** Renders the given sidebar section into the content frame and updates drawer highlight. */
+    private fun showSection(key: String) {
+        currentSection = key
+        updateNavHighlight()
+        supportActionBar?.title = null
+        binding.toolbar.title = sectionTitle(key)
         val container = binding.content
         container.removeAllViews()
-        when (index) {
-            0 -> showHomeTab(container)
-            1 -> showAlertsTab(container)
-            2 -> showChatTab(container)
-            3 -> showMoreRoot(container)
-        }
-    }
-
-    /** Secondary/advanced features live behind "More" — one tap in, one tap back out. */
-    private fun showMoreRoot(container: FrameLayout) {
-        val key = moreDetailKey
-        if (key == null) {
-            showMoreMenu(container)
-            return
-        }
-        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        container.addView(outer, matchFrameParams())
-
-        val backRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(8), dp(16), dp(4))
-        }
-        backRow.addView(
-            MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = "‹ More"
-                setOnClickListener {
-                    moreDetailKey = null
-                    showTab(3)
-                }
-            }
-        )
-        backRow.addView(
-            TextView(this).apply {
-                text = moreSectionTitle(key)
-                textSize = 18f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-            }
-        )
-        outer.addView(backRow)
-
-        val inner = FrameLayout(this)
-        outer.addView(inner, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         when (key) {
-            "safety" -> showSafetyTab(inner)
-            "usage" -> showUsageTab(inner)
-            "digests" -> showDigestsTab(inner)
-            "guardians" -> showGuardiansTab(inner)
-            "geofences" -> showGeofenceList(inner)
-            "pair" -> showPairTab(inner)
+            "home" -> showHomeTab(container)
+            "alerts" -> showAlertsTab(container)
+            "chat" -> showChatTab(container)
+            "map" -> showMapTab(container)
+            "safety" -> showSafetyTab(container)
+            "usage" -> showUsageTab(container)
+            "digests" -> showDigestsTab(container)
+            "guardians" -> showGuardiansTab(container)
+            "geofences" -> showGeofenceList(container)
+            "pair" -> showPairTab(container)
+            else -> showHomeTab(container)
         }
     }
 
-    private fun moreSectionTitle(key: String): String = when (key) {
+    private fun sectionTitle(key: String): String = when (key) {
+        "home" -> "SareChild"
+        "alerts" -> "Alerts"
+        "chat" -> "Family chat"
+        "map" -> "Map & locations"
         "safety" -> "Safety checks"
         "usage" -> "App usage & limits"
         "digests" -> "Weekly digests"
         "guardians" -> "Guardians & caregivers"
-        "geofences" -> "Safe zones (geofences)"
+        "geofences" -> "Safe zones"
         "pair" -> "Pair a device"
-        else -> "More"
+        else -> "SareChild"
     }
 
-    private fun showMoreMenu(container: FrameLayout) {
+    /** Bigger map-first view of every paired child's last known location, for sidebar parity with the web dashboard. */
+    private fun showMapTab(container: FrameLayout) {
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -449,80 +571,77 @@ class DashboardActivity : AppCompatActivity() {
         scroll.addView(root)
         container.addView(scroll, matchFrameParams())
 
-        root.addView(
-            TextView(this).apply {
-                text = "More"
-                textSize = 22f
+        if (devices.isEmpty()) {
+            root.addView(TextView(this).apply { text = "Pair a device to see its location here." })
+            return
+        }
+        devices.forEach { device ->
+            prefetchLocationMeta(device)
+            val card = com.google.android.material.card.MaterialCardView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = dp(14) }
+                radius = dp(18).toFloat()
+                cardElevation = 0f
+                strokeWidth = dp(1)
+                strokeColor = ContextCompat.getColor(this@DashboardActivity, R.color.outline)
+                setCardBackgroundColor(ContextCompat.getColor(this@DashboardActivity, R.color.surface))
+            }
+            val inner = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+            }
+            inner.addView(TextView(this).apply {
+                text = device.childName
+                textSize = 17f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
-            }
-        )
-        root.addView(
-            TextView(this).apply {
-                text = "Everything else you can do with SareChild — pairing, safe zones, limits, and family setup."
-                setPadding(0, dp(6), 0, dp(16))
-                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
-            }
-        )
-
-        val items = listOf(
-            Triple("safety", "Safety checks", "Screen share, camera/voice checks, lock/unlock, ring device"),
-            Triple("usage", "App usage & limits", "Daily limits, scheduled app blocks, screen time history"),
-            Triple("geofences", "Safe zones (geofences)", "Get notified when your child enters or leaves a place"),
-            Triple("digests", "Weekly digests", "A weekly summary of alerts and activity"),
-            Triple("guardians", "Guardians & caregivers", "Invite family members, manage safe WhatsApp contacts"),
-            Triple("pair", "Pair a device", "Connect a new child phone or add an SOS contact"),
-        )
-        items.forEach { (key, title, subtitle) ->
-            root.addView(moreMenuRow(title, subtitle) {
-                moreDetailKey = key
-                showTab(3)
             })
+            val loc = device.lastLocation
+            if (loc != null) {
+                val key = "%.4f,%.4f".format(loc.lat, loc.lng)
+                val bitmap = mapBitmapCache[key]
+                val address = addressCache[key]
+                if (bitmap != null) {
+                    inner.addView(ImageView(this).apply {
+                        setImageBitmap(bitmap)
+                        adjustViewBounds = true
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        ).also { it.topMargin = dp(8) }
+                        setOnClickListener { openDeviceMap(device) }
+                    })
+                } else {
+                    inner.addView(TextView(this).apply {
+                        text = "Loading map…"
+                        setPadding(0, dp(8), 0, dp(4))
+                    })
+                }
+                if (!address.isNullOrBlank()) {
+                    inner.addView(TextView(this).apply {
+                        text = "\uD83D\uDCCD $address"
+                        setPadding(0, dp(6), 0, 0)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    })
+                }
+                inner.addView(MaterialButton(this).apply {
+                    text = "Open in Google Maps"
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).also { it.topMargin = dp(10) }
+                    setOnClickListener { openDeviceMap(device) }
+                })
+            } else {
+                inner.addView(TextView(this).apply {
+                    text = "Waiting for first location…"
+                    setPadding(0, dp(8), 0, 0)
+                })
+            }
+            card.addView(inner)
+            root.addView(card)
         }
-    }
-
-    private fun moreMenuRow(title: String, subtitle: String, onClick: () -> Unit): View {
-        val card = com.google.android.material.card.MaterialCardView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).also { it.bottomMargin = dp(10) }
-            radius = dp(16).toFloat()
-            cardElevation = 0f
-            strokeWidth = dp(1)
-            strokeColor = ContextCompat.getColor(this@DashboardActivity, R.color.outline)
-            setCardBackgroundColor(ContextCompat.getColor(this@DashboardActivity, R.color.surface))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onClick() }
-        }
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-        }
-        val texts = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        texts.addView(TextView(this).apply {
-            text = title
-            textSize = 16f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        })
-        texts.addView(TextView(this).apply {
-            text = subtitle
-            textSize = 13f
-            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
-            setPadding(0, dp(2), 0, 0)
-        })
-        row.addView(texts)
-        row.addView(TextView(this).apply {
-            text = "›"
-            textSize = 22f
-            setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.brand_green))
-        })
-        card.addView(row)
-        return card
     }
 
     private fun showChatTab(container: FrameLayout) {
@@ -577,10 +696,7 @@ class DashboardActivity : AppCompatActivity() {
             })
             root.addView(MaterialButton(this).apply {
                 text = "Pair a device"
-                setOnClickListener {
-                    moreDetailKey = "pair"
-                    showTab(3)
-                }
+                setOnClickListener { showSection("pair") }
             })
             return
         }
@@ -601,7 +717,7 @@ class DashboardActivity : AppCompatActivity() {
         if (latestUnread != null) {
             root.addView(
                 homeAlertBanner(latestUnread) {
-                    binding.tabs.getTabAt(1)?.select()
+                    showSection("alerts")
                 }
             )
         }
@@ -669,7 +785,7 @@ class DashboardActivity : AppCompatActivity() {
                     GoogleGeoApi.staticMapBitmap(this@DashboardActivity, loc.lat, loc.lng, 640, 280)
                 }.getOrNull()
             }
-            if (binding.tabs.selectedTabPosition == 0) showTab(0)
+            if (currentSection == "home" || currentSection == "map") refreshSection()
         }
     }
 
@@ -740,7 +856,7 @@ class DashboardActivity : AppCompatActivity() {
                 val (fgSev, _) = severityColors(latestAlert.severity)
                 b.latestAlertIcon.imageTintList = android.content.res.ColorStateList.valueOf(fgSev)
                 b.latestAlertText.text = "${latestAlert.title} · ${relativeTime(latestAlert.createdAtMs)}"
-                b.latestAlertRow.setOnClickListener { binding.tabs.getTabAt(1)?.select() }
+                b.latestAlertRow.setOnClickListener { showSection("alerts") }
             } else {
                 b.latestAlertRow.visibility = View.GONE
             }
@@ -886,15 +1002,15 @@ class DashboardActivity : AppCompatActivity() {
         val criticalCount = alerts.count { it.severity == AlertSeverity.CRITICAL || it.severity == AlertSeverity.HIGH }
         filterRow.addView(filterChip("All (${alerts.size})", alertFilter == AlertFilter.ALL) {
             alertFilter = AlertFilter.ALL
-            showTab(1)
+            showSection("alerts")
         })
         filterRow.addView(filterChip("Critical ($criticalCount)", alertFilter == AlertFilter.CRITICAL) {
             alertFilter = AlertFilter.CRITICAL
-            showTab(1)
+            showSection("alerts")
         })
         filterRow.addView(filterChip("Info", alertFilter == AlertFilter.INFO) {
             alertFilter = AlertFilter.INFO
-            showTab(1)
+            showSection("alerts")
         })
         root.addView(filterRow)
 
@@ -1168,7 +1284,7 @@ class DashboardActivity : AppCompatActivity() {
                             30 -> 60
                             else -> 5
                         }
-                        showTab(3)
+                        showSection("safety")
                     }
                 }
             )
@@ -1761,8 +1877,7 @@ class DashboardActivity : AppCompatActivity() {
                                 familyId = fid
                                 acceptResult.text = "Joined family successfully."
                                 observe(fid)
-                                moreDetailKey = "guardians"
-                                showTab(3)
+                                showSection("guardians")
                             }
                             .onFailure { acceptResult.text = it.message }
                     }

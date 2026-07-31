@@ -199,6 +199,18 @@ export type GuardianInvite = {
   claimed: boolean
 }
 
+export type FamilyChatMessage = {
+  id: string
+  senderUid: string
+  senderName: string
+  senderRole: 'GUARDIAN' | 'CHILD'
+  deviceId?: string | null
+  text?: string | null
+  mediaUrl?: string | null
+  mediaType?: string | null
+  createdAtMs: number
+}
+
 export type WeeklyDigest = {
   id: string
   weekStartMs: number
