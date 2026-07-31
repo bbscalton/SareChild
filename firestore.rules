@@ -18,10 +18,14 @@ service cloud.firestore {
     // parentProfile exists, its `status` must not be "purged" — purged trial accounts
     // (see purgeInactiveTrials Cloud Function) lose all family read/write access even
     // though their Auth account and profile tombstone still exist for audit purposes.
+    // Uses .get(key, default) instead of direct field access everywhere below: a
+    // parentProfile written by an older client/repair script without every trial field
+    // (e.g. missing `status`) must never turn into a hard rules-evaluation error that
+    // denies the whole family — it should just fall back to "active".
     function requesterActive() {
       return signedIn()
         && (!exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
-          || parentProfile().status != 'purged');
+          || parentProfile().get('status', 'active') != 'purged');
     }
 
     // True for the parent who owns the family profile record (legacy check, kept
@@ -29,12 +33,12 @@ service cloud.firestore {
     function isFamilyParent(familyId) {
       return requesterActive()
         && exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
-        && parentProfile().familyId == familyId;
+        && parentProfile().get('familyId', '') == familyId;
     }
 
     // True only for the exact uid stored as families/{familyId}.parentUid.
     function isFamilyOwner(familyId) {
-      return requesterActive() && familyDoc(familyId).parentUid == request.auth.uid;
+      return requesterActive() && familyDoc(familyId).get('parentUid', '') == request.auth.uid;
     }
 
     // True for the parent/owner or any invited guardian (caregiver) of the family.
@@ -64,7 +68,8 @@ service cloud.firestore {
       // silently extend its own trial window — only the purge job / an Admin SDK
       // script may change `status` away from "purged" or move `trialEndsAt`.
       allow update: if signedIn() && request.auth.uid == uid
-        && (resource.data.status != 'purged' || request.resource.data.status == 'purged')
+        && (resource.data.get('status', 'active') != 'purged'
+          || request.resource.data.get('status', 'active') == 'purged')
         && (!('trialEndsAt' in resource.data)
           || request.resource.data.trialEndsAt == resource.data.trialEndsAt);
     }
@@ -127,6 +132,13 @@ service cloud.firestore {
       }
 
       match /callSmsPreviews/{previewId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
+      // Dedicated WhatsApp protection timeline (messages/calls/media events). Written by the
+      // (anonymously signed-in) child device; read by the parent's WhatsApp dashboard section.
+      match /whatsappEvents/{eventId} {
         allow read: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }

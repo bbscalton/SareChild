@@ -45,6 +45,8 @@ import type {
   TrialInfo,
   UsageDaily,
   WeeklyDigest,
+  WhatsAppEvent,
+  WhatsAppEventType,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
@@ -247,6 +249,7 @@ export function observeDevices(
           callSmsConsent: Boolean(data.callSmsConsent),
           offlineSmsFallbackConsent: Boolean(data.offlineSmsFallbackConsent),
           offlineAutoCallConsent: Boolean(data.offlineAutoCallConsent),
+          whatsappMonitorConsent: Boolean(data.whatsappMonitorConsent),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           offlineCallEnabled: Boolean(data.offlineCallEnabled),
@@ -780,6 +783,57 @@ export function observeCallSmsPreviews(
           atMs: Number(data.atMs ?? 0),
           deviceId: (data.deviceId as string) || '',
         } satisfies CallSmsPreview
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+// ---------- WhatsApp protection section ----------
+
+const WHATSAPP_EVENT_TYPES: WhatsAppEventType[] = [
+  'MESSAGE',
+  'CALL',
+  'IMAGE',
+  'VOICE_NOTE',
+  'VIDEO',
+  'DOCUMENT',
+  'UNKNOWN_CONTACT',
+]
+
+export function observeWhatsAppEvents(
+  familyId: string,
+  onData: (rows: WhatsAppEvent[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.whatsappEvents),
+    orderBy('createdAtMs', 'desc'),
+    limit(300),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        const rawType = String(data.eventType ?? 'MESSAGE') as WhatsAppEventType
+        return {
+          id: d.id,
+          deviceId: (data.deviceId as string) || '',
+          eventType: WHATSAPP_EVENT_TYPES.includes(rawType) ? rawType : 'MESSAGE',
+          contactLabel: (data.contactLabel as string) || 'Unknown contact',
+          contactSafe: Boolean(data.contactSafe),
+          direction: (data.direction as string) || 'IN',
+          preview: (data.preview as string | null) ?? null,
+          mediaUrl: (data.mediaUrl as string | null) ?? null,
+          mediaType: (data.mediaType as string | null) ?? null,
+          durationSec: data.durationSec == null ? null : Number(data.durationSec),
+          riskScore: data.riskScore == null ? null : Number(data.riskScore),
+          riskFlag: Boolean(data.riskFlag),
+          source: (data.source as string) || 'notification',
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        } satisfies WhatsAppEvent
       })
       onData(rows)
     },

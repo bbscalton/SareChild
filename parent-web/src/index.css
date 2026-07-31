@@ -825,6 +825,105 @@ select {
   color: var(--primary-dark);
 }
 
+/* --- WhatsApp protection section --- */
+.whatsapp-hero {
+  background: linear-gradient(135deg, #e7f7ee 0%, #ffffff 70%);
+  border-color: rgba(15, 107, 76, 0.25);
+}
+
+.whatsapp-hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.whatsapp-hero-head h3 { margin: 0; }
+
+.whatsapp-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.whatsapp-stat {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem 0.9rem;
+  display: grid;
+  gap: 0.15rem;
+  text-align: center;
+}
+
+.whatsapp-stat-num {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.whatsapp-stat-num.warn { color: var(--warn); }
+
+.whatsapp-stat-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.whatsapp-timeline {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.whatsapp-event {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.whatsapp-event-risk {
+  border-color: rgba(179, 38, 30, 0.35);
+  background: #fdf4f3;
+}
+
+.whatsapp-event-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+  flex: none;
+}
+
+.whatsapp-event-body { display: grid; gap: 0.3rem; min-width: 0; flex: 1; }
+
+.whatsapp-event-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.whatsapp-event-time { margin-left: auto; }
+
+.whatsapp-event-preview {
+  margin: 0;
+  font-style: italic;
+  color: var(--ink);
+  background: #f4f8f6;
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+}
+
+.whatsapp-event-media { max-width: 220px; }
+
 /* --- Responsive: sidebar becomes an off-canvas drawer --- */
 @media (max-width: 900px) {
   .hamburger { display: flex; }

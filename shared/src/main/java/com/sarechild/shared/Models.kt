@@ -72,6 +72,7 @@ data class DeviceStatus(
     val callSmsConsent: Boolean = false,
     val offlineSmsFallbackConsent: Boolean = false,
     val offlineAutoCallConsent: Boolean = false,
+    val whatsappMonitorConsent: Boolean = false,
     val chatOnline: Boolean = false,
     val chatLastSeenMs: Long = 0L,
     val offlineCallEnabled: Boolean = false,
@@ -359,6 +360,62 @@ data class CallSmsPreview(
         "atMs" to atMs,
         "deviceId" to deviceId,
         "createdAtMs" to System.currentTimeMillis()
+    )
+}
+
+/**
+ * A single WhatsApp activity record for the parent's dedicated "WhatsApp" dashboard section
+ * (see `families/{familyId}/whatsappEvents`). Written by [com.sarechild.child.monitoring
+ * .WhatsAppMonitor] / `WhatsAppMediaObserver` on the child device from notification text,
+ * on-screen accessibility text, and/or MediaStore metadata for files under a WhatsApp media
+ * folder — never from WhatsApp's (encrypted) chat database.
+ *
+ * Whitelist behavior: when [contactSafe] is true (the contact/handle matches a parent-managed
+ * `safeContacts` entry), the event is still written for completeness but is written without a
+ * companion [FamilyAlert] — see WhatsAppMonitor for the alerting rules.
+ */
+data class WhatsAppEvent(
+    val id: String = "",
+    val deviceId: String = "",
+    val eventType: WhatsAppEventType = WhatsAppEventType.MESSAGE,
+    /** Best-effort contact name / handle / phone fragment extracted from the source signal. */
+    val contactLabel: String = "",
+    /** True if [contactLabel] matched a parent-managed safe contact for this family. */
+    val contactSafe: Boolean = false,
+    /** IN / OUT / UNKNOWN — best effort; notifications are almost always incoming. */
+    val direction: String = "IN",
+    /** Notification/on-screen text preview — never decrypted chat content beyond what
+     *  Android/WhatsApp already surfaced in the notification or visible screen. */
+    val preview: String? = null,
+    val mediaUrl: String? = null,
+    /** image | video | voice_note | document */
+    val mediaType: String? = null,
+    val durationSec: Int? = null,
+    val riskScore: Int? = null,
+    /** Heuristic "review recommended" badge: an unknown (non-whitelisted) contact paired with
+     *  a media/voice/video/document event. Not a certainty claim — for parent review only. */
+    val riskFlag: Boolean = false,
+    /** notification | onscreen | media_scan */
+    val source: String = "notification",
+    val createdAtMs: Long = System.currentTimeMillis(),
+    val retainUntilMs: Long = System.currentTimeMillis() +
+        SareChildConstants.ALERT_RETENTION_DAYS * 24L * 60L * 60L * 1000L
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "deviceId" to deviceId,
+        "eventType" to eventType.name,
+        "contactLabel" to contactLabel,
+        "contactSafe" to contactSafe,
+        "direction" to direction,
+        "preview" to preview,
+        "mediaUrl" to mediaUrl,
+        "mediaType" to mediaType,
+        "durationSec" to durationSec,
+        "riskScore" to riskScore,
+        "riskFlag" to riskFlag,
+        "source" to source,
+        "createdAtMs" to createdAtMs,
+        "retainUntilMs" to retainUntilMs
     )
 }
 

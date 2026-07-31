@@ -23,7 +23,9 @@ enum class AlertType {
     OFFLINE_EVIDENCE,
     CALL_SMS_SYNC,
     DEVICE_LOCKED,
-    DEVICE_UNLOCKED
+    DEVICE_UNLOCKED,
+    WHATSAPP_MEDIA,
+    WHATSAPP_CALL
 }
 
 enum class AlertSeverity {
@@ -66,4 +68,20 @@ enum class SafetyCommandStatus {
 enum class GuardianRole {
     OWNER,
     CAREGIVER
+}
+
+/**
+ * Classification for a single WhatsApp activity record (see [WhatsAppEvent]). Derived from
+ * best-effort heuristics on notification text / on-screen text / MediaStore file metadata —
+ * WhatsApp's chat database itself is end-to-end encrypted and never read.
+ */
+enum class WhatsAppEventType {
+    MESSAGE,
+    CALL,
+    IMAGE,
+    VOICE_NOTE,
+    VIDEO,
+    DOCUMENT,
+    /** First-ever sighting of this (non-whitelisted) contact/handle on this device. */
+    UNKNOWN_CONTACT
 }

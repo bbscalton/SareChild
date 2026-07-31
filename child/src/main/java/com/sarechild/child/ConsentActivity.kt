@@ -34,7 +34,8 @@ class ConsentActivity : AppCompatActivity() {
             binding.checkUsage,
             binding.checkCallSms,
             binding.checkOfflineSmsFallback,
-            binding.checkOfflineAutoCall
+            binding.checkOfflineAutoCall,
+            binding.checkWhatsapp
         ).forEach { it.setOnCheckedChangeListener { _, _ -> refresh() } }
 
         binding.continueBtn.setOnClickListener {
@@ -49,6 +50,7 @@ class ConsentActivity : AppCompatActivity() {
             repo.callSmsConsent = binding.checkCallSms.isChecked
             repo.offlineSmsFallbackConsent = binding.checkOfflineSmsFallback.isChecked
             repo.offlineAutoCallConsent = binding.checkOfflineAutoCall.isChecked
+            repo.whatsappMonitorConsent = binding.checkWhatsapp.isChecked
             lifecycleScope.launch {
                 runCatching { repo.syncConsentFlags() }
                 startActivity(Intent(this@ConsentActivity, PermissionsActivity::class.java))

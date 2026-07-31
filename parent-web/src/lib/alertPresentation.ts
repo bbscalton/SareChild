@@ -43,6 +43,10 @@ export function alertIcon(type: string): string {
     case 'MESSAGE_PREVIEW':
     case 'UNIDENTIFIED_CONTACT':
       return '💬'
+    case 'WHATSAPP_MEDIA':
+      return '📷'
+    case 'WHATSAPP_CALL':
+      return '📞'
     case 'APP_INSTALL':
     case 'APP_UNINSTALL':
     case 'USAGE_LIMIT':
@@ -78,6 +82,9 @@ export function alertCategoryLabel(type: string): string {
     case 'MESSAGE_PREVIEW':
     case 'UNIDENTIFIED_CONTACT':
       return 'Message safety'
+    case 'WHATSAPP_MEDIA':
+    case 'WHATSAPP_CALL':
+      return 'WhatsApp'
     case 'APP_INSTALL':
     case 'APP_UNINSTALL':
       return 'App activity'

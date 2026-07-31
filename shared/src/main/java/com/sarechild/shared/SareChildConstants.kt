@@ -26,6 +26,9 @@ object SareChildConstants {
     const val COL_SAFETY_SETTINGS = "safetySettings"
     const val COL_GUARDIAN_INVITES = "guardianInvites"
     const val COL_SCREEN_SHARE_SCHEDULES = "screenShareSchedules"
+    // Dedicated WhatsApp protection section: one row per detected message/call/media event.
+    // See shared.WhatsAppEvent and child/monitoring/WhatsAppMonitor.
+    const val COL_WHATSAPP_EVENTS = "whatsappEvents"
     // Parent-authored Home/School/Work/Custom pins for the parent-web Live Map
     // control center (see parent-web/src/pages/LiveMapPage.tsx). Not yet read/written
     // by either Android app — kept here so the collection name stays a single
@@ -68,6 +71,12 @@ object SareChildConstants {
     const val OFFLINE_CALL_FALLBACK_INTERVAL_MS = 20 * 60_000L
     const val CALL_SMS_SYNC_LIMIT = 40
     const val SMS_SNIPPET_MAX = 120
+    const val WHATSAPP_PACKAGE = "com.whatsapp"
+    const val WHATSAPP_BUSINESS_PACKAGE = "com.whatsapp.w4b"
+    /** How long a media event "remembers" the most recent notification contact for correlation. */
+    const val WHATSAPP_CONTACT_CORRELATION_MS = 3 * 60_000L
+    /** Per-contact/type alert throttle so a burst of activity raises one alert, not many. */
+    const val WHATSAPP_ALERT_DEDUPE_MS = 5 * 60_000L
 
     const val PREFS_NAME = "sarechild_prefs"
     const val PREF_FAMILY_ID = "family_id"
@@ -84,6 +93,7 @@ object SareChildConstants {
     const val PREF_CALL_SMS_CONSENT = "call_sms_consent"
     const val PREF_OFFLINE_SMS_FALLBACK_CONSENT = "offline_sms_fallback_consent"
     const val PREF_OFFLINE_AUTO_CALL_CONSENT = "offline_auto_call_consent"
+    const val PREF_WHATSAPP_MONITOR_CONSENT = "whatsapp_monitor_consent"
     const val PREF_OFFLINE_CALL_ENABLED = "offline_call_enabled"
     const val PREF_OFFLINE_CALL_NUMBER = "offline_call_number"
     const val PREF_OFFLINE_CALL_MAX_ATTEMPTS = "offline_call_max_attempts"

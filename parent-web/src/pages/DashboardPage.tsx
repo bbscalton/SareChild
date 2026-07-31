@@ -20,6 +20,8 @@ import type {
   TcdOverview,
   UsageDaily,
   WeeklyDigest,
+  WhatsAppEvent,
+  WhatsAppEventType,
 } from '../types'
 import { mediaKind } from '../types'
 import type { SafetyCommandType } from '../lib/parentRepo'
@@ -35,12 +37,14 @@ type Section =
   | 'map'
   | 'pair'
   | 'safety'
+  | 'whatsapp'
   | 'usage'
   | 'geofences'
   | 'digests'
   | 'guardians'
   | 'tcd'
 type AlertFilter = 'all' | 'critical' | 'info'
+type WhatsAppFilter = 'all' | 'messages' | 'calls' | 'media' | 'voice' | 'video' | 'unknown'
 
 type NavItem = {
   id: Section
@@ -70,6 +74,8 @@ export function DashboardPage() {
   const [digests, setDigests] = useState<WeeklyDigest[]>([])
   const [guardians, setGuardians] = useState<GuardianInfo[]>([])
   const [safeContacts, setSafeContacts] = useState<SafeContact[]>([])
+  const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
+  const [whatsAppFilter, setWhatsAppFilter] = useState<WhatsAppFilter>('all')
   const [chatMessages, setChatMessages] = useState<FamilyChatMessage[]>([])
   const [chatText, setChatText] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
@@ -157,6 +163,7 @@ export function DashboardPage() {
       repo.observeGuardians(familyId, setGuardians, (e) => setError(e.message)),
       repo.observeSosContacts(familyId, setSosContacts, (e) => setError(e.message)),
       repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
+      repo.observeWhatsAppEvents(familyId, setWhatsAppEvents, (e) => setError(e.message)),
       repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
       repo.observeScreenShareSchedules(familyId, setScreenShareSchedules, (e) => setError(e.message)),
       repo.observeFamilyChat(familyId, setChatMessages, (e) => setError(e.message)),
@@ -209,6 +216,25 @@ export function DashboardPage() {
       generatedAtMs: nowTick,
     }
   }, [devices, alerts, commands, guardians, nowTick])
+
+  const whatsAppUnknownCount = useMemo(
+    () => whatsAppEvents.filter((e) => !e.contactSafe).length,
+    [whatsAppEvents],
+  )
+
+  const filteredWhatsAppEvents = useMemo(() => {
+    if (whatsAppFilter === 'all') return whatsAppEvents
+    if (whatsAppFilter === 'unknown') return whatsAppEvents.filter((e) => !e.contactSafe)
+    const typeMap: Record<Exclude<WhatsAppFilter, 'all' | 'unknown'>, WhatsAppEventType[]> = {
+      messages: ['MESSAGE', 'UNKNOWN_CONTACT'],
+      calls: ['CALL'],
+      media: ['IMAGE', 'DOCUMENT'],
+      voice: ['VOICE_NOTE'],
+      video: ['VIDEO'],
+    }
+    const types = typeMap[whatsAppFilter as Exclude<WhatsAppFilter, 'all' | 'unknown'>]
+    return whatsAppEvents.filter((e) => types.includes(e.eventType))
+  }, [whatsAppEvents, whatsAppFilter])
 
   const galleryItems = useMemo(() => {
     const fromAlerts = alerts
@@ -585,6 +611,12 @@ export function DashboardPage() {
       ],
     },
     {
+      label: 'WhatsApp protection',
+      items: [
+        { id: 'whatsapp', label: 'WhatsApp', icon: '\u{1F7E2}', badge: whatsAppUnknownCount },
+      ],
+    },
+    {
       label: 'Safety tools',
       items: [
         { id: 'safety', label: 'Safety checks', icon: '\u{1F6E1}\uFE0F' },
@@ -604,6 +636,7 @@ export function DashboardPage() {
     map: 'Map & locations',
     pair: 'Pair a device',
     safety: 'Safety checks',
+    whatsapp: 'WhatsApp protection',
     usage: 'App usage & limits',
     geofences: 'Safe zones (geofences)',
     digests: 'Weekly digests',
@@ -1148,6 +1181,186 @@ export function DashboardPage() {
                       </figure>
                     ))}
                   </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {section === 'whatsapp' && (
+            <section className="stack">
+              <div className="card whatsapp-hero">
+                <div className="whatsapp-hero-head">
+                  <h3>WhatsApp protection</h3>
+                  <span className="pill online">Live</span>
+                </div>
+                <p className="muted">
+                  Consent-based monitoring of WhatsApp activity on paired devices. Message bodies are
+                  end-to-end encrypted and are never read from WhatsApp&apos;s database — SareChild
+                  captures notification previews, on-screen text (with consent), and media files saved
+                  to the device&apos;s WhatsApp media folder.
+                </p>
+                <p className="muted small">
+                  Contacts on the safe list below are exempt from recording and alerts. Everyone else is
+                  monitored and logged here so you can review unknown-contact activity, shared media, and
+                  calls.
+                </p>
+                <div className="whatsapp-stats">
+                  <div className="whatsapp-stat">
+                    <span className="whatsapp-stat-num">{whatsAppEvents.length}</span>
+                    <span className="whatsapp-stat-label">Events (300 latest)</span>
+                  </div>
+                  <div className="whatsapp-stat">
+                    <span className="whatsapp-stat-num warn">{whatsAppUnknownCount}</span>
+                    <span className="whatsapp-stat-label">From unknown contacts</span>
+                  </div>
+                  <div className="whatsapp-stat">
+                    <span className="whatsapp-stat-num">
+                      {whatsAppEvents.filter((e) => e.eventType === 'CALL').length}
+                    </span>
+                    <span className="whatsapp-stat-label">Calls</span>
+                  </div>
+                  <div className="whatsapp-stat">
+                    <span className="whatsapp-stat-num">
+                      {
+                        whatsAppEvents.filter((e) =>
+                          ['IMAGE', 'VIDEO', 'VOICE_NOTE', 'DOCUMENT'].includes(e.eventType),
+                        ).length
+                      }
+                    </span>
+                    <span className="whatsapp-stat-label">Media items</span>
+                  </div>
+                  <div className="whatsapp-stat">
+                    <span className="whatsapp-stat-num">
+                      {whatsAppEvents.filter((e) => e.riskFlag).length}
+                    </span>
+                    <span className="whatsapp-stat-label">Flagged for review</span>
+                  </div>
+                </div>
+              </div>
+
+              {devices.length > 0 && devices.every((d) => !d.whatsappMonitorConsent) && (
+                <Empty
+                  title="WhatsApp protection not enabled yet"
+                  body="Ask your child to open SareChild, and enable the WhatsApp protection checkbox during setup plus grant notification access and media permissions. No events will appear until consent is granted on the device."
+                />
+              )}
+
+              <div className="card">
+                <h3>Timeline</h3>
+                <div className="filter-row">
+                  {(
+                    [
+                      ['all', `All (${whatsAppEvents.length})`],
+                      ['messages', 'Messages'],
+                      ['calls', 'Calls'],
+                      ['media', 'Media'],
+                      ['voice', 'Voice notes'],
+                      ['video', 'Video'],
+                      ['unknown', `Unknown only (${whatsAppUnknownCount})`],
+                    ] as [WhatsAppFilter, string][]
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={whatsAppFilter === id ? 'chip active' : 'chip'}
+                      onClick={() => setWhatsAppFilter(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredWhatsAppEvents.length === 0 ? (
+                  <Empty
+                    title="No WhatsApp activity yet"
+                    body="Events will appear here as soon as the child device reports WhatsApp notifications, on-screen messages, calls, or media — for contacts that are not on the safe list."
+                  />
+                ) : (
+                  <ul className="whatsapp-timeline">
+                    {filteredWhatsAppEvents.map((ev) => {
+                      const name = devices.find((d) => d.id === ev.deviceId)?.childName || ev.deviceId
+                      return (
+                        <li
+                          key={ev.id}
+                          className={`whatsapp-event ${ev.riskFlag ? 'whatsapp-event-risk' : ''}`}
+                        >
+                          <span className="whatsapp-event-icon" aria-hidden="true">
+                            {whatsAppEventIcon(ev.eventType)}
+                          </span>
+                          <div className="whatsapp-event-body">
+                            <div className="whatsapp-event-top">
+                              <strong>{ev.contactLabel}</strong>
+                              <span className={`pill ${ev.contactSafe ? 'online' : 'offline'}`}>
+                                {ev.contactSafe ? 'Safe list' : 'Unknown'}
+                              </span>
+                              {ev.riskFlag && <span className="pill offline">Review</span>}
+                              <span className="muted small whatsapp-event-time">
+                                {new Date(ev.createdAtMs).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="muted small">
+                              {name} · {whatsAppEventLabel(ev.eventType)} · {ev.direction}
+                              {ev.durationSec != null && ev.durationSec > 0
+                                ? ` · ${Math.round(ev.durationSec)}s`
+                                : ''}
+                            </p>
+                            {ev.preview && <p className="whatsapp-event-preview">&ldquo;{ev.preview}&rdquo;</p>}
+                            {ev.mediaUrl && (
+                              <figure className="gallery-item whatsapp-event-media">
+                                <MediaThumb url={ev.mediaUrl} />
+                              </figure>
+                            )}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              <div className="card form-card">
+                <h3>Safe WhatsApp contacts</h3>
+                <p className="muted small">
+                  Activity from contacts listed here is exempt from recording and will not generate
+                  alerts. Anyone not listed is treated as unknown and fully monitored.
+                </p>
+                <label>
+                  Display label
+                  <input value={safeLabel} onChange={(e) => setSafeLabel(e.target.value)} placeholder="Aunt Mary" />
+                </label>
+                <label>
+                  WhatsApp name / handle / phone fragment
+                  <input
+                    value={safeIdentifier}
+                    onChange={(e) => setSafeIdentifier(e.target.value)}
+                    placeholder="+15550100 or john_doe"
+                  />
+                </label>
+                <button className="btn primary" type="button" disabled={busy} onClick={() => void submitSafeContact()}>
+                  Add safe contact
+                </button>
+              </div>
+              {safeContacts.filter((c) => c.channel === 'WHATSAPP').length > 0 && (
+                <div className="card">
+                  <h3>Current safe WhatsApp contacts</h3>
+                  <ul className="meta">
+                    {safeContacts
+                      .filter((c) => c.channel === 'WHATSAPP')
+                      .map((c) => (
+                        <li key={c.id}>
+                          {c.label || 'Contact'} — {c.identifier}{' '}
+                          {familyId && (
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              onClick={() => void repo.deleteSafeContact(familyId, c.id)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
                 </div>
               )}
             </section>
@@ -1740,6 +1953,47 @@ function TrialBannerText({ trialInfo }: { trialInfo: import('../types').TrialInf
       coming later; no card required for now.
     </span>
   )
+}
+
+function whatsAppEventIcon(t: WhatsAppEventType): string {
+  switch (t) {
+    case 'MESSAGE':
+    case 'UNKNOWN_CONTACT':
+      return '\u{1F4AC}'
+    case 'CALL':
+      return '\u{1F4DE}'
+    case 'IMAGE':
+      return '\u{1F5BC}\uFE0F'
+    case 'VOICE_NOTE':
+      return '\u{1F3A4}'
+    case 'VIDEO':
+      return '\u{1F3A5}'
+    case 'DOCUMENT':
+      return '\u{1F4CE}'
+    default:
+      return '\u{1F7E2}'
+  }
+}
+
+function whatsAppEventLabel(t: WhatsAppEventType): string {
+  switch (t) {
+    case 'MESSAGE':
+      return 'Message'
+    case 'UNKNOWN_CONTACT':
+      return 'New unknown contact'
+    case 'CALL':
+      return 'Call'
+    case 'IMAGE':
+      return 'Image'
+    case 'VOICE_NOTE':
+      return 'Voice note'
+    case 'VIDEO':
+      return 'Video'
+    case 'DOCUMENT':
+      return 'File'
+    default:
+      return t
+  }
 }
 
 function yesNo(v: boolean) {

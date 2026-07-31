@@ -31,6 +31,7 @@ import com.sarechild.shared.ScreenShareSchedule
 import com.sarechild.shared.SafeContact
 import com.sarechild.shared.SosContact
 import com.sarechild.shared.UsageAppEntry
+import com.sarechild.shared.WhatsAppEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.tasks.await
@@ -102,6 +103,16 @@ class ChildRepository(
     var offlineAutoCallConsent: Boolean
         get() = prefs.getBoolean(SareChildConstants.PREF_OFFLINE_AUTO_CALL_CONSENT, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_OFFLINE_AUTO_CALL_CONSENT, value).apply()
+
+    /**
+     * Gates the dedicated WhatsApp protection section: notification-based message/call
+     * classification, MediaStore-based media detection, and whitelist-aware event recording.
+     * Requires notification access (already covered by [messageMonitorConsent]'s permission)
+     * plus, for media detection, the READ_MEDIA_* / READ_EXTERNAL_STORAGE runtime permission.
+     */
+    var whatsappMonitorConsent: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_WHATSAPP_MONITOR_CONSENT, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_WHATSAPP_MONITOR_CONSENT, value).apply()
 
     var activeSession: String?
         get() = prefs.getString(SareChildConstants.PREF_ACTIVE_SESSION, null)
@@ -195,6 +206,7 @@ class ChildRepository(
         "callSmsConsent" to callSmsConsent,
         "offlineSmsFallbackConsent" to offlineSmsFallbackConsent,
         "offlineAutoCallConsent" to offlineAutoCallConsent,
+        "whatsappMonitorConsent" to whatsappMonitorConsent,
         "activeSession" to activeSession
     )
 
@@ -564,6 +576,21 @@ class ChildRepository(
                 )
             )
         }
+    }
+
+    /**
+     * Writes one row to the dedicated WhatsApp protection timeline. Called for every detected
+     * event — whitelisted contacts are still recorded (with `contactSafe=true`) so the parent
+     * "All" view is complete, but see [WhatsAppMonitor] for why whitelisted contacts don't also
+     * raise a [FamilyAlert].
+     */
+    suspend fun postWhatsAppEvent(event: WhatsAppEvent) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
+            .add(event.copy(deviceId = did).toMap())
+            .await()
     }
 
     fun listenPendingCommands(

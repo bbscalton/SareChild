@@ -4,8 +4,8 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.sarechild.child.data.ChildRepository
-import com.sarechild.shared.AlertType
 import com.sarechild.shared.FamilyAlert
+import com.sarechild.shared.AlertType
 import com.sarechild.shared.FamilySafetySettings
 import com.sarechild.shared.KeywordMatcher
 import com.sarechild.shared.RiskClassifier
@@ -21,9 +21,6 @@ class NotificationMonitorService : NotificationListenerService() {
     private lateinit var repo: ChildRepository
     @Volatile private var classifier: RiskClassifier = RiskClassifier()
     private val recentHashes = ConcurrentHashMap<String, Long>()
-    private val recentUnidentified = ConcurrentHashMap<String, Long>()
-    @Volatile private var cachedSafeContacts: List<String> = emptyList()
-    @Volatile private var cachedSafeContactsAtMs: Long = 0L
     @Volatile private var cachedSettings: FamilySafetySettings = FamilySafetySettings()
     @Volatile private var cachedSettingsAtMs: Long = 0L
 
@@ -56,9 +53,25 @@ class NotificationMonitorService : NotificationListenerService() {
         recentHashes.entries.removeIf { now - it.value > 10 * 60_000L }
 
         val assessment = classifier.assess(combined)
-        scope.launch {
-            maybeAlertUnidentifiedWhatsappContact(sbn.packageName, title, text, combined, assessment.score)
+
+        // Dedicated WhatsApp protection pipeline: classification, whitelist check, timeline
+        // write, and (for non-whitelisted contacts) its own alert — see WhatsAppMonitor.
+        if (WhatsAppMonitor.isWhatsApp(sbn.packageName)) {
+            scope.launch {
+                runCatching {
+                    WhatsAppMonitor.handleNotification(
+                        context = applicationContext,
+                        repo = repo,
+                        packageName = sbn.packageName,
+                        title = title,
+                        text = text,
+                        big = big,
+                        riskScore = assessment.score
+                    )
+                }
+            }
         }
+
         if (assessment.score <= 0) return
 
         scope.launch {
@@ -91,71 +104,6 @@ class NotificationMonitorService : NotificationListenerService() {
         }
     }
 
-    private suspend fun maybeAlertUnidentifiedWhatsappContact(
-        packageNameValue: String,
-        title: String,
-        text: String,
-        combined: String,
-        riskScore: Int
-    ) {
-        if (packageNameValue !in setOf("com.whatsapp", "com.whatsapp.w4b")) return
-        if (isCategorySnoozed("WHATSAPP_CONTACT")) return
-        val candidate = extractContactIdentifier(title, text) ?: return
-        val normalizedCandidate = normalizeIdentifier(candidate)
-        if (normalizedCandidate.isBlank()) return
-        val safe = loadSafeContactIdentifiers()
-        val isSafe = safe.any { normalizedSafe ->
-            normalizedSafe.isNotBlank() &&
-                (normalizedCandidate.contains(normalizedSafe) || normalizedSafe.contains(normalizedCandidate))
-        }
-        if (isSafe) return
-
-        val key = "${packageNameValue}|$normalizedCandidate"
-        val now = System.currentTimeMillis()
-        val last = recentUnidentified[key]
-        if (last != null && now - last < 5 * 60_000L) return
-        recentUnidentified[key] = now
-        recentUnidentified.entries.removeIf { now - it.value > 30 * 60_000L }
-
-        val severity = when {
-            riskScore >= 50 -> com.sarechild.shared.AlertSeverity.HIGH
-            riskScore >= 20 -> com.sarechild.shared.AlertSeverity.MEDIUM
-            else -> com.sarechild.shared.AlertSeverity.LOW
-        }
-        repo.postAlert(
-            FamilyAlert(
-                type = AlertType.UNIDENTIFIED_CONTACT,
-                severity = severity,
-                title = "Unidentified WhatsApp contact — ${repo.childName}",
-                snippet = "Contact '$candidate' is not in safe list. ${combined.take(140)}",
-                category = "WHATSAPP_CONTACT",
-                riskScore = riskScore.takeIf { it > 0 }
-            )
-        )
-    }
-
-    private fun extractContactIdentifier(title: String, text: String): String? {
-        val phone = PHONE_REGEX.find("$title $text")?.value
-        if (!phone.isNullOrBlank()) return phone
-        return title.trim().takeIf { it.isNotBlank() && !it.equals("WhatsApp", ignoreCase = true) }
-    }
-
-    private fun normalizeIdentifier(value: String): String {
-        return value.lowercase()
-            .replace(Regex("[^a-z0-9+]"), "")
-    }
-
-    private suspend fun loadSafeContactIdentifiers(): List<String> {
-        val now = System.currentTimeMillis()
-        if (now - cachedSafeContactsAtMs < 60_000L && cachedSafeContacts.isNotEmpty()) return cachedSafeContacts
-        val identifiers = repo.loadSafeContacts("WHATSAPP")
-            .map { normalizeIdentifier(it.identifier) }
-            .filter { it.isNotBlank() }
-        cachedSafeContacts = identifiers
-        cachedSafeContactsAtMs = now
-        return identifiers
-    }
-
     private suspend fun isCategorySnoozed(category: String): Boolean {
         val now = System.currentTimeMillis()
         if (now - cachedSettingsAtMs > 60_000L) {
@@ -163,9 +111,5 @@ class NotificationMonitorService : NotificationListenerService() {
             cachedSettingsAtMs = now
         }
         return now < cachedSettings.snoozeUntilMs && cachedSettings.snoozedCategories.contains(category)
-    }
-
-    companion object {
-        private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{5,}\d""")
     }
 }

@@ -48,6 +48,7 @@ export const COL = {
   screenShareSchedules: 'screenShareSchedules',
   familyChat: 'familyChat',
   mapPlaces: 'mapPlaces',
+  whatsappEvents: 'whatsappEvents',
 } as const
 
 export const WENT_DARK_AFTER_MS = 5 * 60 * 1000

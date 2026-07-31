@@ -111,6 +111,24 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
                     android:text="7 · Allow call log &amp; SMS (summaries)" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWhatsappMedia"
+                    style="@style/Widget.SareChild.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="8 · Allow WhatsApp media access (photos/videos/voice notes)" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="Only if you consented above. Detects new WhatsApp photos/videos/voice notes for contacts not on the safe list — not WhatsApp documents (an Android limitation)."
+                    android:textColor="@color/ink_faint"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

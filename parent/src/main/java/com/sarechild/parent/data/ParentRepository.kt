@@ -275,6 +275,7 @@ class ParentRepository(
                         callSmsConsent = doc.getBoolean("callSmsConsent") ?: false,
                         offlineSmsFallbackConsent = doc.getBoolean("offlineSmsFallbackConsent") ?: false,
                         offlineAutoCallConsent = doc.getBoolean("offlineAutoCallConsent") ?: false,
+                        whatsappMonitorConsent = doc.getBoolean("whatsappMonitorConsent") ?: false,
                         chatOnline = doc.getBoolean("chatOnline") ?: false,
                         chatLastSeenMs = doc.getLong("chatLastSeenMs") ?: 0L,
                         offlineCallEnabled = doc.getBoolean("offlineCallEnabled") ?: false,

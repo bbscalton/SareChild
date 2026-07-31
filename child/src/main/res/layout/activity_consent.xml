@@ -182,6 +182,12 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Allow emergency offline auto-calls to parent-configured number when internet is unavailable" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkWhatsapp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow the dedicated WhatsApp protection section (messages, calls, photos, voice notes) for contacts not on my parent's safe list" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

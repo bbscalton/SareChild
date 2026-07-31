@@ -96,6 +96,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         val snippet = text.take(180)
         scope.launch {
             maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
+            runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
             if (assessment.score > 0) {
                 if (isCategorySnoozed("KEYWORD")) return@launch
                 assessment.hits.forEach { hit ->

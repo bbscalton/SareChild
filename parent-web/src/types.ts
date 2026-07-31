@@ -32,6 +32,7 @@ export type DeviceStatus = {
   callSmsConsent: boolean
   offlineSmsFallbackConsent: boolean
   offlineAutoCallConsent: boolean
+  whatsappMonitorConsent: boolean
   chatOnline: boolean
   chatLastSeenMs: number
   offlineCallEnabled: boolean
@@ -178,6 +179,39 @@ export type CallSmsPreview = {
   snippet?: string | null
   atMs: number
   deviceId: string
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp protection section (families/{familyId}/whatsappEvents). Written by the child app
+// from notification text, on-screen accessibility text, and MediaStore metadata for files
+// under a WhatsApp media folder — never from WhatsApp's (encrypted) chat database. See
+// child/monitoring/WhatsAppMonitor.kt for the full whitelist/alerting rules this mirrors.
+// ---------------------------------------------------------------------------
+
+export type WhatsAppEventType =
+  | 'MESSAGE'
+  | 'CALL'
+  | 'IMAGE'
+  | 'VOICE_NOTE'
+  | 'VIDEO'
+  | 'DOCUMENT'
+  | 'UNKNOWN_CONTACT'
+
+export type WhatsAppEvent = {
+  id: string
+  deviceId: string
+  eventType: WhatsAppEventType
+  contactLabel: string
+  contactSafe: boolean
+  direction: string
+  preview?: string | null
+  mediaUrl?: string | null
+  mediaType?: string | null
+  durationSec?: number | null
+  riskScore?: number | null
+  riskFlag: boolean
+  source: string
+  createdAtMs: number
 }
 
 export type TrialPlan = 'trial' | 'paid'

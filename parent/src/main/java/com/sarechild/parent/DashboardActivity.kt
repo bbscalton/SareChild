@@ -964,7 +964,8 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.WENT_DARK -> R.drawable.ic_offline
         AlertType.TAMPER, AlertType.PERMISSION_REVOKED, AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED,
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE -> R.drawable.ic_alert_shield
-        AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> R.drawable.ic_alert_message
+        AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT,
+        AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL -> R.drawable.ic_alert_message
         AlertType.APP_INSTALL, AlertType.APP_UNINSTALL, AlertType.USAGE_LIMIT, AlertType.APP_BLOCKED -> R.drawable.ic_alert_app
         AlertType.CHECK_IN, AlertType.OFFLINE_EVIDENCE, AlertType.CALL_SMS_SYNC -> R.drawable.ic_alert_info
     }
@@ -979,6 +980,7 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE,
         AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED -> "Safety check"
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> "Message safety"
+        AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL -> "WhatsApp"
         AlertType.APP_INSTALL, AlertType.APP_UNINSTALL -> "App activity"
         AlertType.USAGE_LIMIT, AlertType.APP_BLOCKED -> "Screen time"
         AlertType.CHECK_IN -> "Check-in"

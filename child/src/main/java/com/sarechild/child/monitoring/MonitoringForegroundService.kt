@@ -53,6 +53,7 @@ class MonitoringForegroundService : Service() {
     private var lastLocationPerm: Boolean? = null
     private var commandListener: CommandListener? = null
     private var scheduleWatcher: ScreenShareScheduleWatcher? = null
+    private var whatsAppMediaObserver: WhatsAppMediaObserver? = null
     private var lastWallClockMs: Long = 0L
     private var lastElapsedRealtimeMs: Long = 0L
     private var lastCheckInPromptMs: Long = 0L
@@ -78,6 +79,9 @@ class MonitoringForegroundService : Service() {
         startUsageBlockLoop()
         commandListener = CommandListener(this, repo).also { it.start() }
         scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
+        if (repo.whatsappMonitorConsent) {
+            whatsAppMediaObserver = WhatsAppMediaObserver(this, repo).also { it.start() }
+        }
         scope.launch { refreshGeofences() }
         return START_STICKY
     }
@@ -329,6 +333,7 @@ class MonitoringForegroundService : Service() {
     override fun onDestroy() {
         commandListener?.stop()
         scheduleWatcher?.stop()
+        whatsAppMediaObserver?.stop()
         fused.removeLocationUpdates(locationCallback)
         heartbeatJob?.cancel()
         usageBlockJob?.cancel()

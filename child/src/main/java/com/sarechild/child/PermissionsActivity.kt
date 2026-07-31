@@ -86,6 +86,18 @@ class PermissionsActivity : AppCompatActivity() {
                 )
             )
         }
+        binding.btnWhatsappMedia.setOnClickListener {
+            val needed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                arrayOf(
+                    Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.READ_MEDIA_AUDIO
+                )
+            } else {
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            requestPerms.launch(needed)
+        }
         binding.btnStart.setOnClickListener {
             MonitoringForegroundService.start(this)
             startActivity(Intent(this, HomeActivity::class.java))
