@@ -128,18 +128,32 @@ class WhatsAppMediaObserver(
                 if (!"$data $relPath".contains("whatsapp", ignoreCase = true)) continue
                 if (processedIds.putIfAbsent(id, System.currentTimeMillis()) != null) continue
                 trimProcessed()
-                handleMediaFile(id, uri, name, kindHint)
+                handleMediaFile(id, uri, name, kindHint, data, relPath)
             }
         }
     }
 
-    private suspend fun handleMediaFile(id: Long, baseUri: Uri, displayName: String, kindHint: String) {
+    private suspend fun handleMediaFile(
+        id: Long,
+        baseUri: Uri,
+        displayName: String,
+        kindHint: String,
+        dataPath: String,
+        relPath: String
+    ) {
         val eventType = classifyFile(displayName, kindHint)
         val contactLabel = WhatsAppMonitor.recentContactLabel(SareChildConstants.WHATSAPP_PACKAGE)
             ?: WhatsAppMonitor.recentContactLabel(SareChildConstants.WHATSAPP_BUSINESS_PACKAGE)
             ?: "Unknown contact"
         val normalized = WhatsAppMonitor.normalizeIdentifier(contactLabel)
         val safe = WhatsAppMonitor.isKnownSafe(repo, normalized)
+
+        val pathCombined = "$dataPath $relPath"
+        val direction = when {
+            WhatsAppMonitor.isSentMediaPath(pathCombined) -> "OUT"
+            WhatsAppMonitor.wasRecentOutgoingContact(contactLabel) -> "OUT"
+            else -> "IN"
+        }
 
         var mediaUrl: String? = null
         runCatching {
@@ -166,7 +180,7 @@ class WhatsAppMediaObserver(
                 eventType = eventType,
                 contactLabel = contactLabel,
                 contactSafe = safe,
-                direction = "IN",
+                direction = direction,
                 mediaUrl = mediaUrl,
                 mediaType = kindHint,
                 riskFlag = !safe,

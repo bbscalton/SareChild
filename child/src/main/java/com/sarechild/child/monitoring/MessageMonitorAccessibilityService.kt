@@ -137,7 +137,11 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
             root.recycle()
             return
         }
-        val text = collectText(root).trim()
+        val text = if (WhatsAppMonitor.isWhatsApp(pkg)) {
+            collectWhatsAppText(root).trim()
+        } else {
+            collectText(root).trim()
+        }
         root.recycle()
         if (text.length < 4) return
 
@@ -259,6 +263,24 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {}
+
+    /** Preserves line breaks between nodes — WhatsApp chat/contact/status lines parse more reliably. */
+    private fun collectWhatsAppText(node: AccessibilityNodeInfo, depth: Int = 0): String {
+        if (depth > 12) return ""
+        if (node.isPassword) return ""
+        val parts = mutableListOf<String>()
+        node.text?.let { if (it.isNotBlank()) parts.add(it.toString().trim()) }
+        node.contentDescription?.let { cd ->
+            if (cd.isNotBlank() && cd != node.text?.toString()?.trim()) parts.add(cd.toString().trim())
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val childText = collectWhatsAppText(child, depth + 1)
+            if (childText.isNotBlank()) parts.add(childText)
+            child.recycle()
+        }
+        return parts.joinToString("\n")
+    }
 
     /** Skips password/PIN/secure fields entirely — their text is never read, even transiently. */
     private fun collectText(node: AccessibilityNodeInfo, depth: Int = 0): String {

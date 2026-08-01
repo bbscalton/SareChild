@@ -78,12 +78,25 @@ object WhatsAppMonitor {
     private val WHATSAPP_CHROME_TABS = setOf(
         "chats", "updates", "calls", "communities", "status", "camera", "search", "settings"
     )
+    /** Delivery-status words WhatsApp exposes in the a11y tree on *sent* bubbles only. */
+    private val OUTGOING_STATUS_WORDS = setOf("delivered", "read", "sent", "sending", "pending")
+    private val OUTGOING_A11Y_PHRASES = listOf(
+        "you sent", "outgoing message", "message sent", "sent message", "message you sent"
+    )
+    private val COMPOSE_PLACEHOLDERS = listOf(
+        "type a message", "message", "add a caption"
+    )
+    private val CHECKMARK_REGEX = Regex("""[✓✔]{1,2}""")
     private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{5,}\d""")
     private const val KNOWN_CONTACTS_PREF_KEY = "whatsapp_known_contact_keys"
     private const val KNOWN_CONTACTS_MAX = 500
 
     private val recentAlerts = ConcurrentHashMap<String, Long>()
     private val recentEventHashes = ConcurrentHashMap<String, Long>()
+    // Suppresses a rare inbound notification echo shortly after we logged the same send as OUT.
+    private val recentOutgoingKeys = ConcurrentHashMap<String, Long>()
+    // Correlates media-store additions with a contact who just had an outgoing on-screen event.
+    private val recentOutgoingContacts = ConcurrentHashMap<String, Long>()
     // Correlates a media-store file addition with whichever contact most recently appeared in
     // a WhatsApp notification for the same package — MediaStore rows carry no contact info.
     private val lastContactByPackage = ConcurrentHashMap<String, Pair<String, Long>>()
@@ -113,10 +126,104 @@ object WhatsAppMonitor {
         if (inboxHits >= 2) return true
         if (inboxHits >= 1 && lower.length > 180) return true
         if (lower.length > 100 && WHATSAPP_CHROME_PHRASES.any { lower.contains(it) }) {
-            val lineCount = text.lines().count { it.isNotBlank() }
+            val lineCount = segmentLines(text).size
             if (lineCount > 6) return true
         }
         return false
+    }
+
+    /** True when a MediaStore path looks like WhatsApp's sent-media folder (best-effort). */
+    fun isSentMediaPath(path: String): Boolean {
+        val lower = path.lowercase().replace('\\', '/')
+        return lower.contains("/whatsapp") && (
+            lower.contains("/sent/") ||
+                lower.contains("/sent ") ||
+                lower.endsWith("/sent")
+            )
+    }
+
+    /** Recent outgoing on-screen activity for [contactLabel] — used by [WhatsAppMediaObserver]. */
+    fun wasRecentOutgoingContact(contactLabel: String): Boolean {
+        val key = normalizeIdentifier(contactLabel)
+        if (key.isBlank()) return false
+        val at = recentOutgoingContacts[key] ?: return false
+        return System.currentTimeMillis() - at <= SareChildConstants.WHATSAPP_CONTACT_CORRELATION_MS
+    }
+
+    private fun markRecentOutgoing(contact: String, message: String) {
+        val now = System.currentTimeMillis()
+        val norm = normalizeIdentifier(contact)
+        recentOutgoingContacts[norm] = now
+        recentOutgoingKeys["$norm|${message.take(80).hashCode()}"] = now
+        recentOutgoingKeys.entries.removeIf { now - it.value > 15 * 60_000L }
+        recentOutgoingContacts.entries.removeIf { now - it.value > 15 * 60_000L }
+    }
+
+    private fun wasRecentOutgoing(contact: String, message: String): Boolean {
+        val key = "${normalizeIdentifier(contact)}|${message.take(80).hashCode()}"
+        val at = recentOutgoingKeys[key] ?: return false
+        return System.currentTimeMillis() - at <= SareChildConstants.WHATSAPP_ONSCREEN_DEDUPE_MS
+    }
+
+    private fun segmentLines(raw: String): List<String> {
+        val byNewline = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (byNewline.size > 1) return byNewline
+        return raw.split(Regex("\\s{2,}"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+    }
+
+    private fun isOutgoingStatusLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.isBlank()) return false
+        if (CHECKMARK_REGEX.matches(trimmed)) return true
+        val lower = trimmed.lowercase()
+        if (lower in OUTGOING_STATUS_WORDS) return true
+        if (lower.startsWith("delivered") || lower.startsWith("read")) return true
+        return OUTGOING_A11Y_PHRASES.any { lower.contains(it) }
+    }
+
+    /**
+     * Best-effort IN vs OUT from on-screen a11y text. Delivered/Read/checkmarks after the last
+     * bubble strongly indicate an outgoing send; inbound notifications never carry those markers.
+     */
+    private fun inferDirection(raw: String, lines: List<String>, message: String, messageIdx: Int): String {
+        val lowerRaw = raw.lowercase()
+        if (OUTGOING_A11Y_PHRASES.any { lowerRaw.contains(it) }) return "OUT"
+
+        val tail = lines.drop(messageIdx + 1).take(4)
+        if (tail.any { isOutgoingStatusLine(it) }) return "OUT"
+
+        val msgPos = raw.lastIndexOf(message)
+        if (msgPos >= 0) {
+            val afterMsg = raw.substring(msgPos + message.length, minOf(raw.length, msgPos + message.length + 80))
+            if (CHECKMARK_REGEX.containsMatchIn(afterMsg)) return "OUT"
+            val afterLower = afterMsg.lowercase()
+            if (OUTGOING_STATUS_WORDS.any { w -> Regex("""\b$w\b""").containsMatchIn(afterLower) }) return "OUT"
+        }
+
+        val lastFew = lines.takeLast(5)
+        if (lastFew.any { isOutgoingStatusLine(it) }) {
+            val hasActiveCompose = COMPOSE_PLACEHOLDERS.any { lowerRaw.contains(it) } &&
+                !lastFew.any { it.equals(message, ignoreCase = true) }
+            if (!hasActiveCompose || lastFew.last().let { isOutgoingStatusLine(it) }) return "OUT"
+        }
+
+        return "IN"
+    }
+
+    /** Requires a dedicated call-status line — avoids misclassifying chat dumps that mention calls. */
+    private fun isCallScreen(lines: List<String>): Boolean {
+        return lines.any { line ->
+            val lower = line.lowercase().trim()
+            if (line.length > 100) return@any false
+            CALL_PHRASES.any { phrase ->
+                lower == phrase ||
+                    lower.startsWith("$phrase ") ||
+                    lower.endsWith(" $phrase") ||
+                    (lower.contains(phrase) && line.length <= 60)
+            }
+        }
     }
 
     private fun isChromeLine(line: String): Boolean {
@@ -150,24 +257,17 @@ object WhatsAppMonitor {
         if (trimmed.length < 3) return null
         if (isChromeDump(trimmed)) return null
 
-        val eventType = classify("", trimmed, trimmed)
-        if (eventType == WhatsAppEventType.CALL) {
-            val contact = extractCallContact(trimmed)
-            val message = trimmed.lineSequence()
-                .map { it.trim() }
-                .firstOrNull { line ->
-                    line.isNotBlank() &&
-                        CALL_PHRASES.any { line.lowercase().contains(it) }
-                }
-                ?.take(160)
-                ?: trimmed.take(120)
-            return ParsedWhatsAppScreen(contact, message, WhatsAppEventType.CALL)
-        }
-
-        val lines = trimmed.lines()
-            .map { it.trim() }
+        val lines = segmentLines(trimmed)
             .filter { it.isNotBlank() && !isChromeLine(it) }
         if (lines.isEmpty()) return null
+
+        if (isCallScreen(lines)) {
+            val contact = extractCallContact(trimmed)
+            val message = lines.firstOrNull { line ->
+                CALL_PHRASES.any { line.lowercase().contains(it) }
+            }?.take(160) ?: trimmed.take(120)
+            return ParsedWhatsAppScreen(contact, message, WhatsAppEventType.CALL)
+        }
 
         val contact = lines.first().let { first ->
             when {
@@ -176,15 +276,20 @@ object WhatsAppMonitor {
             }
         }
 
-        val messageCandidates = lines.drop(1).filter { !isTimestampLine(it) && it != contact }
-        val message = messageCandidates.lastOrNull()?.take(160) ?: return null
+        val messageCandidates = lines.drop(1)
+            .mapIndexed { idx, line -> idx + 1 to line }
+            .filter { (_, line) -> !isTimestampLine(line) && !isOutgoingStatusLine(line) && line != contact }
+        val lastCandidate = messageCandidates.lastOrNull() ?: return null
+        val (messageIdx, message) = lastCandidate
         if (message.length < 2) return null
         if (isChromeDump(message)) return null
 
+        val direction = inferDirection(trimmed, lines, message, messageIdx)
         return ParsedWhatsAppScreen(
             contact = contact,
             message = message,
-            eventType = classify(contact, message, trimmed)
+            eventType = classify(contact, message, trimmed),
+            direction = direction
         )
     }
 
@@ -198,8 +303,13 @@ object WhatsAppMonitor {
             ?: "Unknown caller"
     }
 
-    private fun shouldSkipDuplicateEvent(contact: String, message: String, eventType: WhatsAppEventType): Boolean {
-        val key = "${normalizeIdentifier(contact)}|${eventType.name}|${message.take(80).hashCode()}"
+    private fun shouldSkipDuplicateEvent(
+        contact: String,
+        message: String,
+        eventType: WhatsAppEventType,
+        direction: String = "IN"
+    ): Boolean {
+        val key = "${normalizeIdentifier(contact)}|${eventType.name}|$direction|${message.take(80).hashCode()}"
         val now = System.currentTimeMillis()
         val last = recentEventHashes[key]
         if (last != null && now - last < SareChildConstants.WHATSAPP_ONSCREEN_DEDUPE_MS) return true
@@ -304,6 +414,7 @@ object WhatsAppMonitor {
         }.take(160)
 
         if (shouldSkipDuplicateEvent(contactRaw, previewBody, contentType)) return
+        if (wasRecentOutgoing(contactRaw, previewBody)) return
 
         val safe = isKnownSafe(repo, normalized)
         val firstSighting = !safe && isFirstSighting(context, "$packageName|$normalized")
@@ -347,10 +458,11 @@ object WhatsAppMonitor {
         if (!isWhatsApp(packageName)) return
         if (!repo.whatsappMonitorConsent) return
         val parsed = parseOnScreenText(text) ?: return
-        if (shouldSkipDuplicateEvent(parsed.contact, parsed.message, parsed.eventType)) return
+        if (shouldSkipDuplicateEvent(parsed.contact, parsed.message, parsed.eventType, parsed.direction)) return
 
         val normalized = normalizeIdentifier(parsed.contact)
         lastContactByPackage[packageName] = parsed.contact to System.currentTimeMillis()
+        if (parsed.direction == "OUT") markRecentOutgoing(parsed.contact, parsed.message)
         val safe = isKnownSafe(repo, normalized)
         repo.postWhatsAppEvent(
             WhatsAppEvent(
