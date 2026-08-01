@@ -146,7 +146,26 @@ export function AdminFeaturesPanel({
               }
             />
           </label>
+          <label>
+            Default data retention (days)
+            <input
+              type="number"
+              min={2}
+              max={90}
+              value={config.defaultRetentionDays}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  defaultRetentionDays: Math.min(90, Math.max(2, Number(e.target.value) || 2)),
+                })
+              }
+            />
+          </label>
         </div>
+        <p className="muted small">
+          Families without <code>retentionDays</code> inherit this default (2). Per-account overrides on Accounts →
+          Retention.
+        </p>
         {config.updatedAtMs > 0 && (
           <p className="muted small">Last updated {new Date(config.updatedAtMs).toLocaleString()} by {config.updatedBy ?? 'admin'}</p>
         )}

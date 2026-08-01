@@ -68,6 +68,8 @@ const DEFAULT_LIVE_VIEW = {
   maxSessionMinutes: 5,
 }
 
+const DEFAULT_RETENTION_DAYS = 2
+
 function nextUtcMidnightMs(fromMs: number): number {
   const d = new Date(fromMs)
   d.setUTCHours(24, 0, 0, 0)
@@ -234,6 +236,7 @@ export function observeAdminFeatures(onData: (config: AdminFeatureConfig) => voi
           defaultDailyCredits: Number(data?.liveView?.defaultDailyCredits ?? DEFAULT_LIVE_VIEW.defaultDailyCredits),
           maxSessionMinutes: Number(data?.liveView?.maxSessionMinutes ?? DEFAULT_LIVE_VIEW.maxSessionMinutes),
         },
+        defaultRetentionDays: Number(data?.defaultRetentionDays ?? DEFAULT_RETENTION_DAYS),
         updatedAtMs: Number(data?.updatedAtMs ?? 0),
         updatedBy: (data?.updatedBy as string | undefined) ?? null,
       })
@@ -247,6 +250,7 @@ export async function saveAdminFeatures(config: AdminFeatureConfig): Promise<voi
   await setDoc(doc(database, COL.adminConfig, 'features'), {
     global: config.global,
     liveView: config.liveView,
+    defaultRetentionDays: config.defaultRetentionDays,
     updatedAtMs: Date.now(),
     updatedBy: auth?.currentUser?.email ?? 'admin',
   })
@@ -371,6 +375,37 @@ export async function adminAdjustTrial(
   patch: { plan?: 'trial' | 'paid'; status?: 'active' | 'at_risk' | 'blocked'; extendDays?: number },
 ): Promise<void> {
   await callable('adminAdjustTrial')({ uid, ...patch })
+}
+
+export async function adminTriggerPurgeRetention(): Promise<{
+  familiesScanned: number
+  docsDeleted: number
+  mediaDeleted: number
+}> {
+  const res = await callable<
+    object,
+    { familiesScanned: number; docsDeleted: number; mediaDeleted: number }
+  >('adminTriggerPurgeRetention')({})
+  return res.data
+}
+
+export async function loadFamilyRetentionDays(familyId: string): Promise<number> {
+  const database = requireDb()
+  const snap = await getDoc(doc(database, COL.families, familyId))
+  const familyDays = snap.get('retentionDays')
+  if (familyDays != null && Number.isFinite(Number(familyDays))) {
+    return Math.min(90, Math.max(2, Number(familyDays)))
+  }
+  const configSnap = await getDoc(doc(database, COL.adminConfig, 'features'))
+  const globalDefault = Number(configSnap.get('defaultRetentionDays') ?? DEFAULT_RETENTION_DAYS)
+  return Math.min(90, Math.max(2, globalDefault))
+}
+
+export async function adminSetRetention(uid: string, retentionDays: number): Promise<{ familyId: string; retentionDays: number }> {
+  const res = await callable<{ uid: string; retentionDays: number }, { familyId: string; retentionDays: number }>(
+    'adminSetRetention',
+  )({ uid, retentionDays })
+  return res.data
 }
 
 export async function adminTriggerPurgeTrials(): Promise<{ warned: number; purged: number; scanned: number }> {

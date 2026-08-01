@@ -74,10 +74,10 @@ service cloud.firestore {
     match /families/{familyId} {
       allow create: if requesterActive()
         && request.resource.data.get('parentUid', '') == request.auth.uid;
-      allow read: if isFamilyGuardian(familyId);
+      allow read: if isFamilyGuardian(familyId) || isProjectAdmin();
 
       match /devices/{deviceId} {
-        allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId) || isProjectAdmin();
         allow create, update: if isFamilyGuardian(familyId)
           || (signedIn() && request.resource.data.authUid == request.auth.uid);
 
@@ -201,8 +201,8 @@ service cloud.firestore {
       }
 
       match /guardians/{uid} {
-        allow read: if isFamilyGuardian(familyId);
-        allow write: if isFamilyOwner(familyId) || (requesterActive() && request.auth.uid == uid);
+        allow read: if isFamilyGuardian(familyId) || isProjectAdmin();
+        allow write: if isFamilyOwner(familyId) || (requesterActive() && request.auth.uid == uid) || isProjectAdmin();
       }
     }
 

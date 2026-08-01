@@ -1,4 +1,4 @@
-export interface Env {
+type Env = {
   MEDIA_BUCKET: R2Bucket;
   DB: D1Database;
   EDGE_CACHE: KVNamespace;
@@ -6,7 +6,8 @@ export interface Env {
   FIREBASE_API_KEY?: string;
   FIREBASE_AUTH_DOMAIN?: string;
   WENT_DARK_AFTER_MS?: string;
-}
+  MEDIA_PURGE_SECRET?: string;
+};
 
 type Status = "ok" | "warn" | "fail";
 
@@ -16,7 +17,7 @@ function json(body: unknown, status = 200): Response {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET,PUT,POST,OPTIONS",
+      "access-control-allow-methods": "GET,HEAD,PUT,POST,DELETE,OPTIONS",
       "access-control-allow-headers": "content-type,authorization,x-family-id",
       "cache-control": "no-store",
     },
@@ -90,10 +91,31 @@ async function probeD1(env: Env): Promise<{ status: Status; message: string; lat
 
 async function probeKv(env: Env): Promise<{ status: Status; message: string; latencyMs: number }> {
   const started = Date.now();
-  const key = `__health_${Date.now()}`;
+  const probeKey = "__health_probe";
   try {
-    await env.EDGE_CACHE.put(key, "1", { expirationTtl: 60 });
-    const value = await env.EDGE_CACHE.get(key);
+    // Read-only first — health checks run often; unique put() keys exhaust daily KV write quota.
+    const existing = await env.EDGE_CACHE.get(probeKey);
+    if (existing != null) {
+      return {
+        status: "ok",
+        message: "KV edge cache is reachable.",
+        latencyMs: Date.now() - started,
+      };
+    }
+    try {
+      await env.EDGE_CACHE.put(probeKey, "1", { expirationTtl: 86400 });
+    } catch (putError) {
+      const msg = putError instanceof Error ? putError.message : String(putError);
+      if (/limit exceeded/i.test(msg)) {
+        return {
+          status: "warn",
+          message: "KV reads OK; daily write quota reached (health probe is read-only).",
+          latencyMs: Date.now() - started,
+        };
+      }
+      throw putError;
+    }
+    const value = await env.EDGE_CACHE.get(probeKey);
     return {
       status: value === "1" ? "ok" : "fail",
       message: value === "1" ? "KV edge cache is reachable." : "KV write/read mismatch.",
@@ -394,7 +416,10 @@ export default {
 
     // Public APK downloads for the marketing site. Files are uploaded to R2 under
     // the `downloads/` prefix (e.g. downloads/parent.apk, downloads/child.apk).
-    if (request.method === "GET" && url.pathname.startsWith("/downloads/")) {
+    if (
+      (request.method === "GET" || request.method === "HEAD") &&
+      url.pathname.startsWith("/downloads/")
+    ) {
       const name = decodeURIComponent(url.pathname.replace("/downloads/", ""));
       if (!name || name.includes("..") || !name.endsWith(".apk")) {
         return new Response("invalid path", { status: 400 });
@@ -405,10 +430,14 @@ export default {
       obj.writeHttpMetadata(headers);
       headers.set("content-type", "application/vnd.android.package-archive");
       headers.set("content-disposition", `attachment; filename="${name}"`);
+      headers.set("content-length", String(obj.size));
       headers.set("etag", obj.httpEtag);
       headers.set("cache-control", "public, max-age=300, must-revalidate");
       headers.set("access-control-allow-origin", "*");
-      return new Response(obj.body, { headers });
+      return new Response(request.method === "HEAD" ? null : obj.body, {
+        status: 200,
+        headers,
+      });
     }
 
     if (request.method === "GET" && url.pathname.startsWith("/media/")) {
@@ -421,6 +450,18 @@ export default {
       headers.set("etag", obj.httpEtag);
       headers.set("access-control-allow-origin", "*");
       return new Response(obj.body, { headers });
+    }
+
+    if (request.method === "DELETE" && url.pathname.startsWith("/media/")) {
+      const secret = env.MEDIA_PURGE_SECRET?.trim();
+      const auth = request.headers.get("authorization") ?? "";
+      if (!secret || auth !== `Bearer ${secret}`) {
+        return json({ error: "unauthorized" }, 401);
+      }
+      const key = decodeURIComponent(url.pathname.replace("/media/", ""));
+      if (!key || key.includes("..")) return json({ error: "invalid path" }, 400);
+      await env.MEDIA_BUCKET.delete(key);
+      return json({ ok: true, deleted: key });
     }
 
     return json({ error: "not found" }, 404);

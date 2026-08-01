@@ -50,6 +50,8 @@ export type AdminAuditAction =
   | "block_account"
   | "unblock_account"
   | "trigger_purge_trials"
+  | "trigger_purge_retention"
+  | "set_retention"
   | "repair_orphans"
   | "send_test_fcm";
 
@@ -124,6 +126,7 @@ async function createFreshFamilyForUser(uid: string, email: string): Promise<str
     parentUid: uid,
     createdAtMs: now,
     parentEmail: email,
+    retentionDays: 2,
   });
   await familyRef.collection("guardians").doc(uid).set({
     email,
@@ -519,6 +522,70 @@ export const adminRepairOrphans = onCall({ cors: true }, async (request) => {
   });
 
   return { ok: true, fixes };
+});
+
+export const adminSetRetention = onCall({ cors: true }, async (request) => {
+  const adminEmail = assertProjectAdmin(request);
+  const uid = String(request.data?.uid ?? "").trim();
+  const familyIdArg = String(request.data?.familyId ?? "").trim();
+  const retentionDays = Number(request.data?.retentionDays);
+
+  if (!Number.isFinite(retentionDays)) {
+    throw new HttpsError("invalid-argument", "retentionDays (2–90) is required.");
+  }
+  if (retentionDays < 2 || retentionDays > 90) {
+    throw new HttpsError("invalid-argument", "retentionDays must be between 2 and 90.");
+  }
+
+  let familyId = familyIdArg;
+  let targetEmail: string | null = null;
+
+  if (uid) {
+    const { data, email } = await loadTargetProfile(uid);
+    targetEmail = email;
+    familyId =
+      familyId ||
+      (data.ownedFamilyId as string | undefined) ||
+      (data.familyId as string | undefined) ||
+      "";
+  }
+
+  if (!familyId) {
+    throw new HttpsError("invalid-argument", "uid or familyId is required.");
+  }
+
+  const familySnap = await db.collection("families").doc(familyId).get();
+  if (!familySnap.exists) {
+    throw new HttpsError("not-found", `Family ${familyId} not found.`);
+  }
+
+  const { adminSetFamilyRetentionDays } = await import("./purgeRetention");
+  const days = await adminSetFamilyRetentionDays(familyId, retentionDays);
+
+  await writeAuditLog({
+    action: "set_retention",
+    adminEmail,
+    targetUid: uid || familySnap.get("parentUid") || familyId,
+    targetEmail: targetEmail ?? (familySnap.get("parentEmail") as string | undefined) ?? null,
+    detail: `Set retentionDays=${days} on family ${familyId}`,
+    meta: { familyId, retentionDays: days },
+  });
+
+  return { ok: true, familyId, retentionDays: days };
+});
+
+export const adminTriggerPurgeRetention = onCall({ cors: true }, async (request) => {
+  const adminEmail = assertProjectAdmin(request);
+  const { runPurgeExpiredRetentionData } = await import("./purgeRetention");
+  const result = await runPurgeExpiredRetentionData();
+  await writeAuditLog({
+    action: "trigger_purge_retention",
+    adminEmail,
+    targetUid: "system",
+    detail: `Manual retention purge: families=${result.familiesScanned} docs=${result.docsDeleted}`,
+    meta: result,
+  });
+  return { ok: true, ...result };
 });
 
 export const adminSendTestFcm = onCall({ cors: true }, async (request) => {

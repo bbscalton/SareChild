@@ -35,6 +35,8 @@ const ACTION_LABELS: Record<string, string> = {
   block_account: 'Block',
   unblock_account: 'Unblock',
   trigger_purge_trials: 'Purge trials',
+  trigger_purge_retention: 'Purge retention data',
+  set_retention: 'Set retention',
   repair_orphans: 'Repair orphans',
   send_test_fcm: 'Test FCM',
 }
@@ -96,6 +98,28 @@ export function AdminSystemPanel({
     }
   }
 
+  const runRetentionPurge = async () => {
+    if (
+      !window.confirm(
+        'Run operational data retention purge now? Deletes event/timeline docs older than each family\'s retentionDays (default 2). Account shells and devices are kept.',
+      )
+    ) {
+      return
+    }
+    onBusy(true)
+    onError(null)
+    try {
+      const result = await adminRepo.adminTriggerPurgeRetention()
+      onStatus(
+        `Retention purge: families=${result.familiesScanned}, docs deleted=${result.docsDeleted}, R2 media=${result.mediaDeleted}.`,
+      )
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Retention purge failed')
+    } finally {
+      onBusy(false)
+    }
+  }
+
   const runRepair = async () => {
     onBusy(true)
     onError(null)
@@ -142,10 +166,18 @@ export function AdminSystemPanel({
           <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void runPurge()}>
             Trigger purge-inactive-trials
           </button>
+          <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void runRetentionPurge()}>
+            Trigger retention purge
+          </button>
           <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void runRepair()}>
             Repair orphaned families
           </button>
         </div>
+        <p className="muted small" style={{ marginTop: '0.75rem' }}>
+          <strong>Data retention:</strong> operational event data (alerts, trails, recordings, chat, usage) is kept for{' '}
+          <strong>2 days</strong> by default per family. Increase per account on the Accounts tab (2–90 days). Runs
+          automatically every 24h via <code>purgeExpiredRetentionData</code>.
+        </p>
         <ul className="tcd-check-list" style={{ marginTop: '1rem' }}>
           <li className="tcd-check-row">
             <span>

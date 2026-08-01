@@ -140,6 +140,8 @@ export type AdminFeatureConfig = {
     defaultDailyCredits: number
     maxSessionMinutes: number
   }
+  /** Global default operational data retention (days) when family has no override. */
+  defaultRetentionDays: number
   updatedAtMs: number
   updatedBy: string | null
 }

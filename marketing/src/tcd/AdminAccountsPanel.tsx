@@ -120,6 +120,9 @@ export function AdminAccountsPanel({
   const [trialExtendDays, setTrialExtendDays] = useState('7')
   const [trialPlan, setTrialPlan] = useState<'trial' | 'paid'>('trial')
   const [trialStatus, setTrialStatus] = useState<'active' | 'at_risk' | 'blocked'>('active')
+  const [retentionUid, setRetentionUid] = useState<string | null>(null)
+  const [retentionDays, setRetentionDays] = useState('2')
+  const [retentionCurrent, setRetentionCurrent] = useState<number | null>(null)
   const [resetTarget, setResetTarget] = useState<AdminParentAccountRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AdminParentAccountRow | null>(null)
 
@@ -194,6 +197,47 @@ export function AdminAccountsPanel({
       setTrialUid(null)
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Trial update failed')
+    } finally {
+      onBusy(false)
+    }
+  }
+
+  const openRetention = async (row: AdminParentAccountRow) => {
+    setRetentionUid(row.uid)
+    setRetentionDays('2')
+    setRetentionCurrent(null)
+    if (!row.familyId) return
+    onBusy(true)
+    try {
+      const current = await adminRepo.loadFamilyRetentionDays(row.familyId)
+      setRetentionCurrent(current)
+      setRetentionDays(String(current))
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not load retention')
+    } finally {
+      onBusy(false)
+    }
+  }
+
+  const runAdjustRetention = async (uid: string, familyId: string | null) => {
+    const days = Number(retentionDays)
+    if (!familyId) {
+      onError('Account has no familyId.')
+      return
+    }
+    if (!Number.isFinite(days) || days < 2 || days > 90) {
+      onError('Retention must be between 2 and 90 days.')
+      return
+    }
+    onBusy(true)
+    onError(null)
+    try {
+      const result = await adminRepo.adminSetRetention(uid, days)
+      onStatus(`Retention set to ${result.retentionDays} day(s) for family ${result.familyId.slice(0, 10)}…`)
+      setRetentionUid(null)
+      setRetentionCurrent(null)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Retention update failed')
     } finally {
       onBusy(false)
     }
@@ -343,6 +387,9 @@ export function AdminAccountsPanel({
                         <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => setTrialUid(row.uid)}>
                           Trial
                         </button>
+                        <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void openRetention(row)}>
+                          Retention
+                        </button>
                         <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void runRevoke(row)}>
                           Sign out
                         </button>
@@ -395,6 +442,41 @@ export function AdminAccountsPanel({
                             Apply
                           </button>
                           <button className="btn btn-ghost compact" type="button" onClick={() => setTrialUid(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                      {retentionUid === row.uid && (
+                        <div className="tcd-inline-form tcd-inline-form-wrap">
+                          <span className="tcd-cell-sub">
+                            Current: {retentionCurrent != null ? `${retentionCurrent}d` : '…'}
+                          </span>
+                          <input
+                            type="number"
+                            min={2}
+                            max={90}
+                            placeholder="days"
+                            value={retentionDays}
+                            onChange={(e) => setRetentionDays(e.target.value)}
+                            className="tcd-admin-input-sm"
+                            title="Operational data retention (2–90 days)"
+                          />
+                          <button
+                            className="btn btn-primary compact"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void runAdjustRetention(row.uid, row.familyId)}
+                          >
+                            Set days
+                          </button>
+                          <button
+                            className="btn btn-ghost compact"
+                            type="button"
+                            onClick={() => {
+                              setRetentionUid(null)
+                              setRetentionCurrent(null)
+                            }}
+                          >
                             Cancel
                           </button>
                         </div>

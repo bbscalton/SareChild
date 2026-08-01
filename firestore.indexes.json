@@ -8,6 +8,14 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "requestedAtMs", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "alerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "severity", "order": "ASCENDING" },
+        { "fieldPath": "createdAtMs", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

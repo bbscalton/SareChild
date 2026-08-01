@@ -4,6 +4,7 @@ import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { runPurgeInactiveTrials } from "./purgeTrials";
+import { runPurgeExpiredRetentionData } from "./purgeRetention";
 
 export {
   adminWipeUser,
@@ -11,6 +12,8 @@ export {
   adminRevokeSessions,
   adminAdjustTrial,
   adminTriggerPurgeTrials,
+  adminSetRetention,
+  adminTriggerPurgeRetention,
   adminRepairOrphans,
   adminSendTestFcm,
 } from "./admin";
@@ -27,6 +30,11 @@ const MEDIA_RETENTION_DAYS = 7;
 /** Daily cron: warns or purges inactive trial accounts (see purgeTrials.ts). */
 export const purgeInactiveTrials = onSchedule("every 24 hours", async () => {
   await runPurgeInactiveTrials();
+});
+
+/** Daily cron: purges operational family data older than retentionDays (default 2). */
+export const purgeExpiredRetentionData = onSchedule("every 24 hours", async () => {
+  await runPurgeExpiredRetentionData();
 });
 
 type FcmMessage = {
