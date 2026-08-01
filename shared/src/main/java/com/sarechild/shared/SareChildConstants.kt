@@ -44,6 +44,8 @@ object SareChildConstants {
     const val COL_CALL_RECORDINGS = "callRecordings"
     /** Per-device installed app inventory (child syncs via PackageManager). */
     const val COL_INSTALLED_APPS = "installedApps"
+    /** Per-device photo gallery metadata synced from MediaStore (nested under devices/{id}/photos). */
+    const val COL_PHOTOS = "photos"
     /** WebRTC live viewing signaling + session metadata (parent-web ↔ child). */
     const val COL_LIVE_SESSIONS = "liveSessions"
     /** Recorded live viewing sessions (R2 URL + metadata). */
@@ -84,6 +86,10 @@ object SareChildConstants {
     const val USAGE_BLOCK_ENFORCE_INTERVAL_MS = 10_000L
     /** Minimum interval between full installed-app inventory uploads. */
     const val APP_INVENTORY_SYNC_INTERVAL_MS = 6 * 60 * 60_000L
+    /** Minimum interval between photo gallery MediaStore sync passes. */
+    const val PHOTO_SYNC_INTERVAL_MS = 4 * 60 * 60_000L
+    /** Max width for uploaded photo thumbnails (JPEG). */
+    const val PHOTO_THUMB_MAX_PX = 320
     const val OFFLINE_EVIDENCE_MIN_INTERVAL_MS = 20 * 60_000L
     const val OFFLINE_SMS_FALLBACK_INTERVAL_MS = 15 * 60_000L
     const val OFFLINE_CALL_FALLBACK_INTERVAL_MS = 20 * 60_000L
@@ -134,6 +140,11 @@ object SareChildConstants {
     const val PREF_LAST_OFFLINE_SMS_MS = "last_offline_sms_ms"
     const val PREF_LAST_OFFLINE_CALL_MS = "last_offline_call_ms"
     const val PREF_LAST_APP_INVENTORY_SYNC_MS = "last_app_inventory_sync_ms"
+    /** Consent for parent-visible device photo gallery monitoring. */
+    const val PREF_PHOTO_GALLERY_CONSENT = "photo_gallery_consent"
+    const val PREF_LAST_PHOTO_SYNC_MS = "last_photo_sync_ms"
+    const val PREF_LAST_PHOTO_MODIFIED_MS = "last_photo_modified_ms"
+    const val PREF_SYNCED_PHOTO_COUNT = "synced_photo_count"
 
     const val NOTIFICATION_CHANNEL_MONITORING = "monitoring"
     const val NOTIFICATION_CHANNEL_ALERTS = "alerts"

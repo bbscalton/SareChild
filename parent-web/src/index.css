@@ -1264,6 +1264,151 @@ select {
 
 .callrecording-device-checks { margin: 0; }
 
+/* --- Photo gallery section --- */
+.photos-hero {
+  background: linear-gradient(135deg, #fff8ef 0%, #ffffff 70%);
+  border-color: rgba(255, 152, 0, 0.22);
+}
+
+.photos-hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.photos-hero-head h3 { margin: 0; }
+
+.photos-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.photos-stat {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.photos-stat-num {
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.photos-stat-num.small { font-size: 0.95rem; font-weight: 700; }
+
+.photos-stat-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.photos-device-status {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.photos-device-row {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.photos-device-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.photos-device-checks { margin: 0; }
+
+.photos-filters { align-items: end; }
+
+.photos-date-filter {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.photos-gallery .photos-gallery-item img {
+  height: 160px;
+  cursor: zoom-in;
+}
+
+.photos-thumb-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  width: 100%;
+  cursor: zoom-in;
+}
+
+.photos-thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  border-radius: 12px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.photos-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.82);
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.photos-lightbox-inner {
+  background: #fff;
+  border-radius: 16px;
+  padding: 1rem;
+  max-width: min(92vw, 920px);
+  max-height: 92vh;
+  overflow: auto;
+  display: grid;
+  gap: 0.75rem;
+  position: relative;
+}
+
+.photos-lightbox-inner img {
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 10px;
+}
+
+.photos-lightbox-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  border: none;
+  background: rgba(0, 0, 0, 0.06);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 /* --- Typing safety / message shield section --- */
 .typing-hero {
   background: linear-gradient(135deg, #eef1ff 0%, #ffffff 70%);

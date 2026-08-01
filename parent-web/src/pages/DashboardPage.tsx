@@ -29,6 +29,7 @@ import type {
   WeeklyDigest,
   WhatsAppEvent,
   CallRecording,
+  DevicePhoto,
 } from '../types'
 import { mediaKind } from '../types'
 import type { SafetyCommandType } from '../lib/parentRepo'
@@ -49,6 +50,7 @@ type Section =
   | 'safety'
   | 'whatsapp'
   | 'callrecording'
+  | 'photos'
   | 'liveview'
   | 'typing'
   | 'usage'
@@ -95,6 +97,10 @@ export function DashboardPage() {
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppTypeFilter, setWhatsAppTypeFilter] = useState<WhatsAppTableTypeFilter>('ALL')
   const [callRecordings, setCallRecordings] = useState<CallRecording[]>([])
+  const [devicePhotos, setDevicePhotos] = useState<DevicePhoto[]>([])
+  const [photoDeviceId, setPhotoDeviceId] = useState('')
+  const [photoDateFilter, setPhotoDateFilter] = useState('')
+  const [selectedPhoto, setSelectedPhoto] = useState<DevicePhoto | null>(null)
   const [liveRecordings, setLiveRecordings] = useState<LiveRecording[]>([])
   const [liveViewQuota, setLiveViewQuota] = useState<LiveViewQuota | null>(null)
   const [callRecordingFilter, setCallRecordingFilter] = useState<CallRecordingFilter>('all')
@@ -218,13 +224,22 @@ export function DashboardPage() {
   }, [user?.uid])
 
   useEffect(() => {
+    if (!familyId || !photoDeviceId) {
+      setDevicePhotos([])
+      return
+    }
+    return repo.observeDevicePhotos(familyId, photoDeviceId, setDevicePhotos, (e) => setError(e.message))
+  }, [familyId, photoDeviceId])
+
+  useEffect(() => {
     if (!limitDeviceId && devices.length > 0) setLimitDeviceId(devices[0]!.id)
     if (!scheduleDeviceId && devices.length > 0) setScheduleDeviceId(devices[0]!.id)
+    if (!photoDeviceId && devices.length > 0) setPhotoDeviceId(devices[0]!.id)
     if (devices.length > 0 && !offlineCallNumber) {
       setOfflineCallNumber(devices[0]!.offlineCallNumber || '')
       setOfflineCallAttempts(String(devices[0]!.offlineCallMaxAttempts || 2))
     }
-  }, [devices, limitDeviceId, scheduleDeviceId])
+  }, [devices, limitDeviceId, scheduleDeviceId, photoDeviceId])
 
   const unread = useMemo(() => alerts.filter((a) => !a.read).length, [alerts])
   const latestUnreadAlert = useMemo(
@@ -324,6 +339,23 @@ export function DashboardPage() {
     const lastMs = callRecordings.reduce((max, r) => Math.max(max, r.createdAtMs), 0)
     return { total, withAudio, totalDurationSec, lastMs }
   }, [callRecordings])
+
+  const filteredPhotos = useMemo(() => {
+    if (!photoDateFilter.trim()) return devicePhotos
+    const dayStart = new Date(photoDateFilter).setHours(0, 0, 0, 0)
+    const dayEnd = dayStart + 24 * 60 * 60 * 1000
+    return devicePhotos.filter((p) => p.takenAtMs >= dayStart && p.takenAtMs < dayEnd)
+  }, [devicePhotos, photoDateFilter])
+
+  const photoStats = useMemo(() => {
+    const selectedDevice = devices.find((d) => d.id === photoDeviceId)
+    const status = selectedDevice?.photoGalleryStatus
+    return {
+      count: status?.photoCount ?? filteredPhotos.length,
+      lastSyncMs: status?.lastSyncAtMs ?? 0,
+      accessLevel: status?.accessLevel ?? 'NONE',
+    }
+  }, [devices, photoDeviceId, filteredPhotos.length])
 
   const filteredCallRecordings = useMemo(() => {
     if (callRecordingFilter === 'all') return callRecordings
@@ -863,6 +895,13 @@ export function DashboardPage() {
           badge: callRecordingStats.total > 0 ? callRecordingStats.total : undefined,
         },
         {
+          id: 'photos',
+          label: 'Photos',
+          sub: 'Device gallery (consent-first)',
+          icon: '\u{1F5BC}\uFE0F',
+          badge: photoStats.count > 0 ? photoStats.count : undefined,
+        },
+        {
           id: 'liveview',
           label: 'Live viewing',
           sub: 'Camera, audio & screen (WebRTC)',
@@ -905,6 +944,7 @@ export function DashboardPage() {
     safety: 'Safety checks',
     whatsapp: 'WhatsApp protection',
     callrecording: 'Call recording',
+    photos: 'Photo gallery',
     liveview: 'Live viewing',
     typing: 'Typing safety',
     usage: 'App usage & limits',
@@ -1822,6 +1862,194 @@ export function DashboardPage() {
                   </ul>
                 )}
               </div>
+            </section>
+          )}
+
+          {section === 'photos' && (
+            <section className="stack">
+              <div className="card photos-hero">
+                <div className="photos-hero-head">
+                  <h3>Photo gallery</h3>
+                  <span className="pill online">MediaStore sync</span>
+                </div>
+                <p className="muted">
+                  Thumbnails from your child&apos;s device gallery, synced with their consent. Uses standard Android
+                  photo permissions — never &quot;All files access&quot;. On Android 14+, if the child grants{' '}
+                  <strong>Selected photos</strong> only, you will see just those unless they choose{' '}
+                  <strong>Allow all photos</strong>.
+                </p>
+                <div className="photos-stats">
+                  <div className="photos-stat">
+                    <span className="photos-stat-num">{photoStats.count}</span>
+                    <span className="photos-stat-label">Synced photos</span>
+                  </div>
+                  <div className="photos-stat">
+                    <span className="photos-stat-num small">
+                      {photoStats.lastSyncMs > 0
+                        ? new Date(photoStats.lastSyncMs).toLocaleString()
+                        : '—'}
+                    </span>
+                    <span className="photos-stat-label">Last sync</span>
+                  </div>
+                  <div className="photos-stat">
+                    <span className="photos-stat-num small">{photoStats.accessLevel}</span>
+                    <span className="photos-stat-label">Access level</span>
+                  </div>
+                </div>
+              </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Device selector &amp; status</h3>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={photoDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setPhotoDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                  <ul className="photos-device-status">
+                    {devices.map((d) => {
+                      const pg = d.photoGalleryStatus
+                      const consent = pg?.consent ?? d.photoGalleryConsent
+                      const permission = pg?.permissionGranted ?? false
+                      const access = pg?.accessLevel ?? 'NONE'
+                      const lastMs = pg?.lastSyncAtMs ?? 0
+                      const count = pg?.photoCount ?? 0
+                      const ready = consent && permission
+                      return (
+                        <li key={d.id} className="photos-device-row">
+                          <div className="photos-device-head">
+                            <strong>{d.childName}</strong>
+                            <span className={`pill ${ready ? 'online' : 'offline'}`}>
+                              {ready ? (access === 'PARTIAL' ? 'Partial access' : 'Gallery active') : 'Setup needed'}
+                            </span>
+                          </div>
+                          <ul className="meta photos-device-checks">
+                            <li>{consent ? '✓' : '✗'} Child consent</li>
+                            <li>{permission ? '✓' : '✗'} Photo permission</li>
+                            <li>Access: {access}</li>
+                            <li>Photos synced: {count}</li>
+                            <li>
+                              Last sync:{' '}
+                              {lastMs > 0 ? new Date(lastMs).toLocaleString() : 'Never — request access on child phone'}
+                            </li>
+                          </ul>
+                          <div className="row gap">
+                            <button
+                              className="btn primary compact"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void requestCheck(d.id, 'REQUEST_PHOTO_ACCESS')}
+                            >
+                              Request photo access
+                            </button>
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              disabled={busy || !ready}
+                              onClick={() => void requestCheck(d.id, 'REQUEST_PHOTO_SYNC')}
+                            >
+                              Refresh gallery
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <div className="card">
+                <h3>Gallery</h3>
+                <div className="filter-row photos-filters">
+                  <label className="photos-date-filter">
+                    <span className="muted small">Filter by date</span>
+                    <input
+                      type="date"
+                      value={photoDateFilter}
+                      onChange={(e) => setPhotoDateFilter(e.target.value)}
+                    />
+                  </label>
+                  {photoDateFilter && (
+                    <button type="button" className="chip" onClick={() => setPhotoDateFilter('')}>
+                      Clear date
+                    </button>
+                  )}
+                </div>
+
+                {filteredPhotos.length === 0 ? (
+                  <Empty
+                    title="No photos yet"
+                    body="Ask your child to Accept photo gallery access on their phone and grant photo library permission. Thumbnails appear here after the first sync (usually within a minute)."
+                  />
+                ) : (
+                  <div className="gallery photos-gallery">
+                    {filteredPhotos.map((photo) => {
+                      const url = photo.fullUrl || photo.thumbUrl
+                      return (
+                        <figure key={photo.id} className="gallery-item photos-gallery-item">
+                          <button
+                            type="button"
+                            className="photos-thumb-btn"
+                            onClick={() => setSelectedPhoto(photo)}
+                            aria-label={`Open ${photo.displayName || 'photo'}`}
+                          >
+                            {url ? (
+                              <img src={url} alt={photo.displayName || 'Synced photo'} loading="lazy" />
+                            ) : (
+                              <span className="photos-thumb-placeholder">No preview</span>
+                            )}
+                          </button>
+                          <figcaption className="muted small">
+                            {photo.displayName || 'Photo'} · {new Date(photo.takenAtMs).toLocaleString()}
+                          </figcaption>
+                        </figure>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {selectedPhoto && (
+                <div className="photos-lightbox" onClick={() => setSelectedPhoto(null)} role="presentation">
+                  <div className="photos-lightbox-inner" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="photos-lightbox-close"
+                      aria-label="Close"
+                      onClick={() => setSelectedPhoto(null)}
+                    >
+                      ×
+                    </button>
+                    {(selectedPhoto.fullUrl || selectedPhoto.thumbUrl) && (
+                      <img
+                        src={selectedPhoto.fullUrl || selectedPhoto.thumbUrl || ''}
+                        alt={selectedPhoto.displayName || 'Photo'}
+                      />
+                    )}
+                    <p className="muted small">
+                      {selectedPhoto.displayName} · {selectedPhoto.width}×{selectedPhoto.height} ·{' '}
+                      {new Date(selectedPhoto.takenAtMs).toLocaleString()}
+                    </p>
+                    {(selectedPhoto.fullUrl || selectedPhoto.thumbUrl) && (
+                      <a
+                        className="btn ghost compact"
+                        href={selectedPhoto.fullUrl || selectedPhoto.thumbUrl || '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open full image
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
             </section>
           )}
 

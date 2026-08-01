@@ -55,6 +55,7 @@ class MonitoringForegroundService : Service() {
     private var commandListener: CommandListener? = null
     private var scheduleWatcher: ScreenShareScheduleWatcher? = null
     private var whatsAppMediaObserver: WhatsAppMediaObserver? = null
+    private var photoGallerySync: PhotoGallerySync? = null
     private var callRecordingMonitor: CallRecordingMonitor? = null
     private var lastWallClockMs: Long = 0L
     private var lastElapsedRealtimeMs: Long = 0L
@@ -182,8 +183,13 @@ class MonitoringForegroundService : Service() {
             phoneStatePermission = hasPhoneStatePermission(),
             lastRecordingAtMs = repo.lastCallRecordingAtMs()
         )
+        val photoStatus = PhotoGallerySync.statusMap(this, repo)
         ensureWhatsAppMediaObserver(notif, waMediaPerm)
+        ensurePhotoGallerySync()
         ensureCallRecordingMonitor()
+        if (PhotoGallerySync.shouldRunPeriodicSync(repo)) {
+            scope.launch { runCatching { photoGallerySync?.sync(forceFull = false) } }
+        }
 
         if (lastNotifAccess == true && !notif) {
             repo.postPermissionRevoked("Notification access disabled")
@@ -247,7 +253,8 @@ class MonitoringForegroundService : Service() {
             todayScreenMinutes = screenMinutes,
             whatsappMediaPermission = waMediaPerm,
             whatsappProtection = waProtection,
-            callRecordingStatus = callRecProtection
+            callRecordingStatus = callRecProtection,
+            photoGalleryStatus = photoStatus
         )
         scheduleWatcher?.tick()
     }
@@ -361,6 +368,16 @@ class MonitoringForegroundService : Service() {
         }
     }
 
+    private fun ensurePhotoGallerySync() {
+        val shouldRun = repo.photoGalleryConsent && PhotoGallerySync.hasPhotoPermission(this)
+        if (shouldRun && photoGallerySync == null) {
+            photoGallerySync = PhotoGallerySync(this, repo).also { it.start() }
+        } else if (!shouldRun && photoGallerySync != null) {
+            photoGallerySync?.stop()
+            photoGallerySync = null
+        }
+    }
+
     private fun ensureCallRecordingMonitor() {
         val shouldRun = repo.callRecordingConsent && repo.callRecordingEnabled
         if (shouldRun && callRecordingMonitor == null) {
@@ -406,6 +423,8 @@ class MonitoringForegroundService : Service() {
         scheduleWatcher?.stop()
         repo.stopAppBlockScheduleListener()
         whatsAppMediaObserver?.stop()
+        photoGallerySync?.stop()
+        photoGallerySync = null
         callRecordingMonitor?.stop()
         callRecordingMonitor = null
         fused.removeLocationUpdates(locationCallback)

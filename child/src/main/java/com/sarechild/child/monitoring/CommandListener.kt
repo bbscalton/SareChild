@@ -12,6 +12,7 @@ import com.sarechild.child.CallRecordingRequestActivity
 import com.sarechild.child.DeviceLockActivity
 import com.sarechild.child.LiveViewRequestActivity
 import com.sarechild.child.R
+import com.sarechild.child.PhotoGalleryRequestActivity
 import com.sarechild.child.RingDeviceActivity
 import com.sarechild.child.SafetyRequestActivity
 import com.sarechild.child.WhatsAppProtectionRequestActivity
@@ -175,6 +176,55 @@ class CommandListener(
                 context.getSystemService(NotificationManager::class.java)
                     .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
                 context.startActivity(intent)
+                return
+            }
+            SafetyCommandType.REQUEST_PHOTO_ACCESS -> {
+                val intent = Intent(context, PhotoGalleryRequestActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
+                }
+                val pending = PendingIntent.getActivity(
+                    context,
+                    command.id.hashCode(),
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("Parent requests photo gallery access")
+                    .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setContentIntent(pending)
+                    .setFullScreenIntent(pending, true)
+                    .setAutoCancel(true)
+                    .build()
+                context.getSystemService(NotificationManager::class.java)
+                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
+                context.startActivity(intent)
+                return
+            }
+            SafetyCommandType.REQUEST_PHOTO_SYNC -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        if (!repo.photoGalleryConsent) {
+                            error("Photo gallery consent not granted")
+                        }
+                        if (!PhotoGallerySync.hasPhotoPermission(context)) {
+                            error("Photo permission not granted")
+                        }
+                        repo.lastPhotoModifiedMs = 0L
+                        PhotoGallerySync(context, repo).sync(forceFull = true)
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "Photo sync failed"
+                        )
+                    }
+                }
                 return
             }
             SafetyCommandType.START_LIVE_VIEW -> {

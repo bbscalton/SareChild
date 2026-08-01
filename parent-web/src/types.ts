@@ -30,6 +30,34 @@ export type CallRecordingStatus = {
   updatedAtMs: number
 }
 
+export type PhotoGalleryAccessLevel = 'NONE' | 'PARTIAL' | 'FULL'
+
+export type PhotoGalleryStatus = {
+  consent: boolean
+  permissionGranted: boolean
+  accessLevel: PhotoGalleryAccessLevel
+  lastSyncAtMs: number
+  photoCount: number
+  lastError?: string | null
+}
+
+export type DevicePhoto = {
+  id: string
+  mediaStoreId: number
+  displayName: string
+  sizeBytes: number
+  takenAtMs: number
+  modifiedAtMs: number
+  mimeType: string
+  width: number
+  height: number
+  syncedAtMs: number
+  thumbPath?: string | null
+  thumbUrl?: string | null
+  fullPath?: string | null
+  fullUrl?: string | null
+}
+
 export type CallRecordingType = 'CELLULAR' | 'VOIP_PARTIAL' | 'MISSED'
 
 export type CallRecording = {
@@ -76,6 +104,8 @@ export type DeviceStatus = {
   callRecordingEnabled: boolean
   lastCallRecordingAtMs: number
   callRecordingStatus: CallRecordingStatus | null
+  photoGalleryConsent: boolean
+  photoGalleryStatus: PhotoGalleryStatus | null
   chatOnline: boolean
   chatLastSeenMs: number
   offlineCallEnabled: boolean

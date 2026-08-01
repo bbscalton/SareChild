@@ -221,6 +221,46 @@ async function purgeAlerts(
   }
 }
 
+async function purgeDevicePhotos(
+  familyRef: FirebaseFirestore.DocumentReference,
+  cutoffMs: number,
+  stats: RetentionPurgeStats
+): Promise<void> {
+  const devicesSnap = await familyRef.collection("devices").get();
+  for (const device of devicesSnap.docs) {
+    const col = device.ref.collection("photos");
+    for (;;) {
+      const snap = await col.where("takenAtMs", "<", cutoffMs).limit(BATCH_SIZE).get();
+      if (snap.empty) break;
+
+      const mediaKeys: string[] = [];
+      const batch = db.batch();
+      let deleted = 0;
+
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        const key = extractMediaKey(data, ["thumbPath", "fullPath", "thumbUrl", "fullUrl"]);
+        if (key) mediaKeys.push(key);
+        batch.delete(doc.ref);
+        deleted++;
+      }
+
+      if (deleted === 0) break;
+      await batch.commit();
+      stats.docsDeleted += deleted;
+      stats.mediaKeysQueued += mediaKeys.length;
+
+      for (const key of mediaKeys) {
+        const ok = await deleteR2Object(key);
+        if (ok) stats.mediaDeleted++;
+        else stats.mediaDeleteFailed++;
+      }
+
+      if (snap.size < BATCH_SIZE) break;
+    }
+  }
+}
+
 async function purgeFamilyRetentionData(
   familyId: string,
   retentionDays: number,
@@ -232,6 +272,7 @@ async function purgeFamilyRetentionData(
   for (const spec of RETENTION_COLLECTIONS) {
     await purgeCollectionByTimestamp(familyRef, spec, cutoffMs, stats);
   }
+  await purgeDevicePhotos(familyRef, cutoffMs, stats);
   await purgeAlerts(familyRef, cutoffMs, stats);
 }
 

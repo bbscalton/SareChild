@@ -71,7 +71,11 @@ enum class SafetyCommandType {
     /** Parent asks child to enable call recording (consent + mic / phone-state permissions). */
     REQUEST_CALL_RECORDING,
     /** Parent asks child to upload a fresh installed-app inventory snapshot. */
-    REQUEST_APP_INVENTORY
+    REQUEST_APP_INVENTORY,
+    /** Parent asks child to enable photo gallery monitoring (consent + media permissions). */
+    REQUEST_PHOTO_ACCESS,
+    /** Parent asks child to run a full photo gallery rescan now. */
+    REQUEST_PHOTO_SYNC
 }
 
 /**

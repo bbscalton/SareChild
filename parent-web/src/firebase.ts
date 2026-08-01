@@ -52,6 +52,7 @@ export const COL = {
   typingEvents: 'typingEvents',
   typingSafetySettings: 'typingSafetySettings',
   callRecordings: 'callRecordings',
+  photos: 'photos',
   installedApps: 'installedApps',
   liveSessions: 'liveSessions',
   liveRecordings: 'liveRecordings',

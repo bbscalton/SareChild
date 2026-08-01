@@ -75,6 +75,7 @@ data class DeviceStatus(
     val whatsappMonitorConsent: Boolean = false,
     val whatsappMediaPermission: Boolean = false,
     val whatsappProtectionEnabled: Boolean = false,
+    val photoGalleryConsent: Boolean = false,
     val chatOnline: Boolean = false,
     val chatLastSeenMs: Long = 0L,
     val offlineCallEnabled: Boolean = false,
@@ -451,6 +452,70 @@ data class CallRecordingEvent(
         "createdAtMs" to createdAtMs,
         "retainUntilMs" to retainUntilMs
     )
+}
+
+/** Android photo gallery access level reported to the parent dashboard. */
+enum class PhotoGalleryAccessLevel {
+    NONE,
+    PARTIAL,
+    FULL
+}
+
+/**
+ * Metadata for one photo synced from the child's MediaStore gallery
+ * (`families/{familyId}/devices/{deviceId}/photos/{mediaStoreId}`).
+ */
+data class DevicePhoto(
+    val mediaStoreId: Long = 0L,
+    val displayName: String = "",
+    val sizeBytes: Long = 0L,
+    val takenAtMs: Long = 0L,
+    val modifiedAtMs: Long = 0L,
+    val mimeType: String = "image/jpeg",
+    val width: Int = 0,
+    val height: Int = 0,
+    val syncedAtMs: Long = System.currentTimeMillis(),
+    val thumbPath: String? = null,
+    val thumbUrl: String? = null,
+    val fullPath: String? = null,
+    val fullUrl: String? = null
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "mediaStoreId" to mediaStoreId,
+        "displayName" to displayName,
+        "sizeBytes" to sizeBytes,
+        "takenAtMs" to takenAtMs,
+        "modifiedAtMs" to modifiedAtMs,
+        "mimeType" to mimeType,
+        "width" to width,
+        "height" to height,
+        "syncedAtMs" to syncedAtMs,
+        "thumbPath" to thumbPath,
+        "thumbUrl" to thumbUrl,
+        "fullPath" to fullPath,
+        "fullUrl" to fullUrl
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>?): DevicePhoto? {
+            if (map == null) return null
+            return DevicePhoto(
+                mediaStoreId = (map["mediaStoreId"] as? Number)?.toLong() ?: return null,
+                displayName = map["displayName"] as? String ?: "",
+                sizeBytes = (map["sizeBytes"] as? Number)?.toLong() ?: 0L,
+                takenAtMs = (map["takenAtMs"] as? Number)?.toLong() ?: 0L,
+                modifiedAtMs = (map["modifiedAtMs"] as? Number)?.toLong() ?: 0L,
+                mimeType = map["mimeType"] as? String ?: "image/jpeg",
+                width = (map["width"] as? Number)?.toInt() ?: 0,
+                height = (map["height"] as? Number)?.toInt() ?: 0,
+                syncedAtMs = (map["syncedAtMs"] as? Number)?.toLong() ?: 0L,
+                thumbPath = map["thumbPath"] as? String,
+                thumbUrl = map["thumbUrl"] as? String,
+                fullPath = map["fullPath"] as? String,
+                fullUrl = map["fullUrl"] as? String
+            )
+        }
+    }
 }
 
 /**

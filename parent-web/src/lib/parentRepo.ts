@@ -59,6 +59,9 @@ import type {
   CallRecording,
   CallRecordingStatus,
   CallRecordingType,
+  DevicePhoto,
+  PhotoGalleryAccessLevel,
+  PhotoGalleryStatus,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
@@ -392,6 +395,22 @@ function parseCallRecordingStatus(raw: unknown): CallRecordingStatus | null {
   }
 }
 
+function parsePhotoGalleryStatus(raw: unknown): PhotoGalleryStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  const accessRaw = String(data.accessLevel ?? 'NONE').toUpperCase()
+  const accessLevel: PhotoGalleryAccessLevel =
+    accessRaw === 'FULL' || accessRaw === 'PARTIAL' ? accessRaw : 'NONE'
+  return {
+    consent: Boolean(data.consent),
+    permissionGranted: Boolean(data.permissionGranted),
+    accessLevel,
+    lastSyncAtMs: Number(data.lastSyncAtMs ?? 0),
+    photoCount: Number(data.photoCount ?? 0),
+    lastError: (data.lastError as string | null) ?? null,
+  }
+}
+
 export function observeDevices(
   familyId: string,
   onData: (devices: DeviceStatus[]) => void,
@@ -433,6 +452,8 @@ export function observeDevices(
           callRecordingEnabled: Boolean(data.callRecordingEnabled),
           lastCallRecordingAtMs: Number(data.lastCallRecordingAtMs ?? 0),
           callRecordingStatus: parseCallRecordingStatus(data.callRecordingStatus),
+          photoGalleryConsent: Boolean(data.photoGalleryConsent),
+          photoGalleryStatus: parsePhotoGalleryStatus(data.photoGalleryStatus),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           offlineCallEnabled: Boolean(data.offlineCallEnabled),
@@ -614,6 +635,8 @@ export type SafetyCommandType =
   | 'REQUEST_WHATSAPP_PROTECTION'
   | 'REQUEST_CALL_RECORDING'
   | 'REQUEST_APP_INVENTORY'
+  | 'REQUEST_PHOTO_ACCESS'
+  | 'REQUEST_PHOTO_SYNC'
   | 'START_LIVE_VIEW'
   | 'STOP_LIVE_VIEW'
 
@@ -1081,6 +1104,46 @@ export function observeCallRecordings(
           audioSourceNote: (data.audioSourceNote as string | null) ?? null,
           createdAtMs: Number(data.createdAtMs ?? 0),
         } satisfies CallRecording
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+/** Nested under families/{familyId}/devices/{deviceId}/photos — newest first. */
+export function observeDevicePhotos(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: DevicePhoto[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.devices, deviceId, COL.photos),
+    orderBy('takenAtMs', 'desc'),
+    limit(500),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          mediaStoreId: Number(data.mediaStoreId ?? d.id),
+          displayName: (data.displayName as string) || '',
+          sizeBytes: Number(data.sizeBytes ?? 0),
+          takenAtMs: Number(data.takenAtMs ?? 0),
+          modifiedAtMs: Number(data.modifiedAtMs ?? 0),
+          mimeType: (data.mimeType as string) || 'image/jpeg',
+          width: Number(data.width ?? 0),
+          height: Number(data.height ?? 0),
+          syncedAtMs: Number(data.syncedAtMs ?? 0),
+          thumbPath: (data.thumbPath as string | null) ?? null,
+          thumbUrl: (data.thumbUrl as string | null) ?? null,
+          fullPath: (data.fullPath as string | null) ?? null,
+          fullUrl: (data.fullUrl as string | null) ?? null,
+        } satisfies DevicePhoto
       })
       onData(rows)
     },

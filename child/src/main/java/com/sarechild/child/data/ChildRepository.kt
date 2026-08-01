@@ -16,6 +16,7 @@ import com.sarechild.shared.AppBlockSchedule
 import com.sarechild.shared.AppLimit
 import com.sarechild.shared.BatterySample
 import com.sarechild.shared.CallRecordingEvent
+import com.sarechild.shared.DevicePhoto
 import com.sarechild.shared.CallRecordingType
 import com.sarechild.shared.CallSmsPreview
 import com.sarechild.shared.FamilyAlert
@@ -128,6 +129,23 @@ class ChildRepository(
         get() = prefs.getBoolean(SareChildConstants.PREF_CALL_RECORDING_ENABLED, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_CALL_RECORDING_ENABLED, value).apply()
 
+    /** Consent for syncing device photo gallery metadata + thumbnails to the parent dashboard. */
+    var photoGalleryConsent: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_PHOTO_GALLERY_CONSENT, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_PHOTO_GALLERY_CONSENT, value).apply()
+
+    var lastPhotoSyncMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_PHOTO_SYNC_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_PHOTO_SYNC_MS, value).apply()
+
+    var lastPhotoModifiedMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_PHOTO_MODIFIED_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_PHOTO_MODIFIED_MS, value).apply()
+
+    var syncedPhotoCount: Int
+        get() = prefs.getInt(SareChildConstants.PREF_SYNCED_PHOTO_COUNT, 0)
+        set(value) = prefs.edit().putInt(SareChildConstants.PREF_SYNCED_PHOTO_COUNT, value).apply()
+
     fun lastCallRecordingAtMs(): Long =
         prefs.getLong(SareChildConstants.PREF_LAST_CALL_RECORDING_AT_MS, 0L)
 
@@ -235,6 +253,7 @@ class ChildRepository(
         "offlineSmsFallbackConsent" to offlineSmsFallbackConsent,
         "offlineAutoCallConsent" to offlineAutoCallConsent,
         "whatsappMonitorConsent" to whatsappMonitorConsent,
+        "photoGalleryConsent" to photoGalleryConsent,
         "callRecordingConsent" to callRecordingConsent,
         "callRecordingEnabled" to callRecordingEnabled,
         "activeSession" to activeSession
@@ -259,7 +278,8 @@ class ChildRepository(
         todayScreenMinutes: Int = 0,
         whatsappMediaPermission: Boolean = false,
         whatsappProtection: Map<String, Any?> = emptyMap(),
-        callRecordingStatus: Map<String, Any?> = emptyMap()
+        callRecordingStatus: Map<String, Any?> = emptyMap(),
+        photoGalleryStatus: Map<String, Any?> = emptyMap()
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -281,6 +301,9 @@ class ChildRepository(
         }
         if (callRecordingStatus.isNotEmpty()) {
             data["callRecordingStatus"] = callRecordingStatus
+        }
+        if (photoGalleryStatus.isNotEmpty()) {
+            data["photoGalleryStatus"] = photoGalleryStatus
         }
         data.putAll(consentMap())
         if (location != null) {
@@ -898,6 +921,26 @@ class ChildRepository(
         ref.putFile(Uri.fromFile(localFile)).await()
         val url = ref.downloadUrl.await().toString()
         return path to url
+    }
+
+    suspend fun upsertDevicePhoto(photo: DevicePhoto) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val docId = photo.mediaStoreId.toString()
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_PHOTOS).document(docId)
+            .set(photo.toMap(), SetOptions.merge())
+            .await()
+    }
+
+    suspend fun updatePhotoGalleryStatus(status: Map<String, Any?>) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .set(mapOf("photoGalleryStatus" to status), SetOptions.merge())
+            .await()
     }
 
     private suspend fun uploadMediaToR2(

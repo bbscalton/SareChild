@@ -145,6 +145,8 @@ class SafetyRequestActivity : AppCompatActivity() {
             SafetyCommandType.REQUEST_WHATSAPP_PROTECTION,
             SafetyCommandType.REQUEST_CALL_RECORDING,
             SafetyCommandType.REQUEST_APP_INVENTORY,
+            SafetyCommandType.REQUEST_PHOTO_ACCESS,
+            SafetyCommandType.REQUEST_PHOTO_SYNC,
             SafetyCommandType.START_LIVE_VIEW,
             SafetyCommandType.STOP_LIVE_VIEW -> {
                 finish()
