@@ -97,7 +97,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         repo = ChildRepository(this)
-        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent) {
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent && !repo.eventRecorderConsent) {
             stopMonitoringService()
             return
         }
@@ -108,12 +108,33 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent) return
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent && !repo.eventRecorderConsent) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return
+
+        if (repo.eventRecorderConsent) {
+            when (event.eventType) {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                    val titleHint = event.text?.joinToString(" ")?.trim()?.takeIf { it.isNotBlank() }
+                    EventRecorderMonitor.current()?.onWindowChanged(
+                        packageName = pkg,
+                        className = event.className?.toString(),
+                        titleHint = titleHint
+                    )
+                }
+                AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                    EventRecorderMonitor.current()?.onInteraction(
+                        packageName = pkg,
+                        contentDescription = event.contentDescription?.toString()
+                    )
+                }
+            }
+        }
+
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
             event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         ) return
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent) return
 
         scope.launch {
             refreshRules(force = false)
@@ -393,5 +414,13 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     companion object {
         private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{5,}\d""")
+
+        fun isServiceEnabled(context: android.content.Context): Boolean {
+            val flat = android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: return false
+            return flat.contains(context.packageName)
+        }
     }
 }

@@ -30,6 +30,8 @@ import type {
   WhatsAppEvent,
   CallRecording,
   DevicePhoto,
+  ActivityEvent,
+  ActivityEventType,
 } from '../types'
 import { mediaKind } from '../types'
 import type { SafetyCommandType } from '../lib/parentRepo'
@@ -51,6 +53,7 @@ type Section =
   | 'whatsapp'
   | 'callrecording'
   | 'photos'
+  | 'eventrecorder'
   | 'liveview'
   | 'typing'
   | 'usage'
@@ -63,6 +66,7 @@ type AlertFilter = 'all' | 'critical' | 'info'
 type WhatsAppTableTypeFilter = WhatsAppDisplayType | 'ALL'
 type TypingFilter = 'all' | 'flagged' | 'unreviewed'
 type CallRecordingFilter = 'all' | 'cellular' | 'voip' | 'missed'
+type ActivityEventFilter = 'all' | ActivityEventType
 
 type NavItem = {
   id: Section
@@ -101,6 +105,12 @@ export function DashboardPage() {
   const [photoDeviceId, setPhotoDeviceId] = useState('')
   const [photoDateFilter, setPhotoDateFilter] = useState('')
   const [selectedPhoto, setSelectedPhoto] = useState<DevicePhoto | null>(null)
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([])
+  const [eventRecorderDeviceId, setEventRecorderDeviceId] = useState('')
+  const [eventTypeFilter, setEventTypeFilter] = useState<ActivityEventFilter>('all')
+  const [eventAppFilter, setEventAppFilter] = useState('')
+  const [eventDateFilter, setEventDateFilter] = useState('')
+  const [eventSearch, setEventSearch] = useState('')
   const [liveRecordings, setLiveRecordings] = useState<LiveRecording[]>([])
   const [liveViewQuota, setLiveViewQuota] = useState<LiveViewQuota | null>(null)
   const [callRecordingFilter, setCallRecordingFilter] = useState<CallRecordingFilter>('all')
@@ -192,6 +202,12 @@ export function DashboardPage() {
   const [repairLog, setRepairLog] = useState<string[]>([])
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const deepLink = params.get('section')
+    if (deepLink === 'eventrecorder') setSection('eventrecorder')
+  }, [])
+
+  useEffect(() => {
     if (!familyId) return
     const unsubs = [
       repo.observeDevices(familyId, setDevices, (e) => setError(e.message)),
@@ -232,9 +248,23 @@ export function DashboardPage() {
   }, [familyId, photoDeviceId])
 
   useEffect(() => {
+    if (!familyId || !eventRecorderDeviceId) {
+      setActivityEvents([])
+      return
+    }
+    return repo.observeActivityEvents(
+      familyId,
+      eventRecorderDeviceId,
+      setActivityEvents,
+      (e) => setError(e.message),
+    )
+  }, [familyId, eventRecorderDeviceId])
+
+  useEffect(() => {
     if (!limitDeviceId && devices.length > 0) setLimitDeviceId(devices[0]!.id)
     if (!scheduleDeviceId && devices.length > 0) setScheduleDeviceId(devices[0]!.id)
     if (!photoDeviceId && devices.length > 0) setPhotoDeviceId(devices[0]!.id)
+    if (!eventRecorderDeviceId && devices.length > 0) setEventRecorderDeviceId(devices[0]!.id)
     if (devices.length > 0 && !offlineCallNumber) {
       setOfflineCallNumber(devices[0]!.offlineCallNumber || '')
       setOfflineCallAttempts(String(devices[0]!.offlineCallMaxAttempts || 2))
@@ -356,6 +386,78 @@ export function DashboardPage() {
       accessLevel: status?.accessLevel ?? 'NONE',
     }
   }, [devices, photoDeviceId, filteredPhotos.length])
+
+  const eventRecorderStats = useMemo(() => {
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const todayMs = todayStart.getTime()
+    const todayEvents = activityEvents.filter((e) => e.createdAtMs >= todayMs)
+    let activeMs = 0
+    let idleMs = 0
+    const appMinutes: Record<string, number> = {}
+    let mediaSessions = 0
+    for (const e of todayEvents) {
+      if (e.type === 'APP_FOREGROUND' || e.type === 'APP_BACKGROUND') {
+        const dur = e.durationMs ?? 0
+        if (dur > 0) {
+          activeMs += dur
+          const label = e.appLabel || e.packageName || 'Unknown'
+          appMinutes[label] = (appMinutes[label] ?? 0) + dur
+        }
+      }
+      if (e.type === 'IDLE_END' && e.durationMs) idleMs += e.durationMs
+      if (
+        e.type === 'MEDIA_PLAY' ||
+        e.type === 'NOTIFICATION_MEDIA' ||
+        (e.type === 'APP_FOREGROUND' && (e.packageName?.includes('youtube') || e.title))
+      ) {
+        if (e.type === 'MEDIA_PLAY' || e.type === 'NOTIFICATION_MEDIA') mediaSessions++
+      }
+    }
+    const topApps = Object.entries(appMinutes)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([label, ms]) => ({ label, minutes: Math.round(ms / 60_000) }))
+    const selected = devices.find((d) => d.id === eventRecorderDeviceId)
+    const status = selected?.eventRecorderStatus
+    return {
+      activeMinutes: Math.round(activeMs / 60_000),
+      idleMinutes: Math.round(idleMs / 60_000),
+      topApps,
+      mediaSessions,
+      lastSyncMs: status?.lastSyncAtMs ?? 0,
+      eventCount24h: status?.eventCount24h ?? todayEvents.length,
+    }
+  }, [activityEvents, devices, eventRecorderDeviceId])
+
+  const filteredActivityEvents = useMemo(() => {
+    let rows = activityEvents
+    if (eventTypeFilter !== 'all') rows = rows.filter((e) => e.type === eventTypeFilter)
+    if (eventAppFilter.trim()) {
+      const q = eventAppFilter.trim().toLowerCase()
+      rows = rows.filter(
+        (e) =>
+          (e.appLabel ?? '').toLowerCase().includes(q) ||
+          (e.packageName ?? '').toLowerCase().includes(q),
+      )
+    }
+    if (eventDateFilter.trim()) {
+      const dayStart = new Date(eventDateFilter).setHours(0, 0, 0, 0)
+      const dayEnd = dayStart + 24 * 60 * 60 * 1000
+      rows = rows.filter((e) => e.createdAtMs >= dayStart && e.createdAtMs < dayEnd)
+    }
+    if (eventSearch.trim()) {
+      const q = eventSearch.trim().toLowerCase()
+      rows = rows.filter(
+        (e) =>
+          (e.title ?? '').toLowerCase().includes(q) ||
+          (e.details ?? '').toLowerCase().includes(q) ||
+          (e.url ?? '').toLowerCase().includes(q) ||
+          e.type.toLowerCase().includes(q),
+      )
+    }
+    return rows
+  }, [activityEvents, eventTypeFilter, eventAppFilter, eventDateFilter, eventSearch])
 
   const filteredCallRecordings = useMemo(() => {
     if (callRecordingFilter === 'all') return callRecordings
@@ -928,6 +1030,13 @@ export function DashboardPage() {
         { id: 'geofences', label: 'Safe zones', icon: '\u{1F4D0}' },
         { id: 'apps', label: 'Apps', icon: '\u{1F4F1}', badge: appBlockSchedules.length || undefined },
         { id: 'usage', label: 'Usage & limits', icon: '\u23F1\uFE0F' },
+        {
+          id: 'eventrecorder',
+          label: 'Event recorder',
+          sub: 'Apps, idle & media timeline',
+          icon: '\u{1F4CB}',
+          badge: eventRecorderStats.eventCount24h > 0 ? eventRecorderStats.eventCount24h : undefined,
+        },
         { id: 'digests', label: 'Weekly digests', icon: '\u{1F4F0}' },
         { id: 'tcd', label: 'TCD ops', icon: '\u{1FA7A}' },
       ],
@@ -945,6 +1054,7 @@ export function DashboardPage() {
     whatsapp: 'WhatsApp protection',
     callrecording: 'Call recording',
     photos: 'Photo gallery',
+    eventrecorder: 'Event recorder',
     liveview: 'Live viewing',
     typing: 'Typing safety',
     usage: 'App usage & limits',
@@ -2050,6 +2160,233 @@ export function DashboardPage() {
                   </div>
                 </div>
               )}
+            </section>
+          )}
+
+          {section === 'eventrecorder' && (
+            <section className="stack">
+              <div className="card eventrecorder-hero">
+                <div className="eventrecorder-hero-head">
+                  <h3>Event recorder</h3>
+                  <span className="pill online">Structured timeline</span>
+                </div>
+                <p className="muted">
+                  Android-only structured activity log from your child&apos;s phone — with their consent.
+                  Captures app foreground time, screen on/off, idle periods, YouTube/Spotify titles from
+                  media notifications &amp; MediaSession, and best-effort browser page hints when
+                  Accessibility is already enabled. This is <strong>not</strong> continuous screen
+                  recording or a keylogger.
+                </p>
+                <div className="eventrecorder-stats">
+                  <div className="eventrecorder-stat">
+                    <span className="eventrecorder-stat-num">{eventRecorderStats.activeMinutes}m</span>
+                    <span className="eventrecorder-stat-label">Active time today</span>
+                  </div>
+                  <div className="eventrecorder-stat">
+                    <span className="eventrecorder-stat-num">{eventRecorderStats.idleMinutes}m</span>
+                    <span className="eventrecorder-stat-label">Idle time today</span>
+                  </div>
+                  <div className="eventrecorder-stat">
+                    <span className="eventrecorder-stat-num">{eventRecorderStats.mediaSessions}</span>
+                    <span className="eventrecorder-stat-label">Media sessions today</span>
+                  </div>
+                  <div className="eventrecorder-stat">
+                    <span className="eventrecorder-stat-num small">
+                      {eventRecorderStats.lastSyncMs > 0
+                        ? new Date(eventRecorderStats.lastSyncMs).toLocaleString()
+                        : '—'}
+                    </span>
+                    <span className="eventrecorder-stat-label">Last sync</span>
+                  </div>
+                </div>
+                {eventRecorderStats.topApps.length > 0 && (
+                  <p className="muted small">
+                    Top apps today:{' '}
+                    {eventRecorderStats.topApps.map((a) => `${a.label} (${a.minutes}m)`).join(' · ')}
+                  </p>
+                )}
+              </div>
+
+              <div className="card eventrecorder-help">
+                <h3>What this can and cannot do</h3>
+                <ul className="meta eventrecorder-help-list">
+                  <li>
+                    <strong>Can:</strong> log which apps were in the foreground, session durations, screen
+                    on/off, idle gaps, YouTube/Spotify titles from notifications &amp; media playback APIs.
+                  </li>
+                  <li>
+                    <strong>Can (optional):</strong> infer browser page titles/URLs when Accessibility is
+                    already enabled on the child device — marked as inferred, best-effort only.
+                  </li>
+                  <li>
+                    <strong>Cannot:</strong> record continuous video/screencasts, read encrypted app
+                    databases, or enable Accessibility/Usage access without the child granting it in Settings.
+                  </li>
+                  <li>
+                    <strong>Limitations:</strong> Usage history depth varies by OEM (~days on device);
+                    browser URLs are heuristic; notification titles may be generic; iOS not supported.
+                  </li>
+                </ul>
+              </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Device selector &amp; status</h3>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={eventRecorderDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setEventRecorderDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                  <ul className="eventrecorder-device-status">
+                    {devices.map((d) => {
+                      const er = d.eventRecorderStatus
+                      const consent = er?.consent ?? d.eventRecorderConsent
+                      const usage = er?.usageAccess ?? false
+                      const notif = er?.notificationAccess ?? d.notificationAccess
+                      const a11y = er?.accessibilityAccess ?? false
+                      const lastMs = er?.lastSyncAtMs ?? 0
+                      const ready = consent && usage
+                      return (
+                        <li key={d.id} className="eventrecorder-device-row">
+                          <div className="eventrecorder-device-head">
+                            <strong>{d.childName}</strong>
+                            <span className={`pill ${ready ? 'online' : 'offline'}`}>
+                              {ready ? 'Recording active' : 'Setup needed'}
+                            </span>
+                          </div>
+                          <ul className="meta eventrecorder-device-checks">
+                            <li>{consent ? '✓' : '✗'} Child consent</li>
+                            <li>{usage ? '✓' : '✗'} Usage access (required)</li>
+                            <li>{notif ? '✓' : '○'} Notification access (YouTube/media titles)</li>
+                            <li>{a11y ? '✓' : '○'} Accessibility (optional browser hints)</li>
+                            <li>Events (24h): {er?.eventCount24h ?? 0}</li>
+                            <li>
+                              Last sync:{' '}
+                              {lastMs > 0 ? new Date(lastMs).toLocaleString() : 'Never — request access on child phone'}
+                            </li>
+                          </ul>
+                          <div className="row gap">
+                            <button
+                              className="btn primary compact"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void requestCheck(d.id, 'REQUEST_EVENT_RECORDER_ACCESS')}
+                            >
+                              Request access
+                            </button>
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              disabled={busy || !ready}
+                              onClick={() => void requestCheck(d.id, 'REQUEST_EVENT_RECORDER_SYNC')}
+                            >
+                              Refresh timeline
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <div className="card">
+                <h3>Activity timeline</h3>
+                <div className="filter-row eventrecorder-filters">
+                  <input
+                    type="search"
+                    className="eventrecorder-search"
+                    placeholder="Search title, URL, details…"
+                    value={eventSearch}
+                    onChange={(e) => setEventSearch(e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    value={eventDateFilter}
+                    onChange={(e) => setEventDateFilter(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Filter by app"
+                    value={eventAppFilter}
+                    onChange={(e) => setEventAppFilter(e.target.value)}
+                  />
+                </div>
+                <div className="filter-row">
+                  {(
+                    [
+                      'all',
+                      'APP_FOREGROUND',
+                      'MEDIA_PLAY',
+                      'NOTIFICATION_MEDIA',
+                      'WEB_VISIT_INFERRED',
+                      'IDLE_START',
+                      'SCREEN_OFF',
+                    ] as const
+                  ).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={eventTypeFilter === t ? 'chip active' : 'chip'}
+                      onClick={() => setEventTypeFilter(t)}
+                    >
+                      {t === 'all' ? 'All types' : t.replace(/_/g, ' ').toLowerCase()}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredActivityEvents.length === 0 ? (
+                  <Empty
+                    title="No activity events yet"
+                    body="Ask your child to Accept Event Recorder on their phone and grant Usage access in Android Settings. Optional Notification and Accessibility access improve YouTube titles and browser hints. Events appear here after the first sync."
+                  />
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table eventrecorder-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Type</th>
+                          <th>App</th>
+                          <th>Title / details</th>
+                          <th>Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredActivityEvents.map((ev) => (
+                          <tr key={ev.id}>
+                            <td className="nowrap">{new Date(ev.createdAtMs).toLocaleString()}</td>
+                            <td>
+                              <span className="chip compact">{ev.type.replace(/_/g, ' ')}</span>
+                              {ev.inferred && <span className="muted small"> inferred</span>}
+                            </td>
+                            <td>{ev.appLabel || ev.packageName || '—'}</td>
+                            <td>
+                              {ev.title && <div>{ev.title}</div>}
+                              {ev.url && (
+                                <div className="muted small eventrecorder-url">{ev.url}</div>
+                              )}
+                              {ev.details && <div className="muted small">{ev.details}</div>}
+                            </td>
+                            <td className="nowrap">
+                              {ev.durationMs != null && ev.durationMs > 0
+                                ? `${Math.round(ev.durationMs / 60_000)}m`
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </section>
           )}
 

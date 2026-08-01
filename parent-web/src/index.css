@@ -1409,6 +1409,104 @@ select {
   cursor: pointer;
 }
 
+/* --- Event recorder section --- */
+.eventrecorder-hero {
+  background: linear-gradient(135deg, #eef8f3 0%, #ffffff 70%);
+  border-color: rgba(46, 125, 50, 0.22);
+}
+
+.eventrecorder-hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.eventrecorder-hero-head h3 { margin: 0; }
+
+.eventrecorder-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.eventrecorder-stat {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.eventrecorder-stat-num {
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.eventrecorder-stat-num.small { font-size: 0.95rem; font-weight: 700; }
+
+.eventrecorder-stat-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.eventrecorder-help-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.eventrecorder-device-status {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.eventrecorder-device-row {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.eventrecorder-device-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.eventrecorder-device-checks { margin: 0; }
+
+.eventrecorder-filters {
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.eventrecorder-search {
+  min-width: 200px;
+  flex: 1;
+}
+
+.eventrecorder-table .chip.compact {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+}
+
+.eventrecorder-url {
+  word-break: break-all;
+}
+
 /* --- Typing safety / message shield section --- */
 .typing-hero {
   background: linear-gradient(135deg, #eef1ff 0%, #ffffff 70%);

@@ -729,3 +729,74 @@ data class FamilySafetySettings(
         "mediaRetentionDays" to mediaRetentionDays
     )
 }
+
+/** Structured activity row for the Event Recorder timeline (parent-web + Firestore). */
+enum class ActivityEventType {
+    APP_FOREGROUND,
+    APP_BACKGROUND,
+    SCREEN_ON,
+    SCREEN_OFF,
+    IDLE_START,
+    IDLE_END,
+    MEDIA_PLAY,
+    MEDIA_PAUSE,
+    NOTIFICATION_MEDIA,
+    WEB_VISIT_INFERRED,
+    WINDOW_CHANGED,
+    INTERACTION
+}
+
+data class ActivityEvent(
+    val id: String = "",
+    val deviceId: String = "",
+    val type: ActivityEventType = ActivityEventType.APP_FOREGROUND,
+    val packageName: String? = null,
+    val appLabel: String? = null,
+    val title: String? = null,
+    val details: String? = null,
+    val url: String? = null,
+    val inferred: Boolean = false,
+    val startedAtMs: Long? = null,
+    val endedAtMs: Long? = null,
+    val durationMs: Long? = null,
+    val createdAtMs: Long = System.currentTimeMillis()
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "deviceId" to deviceId,
+        "type" to type.name,
+        "packageName" to packageName,
+        "appLabel" to appLabel,
+        "title" to title,
+        "details" to details,
+        "url" to url,
+        "inferred" to inferred,
+        "startedAtMs" to startedAtMs,
+        "endedAtMs" to endedAtMs,
+        "durationMs" to durationMs,
+        "createdAtMs" to createdAtMs
+    )
+
+    companion object {
+        fun fromMap(id: String, map: Map<String, Any?>?): ActivityEvent? {
+            if (map == null) return null
+            val type = runCatching {
+                ActivityEventType.valueOf(map["type"] as? String ?: return null)
+            }.getOrNull() ?: return null
+            return ActivityEvent(
+                id = id,
+                deviceId = map["deviceId"] as? String ?: "",
+                type = type,
+                packageName = map["packageName"] as? String,
+                appLabel = map["appLabel"] as? String,
+                title = map["title"] as? String,
+                details = map["details"] as? String,
+                url = map["url"] as? String,
+                inferred = map["inferred"] as? Boolean ?: false,
+                startedAtMs = (map["startedAtMs"] as? Number)?.toLong(),
+                endedAtMs = (map["endedAtMs"] as? Number)?.toLong(),
+                durationMs = (map["durationMs"] as? Number)?.toLong(),
+                createdAtMs = (map["createdAtMs"] as? Number)?.toLong() ?: 0L
+            )
+        }
+    }
+}

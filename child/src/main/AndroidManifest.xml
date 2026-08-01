@@ -86,6 +86,11 @@
             android:exported="false"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
+        <activity
+            android:name=".EventRecorderRequestActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
         <activity android:name=".CameraCheckActivity" android:exported="false" />
         <activity android:name=".MicCheckActivity" android:exported="false" />
         <activity

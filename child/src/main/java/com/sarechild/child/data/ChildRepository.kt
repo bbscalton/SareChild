@@ -10,6 +10,7 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.storage.FirebaseStorage
+import com.sarechild.shared.ActivityEvent
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
 import com.sarechild.shared.AppBlockSchedule
@@ -134,6 +135,27 @@ class ChildRepository(
         get() = prefs.getBoolean(SareChildConstants.PREF_PHOTO_GALLERY_CONSENT, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_PHOTO_GALLERY_CONSENT, value).apply()
 
+    /** Consent for structured Event Recorder activity timeline. */
+    var eventRecorderConsent: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_EVENT_RECORDER_CONSENT, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_EVENT_RECORDER_CONSENT, value).apply()
+
+    var lastEventRecorderSyncMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_EVENT_RECORDER_SYNC_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_EVENT_RECORDER_SYNC_MS, value).apply()
+
+    var lastUsageEventPollMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_USAGE_EVENT_POLL_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_USAGE_EVENT_POLL_MS, value).apply()
+
+    var eventRecorderEventCount24h: Int
+        get() = prefs.getInt(SareChildConstants.PREF_EVENT_RECORDER_EVENT_COUNT_24H, 0)
+        set(value) = prefs.edit().putInt(SareChildConstants.PREF_EVENT_RECORDER_EVENT_COUNT_24H, value).apply()
+
+    var lastActivityAtMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_ACTIVITY_AT_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_ACTIVITY_AT_MS, value).apply()
+
     var lastPhotoSyncMs: Long
         get() = prefs.getLong(SareChildConstants.PREF_LAST_PHOTO_SYNC_MS, 0L)
         set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_PHOTO_SYNC_MS, value).apply()
@@ -254,6 +276,7 @@ class ChildRepository(
         "offlineAutoCallConsent" to offlineAutoCallConsent,
         "whatsappMonitorConsent" to whatsappMonitorConsent,
         "photoGalleryConsent" to photoGalleryConsent,
+        "eventRecorderConsent" to eventRecorderConsent,
         "callRecordingConsent" to callRecordingConsent,
         "callRecordingEnabled" to callRecordingEnabled,
         "activeSession" to activeSession
@@ -279,7 +302,8 @@ class ChildRepository(
         whatsappMediaPermission: Boolean = false,
         whatsappProtection: Map<String, Any?> = emptyMap(),
         callRecordingStatus: Map<String, Any?> = emptyMap(),
-        photoGalleryStatus: Map<String, Any?> = emptyMap()
+        photoGalleryStatus: Map<String, Any?> = emptyMap(),
+        eventRecorderStatus: Map<String, Any?> = emptyMap()
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -304,6 +328,9 @@ class ChildRepository(
         }
         if (photoGalleryStatus.isNotEmpty()) {
             data["photoGalleryStatus"] = photoGalleryStatus
+        }
+        if (eventRecorderStatus.isNotEmpty()) {
+            data["eventRecorderStatus"] = eventRecorderStatus
         }
         data.putAll(consentMap())
         if (location != null) {
@@ -940,6 +967,31 @@ class ChildRepository(
         db.collection(SareChildConstants.COL_FAMILIES).document(fid)
             .collection(SareChildConstants.COL_DEVICES).document(did)
             .set(mapOf("photoGalleryStatus" to status), SetOptions.merge())
+            .await()
+    }
+
+    suspend fun postActivityEvents(events: List<ActivityEvent>) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        if (events.isEmpty()) return
+        val col = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_ACTIVITY_EVENTS)
+        val batch = db.batch()
+        for (event in events) {
+            val ref = col.document()
+            batch.set(ref, event.copy(deviceId = did).toMap())
+        }
+        batch.commit().await()
+        eventRecorderEventCount24h = eventRecorderEventCount24h + events.size
+    }
+
+    suspend fun updateEventRecorderStatus(status: Map<String, Any?>) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .set(mapOf("eventRecorderStatus" to status), SetOptions.merge())
             .await()
     }
 

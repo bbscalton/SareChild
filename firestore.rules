@@ -92,6 +92,12 @@ service cloud.firestore {
           allow create, update: if isDeviceMember(familyId, deviceId);
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         }
+
+        match /activityEvents/{eventId} {
+          allow read: if isFamilyGuardian(familyId);
+          allow create, update: if isDeviceMember(familyId, deviceId);
+          allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        }
       }
 
       match /alerts/{alertId} {

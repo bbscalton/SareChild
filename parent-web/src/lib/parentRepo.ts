@@ -62,6 +62,9 @@ import type {
   DevicePhoto,
   PhotoGalleryAccessLevel,
   PhotoGalleryStatus,
+  EventRecorderStatus,
+  ActivityEvent,
+  ActivityEventType,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
@@ -411,6 +414,21 @@ function parsePhotoGalleryStatus(raw: unknown): PhotoGalleryStatus | null {
   }
 }
 
+function parseEventRecorderStatus(raw: unknown): EventRecorderStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  return {
+    consent: Boolean(data.consent),
+    usageAccess: Boolean(data.usageAccess),
+    accessibilityAccess: Boolean(data.accessibilityAccess),
+    notificationAccess: Boolean(data.notificationAccess),
+    lastSyncAtMs: Number(data.lastSyncAtMs ?? 0),
+    eventCount24h: Number(data.eventCount24h ?? 0),
+    screenOn: data.screenOn == null ? undefined : Boolean(data.screenOn),
+    updatedAtMs: Number(data.updatedAtMs ?? 0),
+  }
+}
+
 export function observeDevices(
   familyId: string,
   onData: (devices: DeviceStatus[]) => void,
@@ -454,6 +472,8 @@ export function observeDevices(
           callRecordingStatus: parseCallRecordingStatus(data.callRecordingStatus),
           photoGalleryConsent: Boolean(data.photoGalleryConsent),
           photoGalleryStatus: parsePhotoGalleryStatus(data.photoGalleryStatus),
+          eventRecorderConsent: Boolean(data.eventRecorderConsent),
+          eventRecorderStatus: parseEventRecorderStatus(data.eventRecorderStatus),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           offlineCallEnabled: Boolean(data.offlineCallEnabled),
@@ -637,6 +657,8 @@ export type SafetyCommandType =
   | 'REQUEST_APP_INVENTORY'
   | 'REQUEST_PHOTO_ACCESS'
   | 'REQUEST_PHOTO_SYNC'
+  | 'REQUEST_EVENT_RECORDER_ACCESS'
+  | 'REQUEST_EVENT_RECORDER_SYNC'
   | 'START_LIVE_VIEW'
   | 'STOP_LIVE_VIEW'
 
@@ -1144,6 +1166,44 @@ export function observeDevicePhotos(
           fullPath: (data.fullPath as string | null) ?? null,
           fullUrl: (data.fullUrl as string | null) ?? null,
         } satisfies DevicePhoto
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export function observeActivityEvents(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: ActivityEvent[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.devices, deviceId, COL.activityEvents),
+    orderBy('createdAtMs', 'desc'),
+    limit(500),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          deviceId: (data.deviceId as string) || deviceId,
+          type: (data.type as ActivityEventType) || 'APP_FOREGROUND',
+          packageName: (data.packageName as string | null) ?? null,
+          appLabel: (data.appLabel as string | null) ?? null,
+          title: (data.title as string | null) ?? null,
+          details: (data.details as string | null) ?? null,
+          url: (data.url as string | null) ?? null,
+          inferred: Boolean(data.inferred),
+          startedAtMs: data.startedAtMs == null ? null : Number(data.startedAtMs),
+          endedAtMs: data.endedAtMs == null ? null : Number(data.endedAtMs),
+          durationMs: data.durationMs == null ? null : Number(data.durationMs),
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        } satisfies ActivityEvent
       })
       onData(rows)
     },

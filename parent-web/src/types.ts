@@ -41,6 +41,47 @@ export type PhotoGalleryStatus = {
   lastError?: string | null
 }
 
+export type EventRecorderStatus = {
+  consent: boolean
+  usageAccess: boolean
+  accessibilityAccess: boolean
+  notificationAccess: boolean
+  lastSyncAtMs: number
+  eventCount24h: number
+  screenOn?: boolean
+  updatedAtMs: number
+}
+
+export type ActivityEventType =
+  | 'APP_FOREGROUND'
+  | 'APP_BACKGROUND'
+  | 'SCREEN_ON'
+  | 'SCREEN_OFF'
+  | 'IDLE_START'
+  | 'IDLE_END'
+  | 'MEDIA_PLAY'
+  | 'MEDIA_PAUSE'
+  | 'NOTIFICATION_MEDIA'
+  | 'WEB_VISIT_INFERRED'
+  | 'WINDOW_CHANGED'
+  | 'INTERACTION'
+
+export type ActivityEvent = {
+  id: string
+  deviceId: string
+  type: ActivityEventType
+  packageName: string | null
+  appLabel: string | null
+  title: string | null
+  details: string | null
+  url: string | null
+  inferred: boolean
+  startedAtMs: number | null
+  endedAtMs: number | null
+  durationMs: number | null
+  createdAtMs: number
+}
+
 export type DevicePhoto = {
   id: string
   mediaStoreId: number
@@ -106,6 +147,8 @@ export type DeviceStatus = {
   callRecordingStatus: CallRecordingStatus | null
   photoGalleryConsent: boolean
   photoGalleryStatus: PhotoGalleryStatus | null
+  eventRecorderConsent: boolean
+  eventRecorderStatus: EventRecorderStatus | null
   chatOnline: boolean
   chatLastSeenMs: number
   offlineCallEnabled: boolean

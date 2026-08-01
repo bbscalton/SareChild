@@ -261,6 +261,32 @@ async function purgeDevicePhotos(
   }
 }
 
+async function purgeDeviceActivityEvents(
+  familyRef: FirebaseFirestore.DocumentReference,
+  cutoffMs: number,
+  stats: RetentionPurgeStats
+): Promise<void> {
+  const devicesSnap = await familyRef.collection("devices").get();
+  for (const device of devicesSnap.docs) {
+    const col = device.ref.collection("activityEvents");
+    for (;;) {
+      const snap = await col.where("createdAtMs", "<", cutoffMs).limit(BATCH_SIZE).get();
+      if (snap.empty) break;
+
+      const batch = db.batch();
+      let deleted = 0;
+      for (const doc of snap.docs) {
+        batch.delete(doc.ref);
+        deleted++;
+      }
+      if (deleted === 0) break;
+      await batch.commit();
+      stats.docsDeleted += deleted;
+      if (snap.size < BATCH_SIZE) break;
+    }
+  }
+}
+
 async function purgeFamilyRetentionData(
   familyId: string,
   retentionDays: number,
@@ -273,6 +299,7 @@ async function purgeFamilyRetentionData(
     await purgeCollectionByTimestamp(familyRef, spec, cutoffMs, stats);
   }
   await purgeDevicePhotos(familyRef, cutoffMs, stats);
+  await purgeDeviceActivityEvents(familyRef, cutoffMs, stats);
   await purgeAlerts(familyRef, cutoffMs, stats);
 }
 

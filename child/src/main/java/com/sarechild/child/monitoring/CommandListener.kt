@@ -12,6 +12,7 @@ import com.sarechild.child.CallRecordingRequestActivity
 import com.sarechild.child.DeviceLockActivity
 import com.sarechild.child.LiveViewRequestActivity
 import com.sarechild.child.R
+import com.sarechild.child.EventRecorderRequestActivity
 import com.sarechild.child.PhotoGalleryRequestActivity
 import com.sarechild.child.RingDeviceActivity
 import com.sarechild.child.SafetyRequestActivity
@@ -222,6 +223,56 @@ class CommandListener(
                             command.id,
                             SafetyCommandStatus.FAILED,
                             error = e.message ?: "Photo sync failed"
+                        )
+                    }
+                }
+                return
+            }
+            SafetyCommandType.REQUEST_EVENT_RECORDER_ACCESS -> {
+                val intent = Intent(context, EventRecorderRequestActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
+                }
+                val pending = PendingIntent.getActivity(
+                    context,
+                    command.id.hashCode(),
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("Parent requests Event Recorder")
+                    .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setContentIntent(pending)
+                    .setFullScreenIntent(pending, true)
+                    .setAutoCancel(true)
+                    .build()
+                context.getSystemService(NotificationManager::class.java)
+                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
+                context.startActivity(intent)
+                return
+            }
+            SafetyCommandType.REQUEST_EVENT_RECORDER_SYNC -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        if (!repo.eventRecorderConsent) {
+                            error("Event Recorder consent not granted")
+                        }
+                        if (!UsageMonitorHelper.hasUsageAccess(context)) {
+                            error("Usage access not granted")
+                        }
+                        val monitor = EventRecorderMonitor(context, repo)
+                        monitor.start()
+                        monitor.sync(force = true)
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "Event Recorder sync failed"
                         )
                     }
                 }

@@ -75,7 +75,11 @@ enum class SafetyCommandType {
     /** Parent asks child to enable photo gallery monitoring (consent + media permissions). */
     REQUEST_PHOTO_ACCESS,
     /** Parent asks child to run a full photo gallery rescan now. */
-    REQUEST_PHOTO_SYNC
+    REQUEST_PHOTO_SYNC,
+    /** Parent asks child to enable Event Recorder (consent + usage/accessibility/notification setup). */
+    REQUEST_EVENT_RECORDER_ACCESS,
+    /** Parent asks child to flush pending activity events to Firestore now. */
+    REQUEST_EVENT_RECORDER_SYNC
 }
 
 /**

@@ -147,6 +147,8 @@ class SafetyRequestActivity : AppCompatActivity() {
             SafetyCommandType.REQUEST_APP_INVENTORY,
             SafetyCommandType.REQUEST_PHOTO_ACCESS,
             SafetyCommandType.REQUEST_PHOTO_SYNC,
+            SafetyCommandType.REQUEST_EVENT_RECORDER_ACCESS,
+            SafetyCommandType.REQUEST_EVENT_RECORDER_SYNC,
             SafetyCommandType.START_LIVE_VIEW,
             SafetyCommandType.STOP_LIVE_VIEW -> {
                 finish()

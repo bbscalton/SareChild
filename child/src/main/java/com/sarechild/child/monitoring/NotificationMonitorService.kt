@@ -55,8 +55,6 @@ class NotificationMonitorService : NotificationListenerService() {
 
         val assessment = classifier.assess(combined)
 
-        // Dedicated WhatsApp protection pipeline: classification, whitelist check, timeline
-        // write, and (for non-whitelisted contacts) its own alert — see WhatsAppMonitor.
         if (WhatsAppMonitor.isWhatsApp(sbn.packageName)) {
             scope.launch {
                 runCatching {
@@ -71,6 +69,10 @@ class NotificationMonitorService : NotificationListenerService() {
                     )
                 }
             }
+        }
+
+        if (repo.eventRecorderConsent && EventRecorderMonitor.isMediaNotificationPackage(sbn.packageName)) {
+            EventRecorderMonitor.current()?.onNotificationMedia(sbn.packageName, title, text)
         }
 
         // VoIP call recording (mic-side partial) — native Android, not Cordova.
@@ -174,6 +176,16 @@ class NotificationMonitorService : NotificationListenerService() {
         if (sbn == null) return
         if (VoipCallRecordingHelper.isVoipPackage(sbn.packageName)) {
             VoipCallRecordingHelper.onNotificationRemoved(sbn.packageName)
+        }
+    }
+
+    companion object {
+        fun isEnabled(context: android.content.Context): Boolean {
+            val flat = android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                "enabled_notification_listeners"
+            )
+            return flat?.contains(context.packageName) == true
         }
     }
 }

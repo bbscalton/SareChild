@@ -57,6 +57,7 @@ class MonitoringForegroundService : Service() {
     private var whatsAppMediaObserver: WhatsAppMediaObserver? = null
     private var photoGallerySync: PhotoGallerySync? = null
     private var callRecordingMonitor: CallRecordingMonitor? = null
+    private var eventRecorderMonitor: EventRecorderMonitor? = null
     private var lastWallClockMs: Long = 0L
     private var lastElapsedRealtimeMs: Long = 0L
     private var lastCheckInPromptMs: Long = 0L
@@ -184,11 +185,20 @@ class MonitoringForegroundService : Service() {
             lastRecordingAtMs = repo.lastCallRecordingAtMs()
         )
         val photoStatus = PhotoGallerySync.statusMap(this, repo)
+        val eventRecStatus = eventRecorderMonitor?.statusMap(
+            usageAccess = UsageMonitorHelper.hasUsageAccess(this),
+            accessibilityAccess = isAccessibilityServiceEnabled(),
+            notificationAccess = notif
+        ).orEmpty()
         ensureWhatsAppMediaObserver(notif, waMediaPerm)
         ensurePhotoGallerySync()
         ensureCallRecordingMonitor()
+        ensureEventRecorderMonitor()
         if (PhotoGallerySync.shouldRunPeriodicSync(repo)) {
             scope.launch { runCatching { photoGallerySync?.sync(forceFull = false) } }
+        }
+        if (eventRecorderMonitor?.shouldRunPeriodicSync() == true) {
+            scope.launch { runCatching { eventRecorderMonitor?.sync(force = false) } }
         }
 
         if (lastNotifAccess == true && !notif) {
@@ -254,7 +264,8 @@ class MonitoringForegroundService : Service() {
             whatsappMediaPermission = waMediaPerm,
             whatsappProtection = waProtection,
             callRecordingStatus = callRecProtection,
-            photoGalleryStatus = photoStatus
+            photoGalleryStatus = photoStatus,
+            eventRecorderStatus = eventRecStatus
         )
         scheduleWatcher?.tick()
     }
@@ -390,6 +401,17 @@ class MonitoringForegroundService : Service() {
         }
     }
 
+    private fun ensureEventRecorderMonitor() {
+        val shouldRun = repo.eventRecorderConsent && UsageMonitorHelper.hasUsageAccess(this)
+        if (shouldRun && eventRecorderMonitor == null) {
+            eventRecorderMonitor = EventRecorderMonitor(this, repo).also { it.start() }
+            scope.launch { runCatching { eventRecorderMonitor?.sync(force = false) } }
+        } else if (!shouldRun && eventRecorderMonitor != null) {
+            eventRecorderMonitor?.stop()
+            eventRecorderMonitor = null
+        }
+    }
+
     private fun hasRecordAudioPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -427,6 +449,8 @@ class MonitoringForegroundService : Service() {
         photoGallerySync = null
         callRecordingMonitor?.stop()
         callRecordingMonitor = null
+        eventRecorderMonitor?.stop()
+        eventRecorderMonitor = null
         fused.removeLocationUpdates(locationCallback)
         heartbeatJob?.cancel()
         usageBlockJob?.cancel()

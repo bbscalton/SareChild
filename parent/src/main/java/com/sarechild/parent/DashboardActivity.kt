@@ -265,6 +265,7 @@ class DashboardActivity : AppCompatActivity() {
                 Triple("geofences", "Safe zones", "\uD83D\uDCD0"),
                 Triple("apps", "Apps", "\uD83D\uDCF1"),
                 Triple("usage", "Usage & limits", "\u23F1\uFE0F"),
+                Triple("eventrecorder", "Event recorder", "\uD83D\uDCCB"),
                 Triple("digests", "Weekly digests", "\uD83D\uDCF0"),
             )
         )
@@ -616,6 +617,7 @@ class DashboardActivity : AppCompatActivity() {
             "apps" -> showAppsTab(container)
             "safety" -> showSafetyTab(container)
             "usage" -> showUsageTab(container)
+            "eventrecorder" -> showEventRecorderTab(container)
             "digests" -> showDigestsTab(container)
             "guardians" -> showGuardiansTab(container)
             "geofences" -> showGeofenceList(container)
@@ -637,6 +639,7 @@ class DashboardActivity : AppCompatActivity() {
         "apps" -> "Apps"
         "safety" -> "Safety checks"
         "usage" -> "App usage & limits"
+        "eventrecorder" -> "Event recorder"
         "digests" -> "Weekly digests"
         "guardians" -> "Guardians & caregivers"
         "geofences" -> "Safe zones"
@@ -645,12 +648,38 @@ class DashboardActivity : AppCompatActivity() {
     }
 
     /** Opens the signed-in parent web dashboard in Chrome Custom Tabs (Live map, TCD, etc.). */
-    private fun openWebDashboard() {
-        val url = getString(R.string.parent_web_dashboard_url)
+    private fun openWebDashboard(section: String? = null) {
+        val base = getString(R.string.parent_web_dashboard_url)
+        val url = if (section.isNullOrBlank()) base else "$base?section=$section"
         CustomTabsIntent.Builder()
             .setShowTitle(true)
             .build()
             .launchUrl(this, Uri.parse(url))
+    }
+
+    /** Structured activity timeline — full UI on parent web dashboard. */
+    private fun showEventRecorderTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Event recorder"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "View your child's structured activity timeline — apps, idle time, media titles, and optional browser hints. Requires child consent and Usage access on their Android phone."
+            setPadding(0, dp(12), 0, dp(16))
+        })
+        root.addView(MaterialButton(this).apply {
+            text = "Open Event recorder in web dashboard"
+            setOnClickListener { openWebDashboard("eventrecorder") }
+        })
     }
 
     /** WebRTC live camera/audio/screen viewing — available on the parent web dashboard. */

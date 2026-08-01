@@ -46,6 +46,8 @@ object SareChildConstants {
     const val COL_INSTALLED_APPS = "installedApps"
     /** Per-device photo gallery metadata synced from MediaStore (nested under devices/{id}/photos). */
     const val COL_PHOTOS = "photos"
+    /** Per-device structured activity timeline (Event Recorder). Nested under devices/{id}/activityEvents. */
+    const val COL_ACTIVITY_EVENTS = "activityEvents"
     /** WebRTC live viewing signaling + session metadata (parent-web ↔ child). */
     const val COL_LIVE_SESSIONS = "liveSessions"
     /** Recorded live viewing sessions (R2 URL + metadata). */
@@ -88,6 +90,16 @@ object SareChildConstants {
     const val APP_INVENTORY_SYNC_INTERVAL_MS = 6 * 60 * 60_000L
     /** Minimum interval between photo gallery MediaStore sync passes. */
     const val PHOTO_SYNC_INTERVAL_MS = 4 * 60 * 60_000L
+    /** Minimum interval between Event Recorder usage/media poll passes. */
+    const val EVENT_RECORDER_SYNC_INTERVAL_MS = 5 * 60_000L
+    /** Screen-off or no foreground activity for this long → IDLE_START. */
+    const val EVENT_RECORDER_IDLE_MS = 5 * 60_000L
+    /** Foreground sessions shorter than this are merged into the next session. */
+    const val EVENT_RECORDER_MIN_FOREGROUND_MS = 3_000L
+    /** Max accessibility-derived events per minute (navigation/interaction). */
+    const val EVENT_RECORDER_A11Y_RATE_PER_MIN = 30
+    /** Max events buffered locally before a forced upload. */
+    const val EVENT_RECORDER_BATCH_MAX = 40
     /** Max width for uploaded photo thumbnails (JPEG). */
     const val PHOTO_THUMB_MAX_PX = 320
     const val OFFLINE_EVIDENCE_MIN_INTERVAL_MS = 20 * 60_000L
@@ -145,6 +157,12 @@ object SareChildConstants {
     const val PREF_LAST_PHOTO_SYNC_MS = "last_photo_sync_ms"
     const val PREF_LAST_PHOTO_MODIFIED_MS = "last_photo_modified_ms"
     const val PREF_SYNCED_PHOTO_COUNT = "synced_photo_count"
+    /** Consent for structured Event Recorder timeline (apps, idle, media, inferred web). */
+    const val PREF_EVENT_RECORDER_CONSENT = "event_recorder_consent"
+    const val PREF_LAST_EVENT_RECORDER_SYNC_MS = "last_event_recorder_sync_ms"
+    const val PREF_LAST_USAGE_EVENT_POLL_MS = "last_usage_event_poll_ms"
+    const val PREF_EVENT_RECORDER_EVENT_COUNT_24H = "event_recorder_event_count_24h"
+    const val PREF_LAST_ACTIVITY_AT_MS = "last_activity_at_ms"
 
     const val NOTIFICATION_CHANNEL_MONITORING = "monitoring"
     const val NOTIFICATION_CHANNEL_ALERTS = "alerts"
