@@ -42,6 +42,8 @@ object SareChildConstants {
     // Parent "Call recording" section: one row per cellular / VoIP call event (with optional
     // uploaded audio). Written by child/monitoring/CallRecordingMonitor and VoipCallRecordingHelper.
     const val COL_CALL_RECORDINGS = "callRecordings"
+    /** Per-device installed app inventory (child syncs via PackageManager). */
+    const val COL_INSTALLED_APPS = "installedApps"
 
     const val KEYWORD_LIST_DEFAULT = "default"
 
@@ -74,6 +76,8 @@ object SareChildConstants {
     const val BATTERY_HISTORY_MAX = 24
     const val USAGE_SYNC_INTERVAL_MS = 15 * 60_000L
     const val USAGE_BLOCK_ENFORCE_INTERVAL_MS = 10_000L
+    /** Minimum interval between full installed-app inventory uploads. */
+    const val APP_INVENTORY_SYNC_INTERVAL_MS = 6 * 60 * 60_000L
     const val OFFLINE_EVIDENCE_MIN_INTERVAL_MS = 20 * 60_000L
     const val OFFLINE_SMS_FALLBACK_INTERVAL_MS = 15 * 60_000L
     const val OFFLINE_CALL_FALLBACK_INTERVAL_MS = 20 * 60_000L
@@ -123,6 +127,7 @@ object SareChildConstants {
     const val PREF_LAST_OFFLINE_EVIDENCE_MS = "last_offline_evidence_ms"
     const val PREF_LAST_OFFLINE_SMS_MS = "last_offline_sms_ms"
     const val PREF_LAST_OFFLINE_CALL_MS = "last_offline_call_ms"
+    const val PREF_LAST_APP_INVENTORY_SYNC_MS = "last_app_inventory_sync_ms"
 
     const val NOTIFICATION_CHANNEL_MONITORING = "monitoring"
     const val NOTIFICATION_CHANNEL_ALERTS = "alerts"

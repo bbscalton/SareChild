@@ -22,6 +22,7 @@ import com.sarechild.shared.FamilyAlert
 import com.sarechild.shared.FamilyChatMessage
 import com.sarechild.shared.FamilySafetySettings
 import com.sarechild.shared.GeofenceZone
+import com.sarechild.shared.InstalledApp
 import com.sarechild.shared.GuardianInfo
 import com.sarechild.shared.GuardianRole
 import com.sarechild.shared.KeywordMatcher
@@ -140,6 +141,14 @@ class ChildRepository(
     var deviceLocked: Boolean
         get() = prefs.getBoolean(SareChildConstants.PREF_DEVICE_LOCKED, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_DEVICE_LOCKED, value).apply()
+
+    var lastAppInventorySyncMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_APP_INVENTORY_SYNC_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_APP_INVENTORY_SYNC_MS, value).apply()
+
+    @Volatile
+    private var cachedBlockSchedules: List<AppBlockSchedule> = emptyList()
+    private var blockScheduleListener: ListenerRegistration? = null
 
     val isPaired: Boolean get() = !familyId.isNullOrBlank() && !deviceId.isNullOrBlank()
 
@@ -392,6 +401,8 @@ class ChildRepository(
                     "startMinute" to 0,
                     "endMinute" to 1439,
                     "active" to true,
+                    "message" to "Application has been blocked.",
+                    "createdAtMs" to System.currentTimeMillis(),
                     "source" to reason
                 )
             ).await()
@@ -500,6 +511,35 @@ class ChildRepository(
     }
 
     suspend fun loadAppBlockSchedules(): List<AppBlockSchedule> {
+        val cached = cachedBlockSchedules
+        if (cached.isNotEmpty()) return cached
+        return fetchAppBlockSchedules()
+    }
+
+    fun getCachedAppBlockSchedules(): List<AppBlockSchedule> = cachedBlockSchedules
+
+    fun startAppBlockScheduleListener() {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        if (blockScheduleListener != null) return
+        blockScheduleListener = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_APP_BLOCK_SCHEDULES)
+            .whereEqualTo("deviceId", did)
+            .whereEqualTo("active", true)
+            .addSnapshotListener { snap, _ ->
+                cachedBlockSchedules = snap?.documents?.mapNotNull { doc ->
+                    parseAppBlockSchedule(doc.id, doc.data ?: emptyMap())
+                } ?: emptyList()
+            }
+    }
+
+    fun stopAppBlockScheduleListener() {
+        blockScheduleListener?.remove()
+        blockScheduleListener = null
+        cachedBlockSchedules = emptyList()
+    }
+
+    private suspend fun fetchAppBlockSchedules(): List<AppBlockSchedule> {
         val fid = familyId ?: return emptyList()
         val did = deviceId ?: return emptyList()
         val snap = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
@@ -508,20 +548,60 @@ class ChildRepository(
             .whereEqualTo("active", true)
             .get()
             .await()
-        return snap.documents.map {
-            @Suppress("UNCHECKED_CAST")
-            val days = (it.get("daysOfWeek") as? List<Number>)?.map { n -> n.toInt() } ?: emptyList()
-            AppBlockSchedule(
-                id = it.id,
-                packageName = it.getString("packageName") ?: "",
-                label = it.getString("label") ?: "",
-                deviceId = did,
-                daysOfWeek = days,
-                startMinute = (it.getLong("startMinute") ?: 0L).toInt(),
-                endMinute = (it.getLong("endMinute") ?: 0L).toInt(),
-                active = it.getBoolean("active") ?: true
-            )
-        }.filter { it.packageName.isNotBlank() }
+        return snap.documents.mapNotNull { parseAppBlockSchedule(it.id, it.data ?: emptyMap()) }
+    }
+
+    private fun parseAppBlockSchedule(id: String, data: Map<String, Any?>): AppBlockSchedule? {
+        val packageName = data["packageName"] as? String ?: return null
+        if (packageName.isBlank()) return null
+        @Suppress("UNCHECKED_CAST")
+        val days = (data["daysOfWeek"] as? List<Number>)?.map { it.toInt() } ?: emptyList()
+        return AppBlockSchedule(
+            id = id,
+            packageName = packageName,
+            label = data["label"] as? String ?: "",
+            deviceId = data["deviceId"] as? String ?: "",
+            daysOfWeek = days,
+            startMinute = (data["startMinute"] as? Number)?.toInt() ?: 0,
+            endMinute = (data["endMinute"] as? Number)?.toInt() ?: 0,
+            active = data["active"] as? Boolean ?: true,
+            message = data["message"] as? String ?: "Application has been blocked.",
+            createdAtMs = (data["createdAtMs"] as? Number)?.toLong() ?: 0L
+        )
+    }
+
+    suspend fun uploadInstalledApps(apps: List<InstalledApp>) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        ensureSignedIn()
+        val now = System.currentTimeMillis()
+        val batchLimit = 400
+        apps.chunked(batchLimit).forEach { chunk ->
+            val batch = db.batch()
+            chunk.forEach { app ->
+                val ref = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+                    .collection(SareChildConstants.COL_DEVICES).document(did)
+                    .collection(SareChildConstants.COL_INSTALLED_APPS).document(app.packageName)
+                batch.set(
+                    ref,
+                    app.copy(deviceId = did, updatedAtMs = now).toMap(),
+                    SetOptions.merge()
+                )
+            }
+            batch.commit().await()
+        }
+        runCatching {
+            db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+                .collection(SareChildConstants.COL_DEVICES).document(did)
+                .set(
+                    mapOf(
+                        "installedAppsCount" to apps.size,
+                        "installedAppsUpdatedAtMs" to now
+                    ),
+                    SetOptions.merge()
+                )
+                .await()
+        }
     }
 
     suspend fun postSos(location: LatLngPoint?) {

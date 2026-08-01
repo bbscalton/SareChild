@@ -72,6 +72,22 @@ class CommandListener(
                 }
                 return
             }
+            SafetyCommandType.REQUEST_APP_INVENTORY -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        AppInventoryHelper.sync(context, repo, force = true)
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "Inventory sync failed"
+                        )
+                    }
+                }
+                return
+            }
             SafetyCommandType.LOCK_DEVICE -> {
                 val intent = Intent(context, DeviceLockActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

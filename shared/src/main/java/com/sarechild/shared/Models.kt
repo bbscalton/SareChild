@@ -306,7 +306,10 @@ data class AppBlockSchedule(
     /** Minutes from midnight local. Supports overnight when start > end. */
     val startMinute: Int = 0,
     val endMinute: Int = 0,
-    val active: Boolean = true
+    val active: Boolean = true,
+    /** Shown on the child block screen when this schedule is active. */
+    val message: String = "Application has been blocked.",
+    val createdAtMs: Long = System.currentTimeMillis()
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "packageName" to packageName,
@@ -315,7 +318,9 @@ data class AppBlockSchedule(
         "daysOfWeek" to daysOfWeek,
         "startMinute" to startMinute,
         "endMinute" to endMinute,
-        "active" to active
+        "active" to active,
+        "message" to message,
+        "createdAtMs" to createdAtMs
     )
 
     fun isActiveNow(nowMs: Long = System.currentTimeMillis()): Boolean {
@@ -331,6 +336,31 @@ data class AppBlockSchedule(
             minuteOfDay >= startMinute || minuteOfDay <= endMinute
         }
     }
+}
+
+/** One installed app row synced from the child device inventory. */
+data class InstalledApp(
+    val packageName: String = "",
+    val name: String = "",
+    val versionName: String = "",
+    val versionCode: Long = 0L,
+    val apkSizeBytes: Long = 0L,
+    val firstInstallTime: Long = 0L,
+    val lastUpdateTime: Long = 0L,
+    val updatedAtMs: Long = System.currentTimeMillis(),
+    val deviceId: String = ""
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "packageName" to packageName,
+        "name" to name,
+        "versionName" to versionName,
+        "versionCode" to versionCode,
+        "apkSizeBytes" to apkSizeBytes,
+        "firstInstallTime" to firstInstallTime,
+        "lastUpdateTime" to lastUpdateTime,
+        "updatedAtMs" to updatedAtMs,
+        "deviceId" to deviceId
+    )
 }
 
 data class UsageAppEntry(

@@ -31,6 +31,7 @@ import { alertCategoryLabel, alertIcon, relativeTime, severityTone } from '../li
 import { reverseGeocode } from '../lib/googleMaps'
 import { LiveMapPage } from './LiveMapPage'
 import { WhatsAppEventsTable } from '../components/WhatsAppEventsTable'
+import { AppsSection } from '../components/AppsSection'
 import type { WhatsAppDisplayType } from '../lib/whatsappEventDisplay'
 
 type Section =
@@ -45,6 +46,7 @@ type Section =
   | 'callrecording'
   | 'typing'
   | 'usage'
+  | 'apps'
   | 'geofences'
   | 'digests'
   | 'guardians'
@@ -496,6 +498,8 @@ export function DashboardPage() {
         startMinute: Number(blockStart) || 480,
         endMinute: Number(blockEnd) || 900,
         active: true,
+        message: 'Application has been blocked.',
+        createdAtMs: Date.now(),
       })
       setBlockPackage('')
       setBlockLabel('')
@@ -527,6 +531,8 @@ export function DashboardPage() {
           startMinute: 8 * 60,
           endMinute: 15 * 60,
           active: true,
+          message: 'Application has been blocked.',
+          createdAtMs: Date.now(),
         })
         await repo.addAppBlockSchedule(familyId, {
           packageName: app.packageName,
@@ -536,6 +542,8 @@ export function DashboardPage() {
           startMinute: 21 * 60,
           endMinute: 6 * 60 + 30,
           active: true,
+          message: 'Application has been blocked.',
+          createdAtMs: Date.now(),
         })
       }
       setStatusMsg('Preset app-block schedules added.')
@@ -844,6 +852,7 @@ export function DashboardPage() {
       items: [
         { id: 'safety', label: 'Safety checks', icon: '\u{1F6E1}\uFE0F' },
         { id: 'geofences', label: 'Safe zones', icon: '\u{1F4D0}' },
+        { id: 'apps', label: 'Apps', icon: '\u{1F4F1}', badge: appBlockSchedules.length || undefined },
         { id: 'usage', label: 'Usage & limits', icon: '\u23F1\uFE0F' },
         { id: 'digests', label: 'Weekly digests', icon: '\u{1F4F0}' },
         { id: 'tcd', label: 'TCD ops', icon: '\u{1FA7A}' },
@@ -863,6 +872,7 @@ export function DashboardPage() {
     callrecording: 'Call recording',
     typing: 'Typing safety',
     usage: 'App usage & limits',
+    apps: 'Apps',
     geofences: 'Safe zones (geofences)',
     digests: 'Weekly digests',
     guardians: 'Guardians & caregivers',
@@ -2108,6 +2118,16 @@ export function DashboardPage() {
                 )}
               </div>
             </section>
+          )}
+
+          {section === 'apps' && familyId && (
+            <AppsSection
+              familyId={familyId}
+              devices={devices}
+              appBlockSchedules={appBlockSchedules}
+              usageDaily={usageDaily}
+              onError={(msg) => setError(msg)}
+            />
           )}
 
           {section === 'usage' && (

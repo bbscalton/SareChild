@@ -28,6 +28,9 @@ class PackageEventReceiver : BroadcastReceiver() {
                     context.packageManager.getApplicationLabel(ai).toString()
                 }.getOrDefault(pkg)
                 repo.postAppEvent(installed, pkg, label)
+                if (installed) {
+                    AppInventoryHelper.sync(context, repo, force = true)
+                }
             } catch (_: PackageManager.NameNotFoundException) {
                 repo.postAppEvent(installed, pkg, pkg)
             } finally {

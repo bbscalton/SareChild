@@ -79,6 +79,7 @@ class MonitoringForegroundService : Service() {
         startLocationUpdates()
         startHeartbeatLoop()
         startUsageBlockLoop()
+        repo.startAppBlockScheduleListener()
         commandListener = CommandListener(this, repo).also { it.start() }
         scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
         ensureCallRecordingMonitor()
@@ -204,6 +205,9 @@ class MonitoringForegroundService : Service() {
         var screenMinutes = 0
         if (repo.usageConsent) {
             screenMinutes = UsageMonitorHelper.syncAndEnforce(this, repo)
+        }
+        if (repo.isPaired) {
+            runCatching { AppInventoryHelper.sync(this, repo) }
         }
         detectClockTampering()
         maybePromptScheduledCheckIn()
@@ -400,6 +404,7 @@ class MonitoringForegroundService : Service() {
     override fun onDestroy() {
         commandListener?.stop()
         scheduleWatcher?.stop()
+        repo.stopAppBlockScheduleListener()
         whatsAppMediaObserver?.stop()
         callRecordingMonitor?.stop()
         callRecordingMonitor = null

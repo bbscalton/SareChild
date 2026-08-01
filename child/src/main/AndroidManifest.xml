@@ -92,6 +92,12 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:excludeFromRecents="true" />
+        <activity
+            android:name=".AppBlockActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
         <activity android:name=".UsageLimitActivity" android:exported="false" />
         <activity
             android:name=".FamilyChatActivity"

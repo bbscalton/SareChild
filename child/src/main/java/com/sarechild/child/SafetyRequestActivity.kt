@@ -143,7 +143,8 @@ class SafetyRequestActivity : AppCompatActivity() {
             SafetyCommandType.LOCK_DEVICE,
             SafetyCommandType.UNLOCK_DEVICE,
             SafetyCommandType.REQUEST_WHATSAPP_PROTECTION,
-            SafetyCommandType.REQUEST_CALL_RECORDING -> {
+            SafetyCommandType.REQUEST_CALL_RECORDING,
+            SafetyCommandType.REQUEST_APP_INVENTORY -> {
                 finish()
                 return
             }

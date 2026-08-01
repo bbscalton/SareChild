@@ -82,6 +82,12 @@ service cloud.firestore {
         allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         allow create, update: if isFamilyGuardian(familyId)
           || (signedIn() && request.resource.data.authUid == request.auth.uid);
+
+        match /installedApps/{packageName} {
+          allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+          allow create, update: if isDeviceMember(familyId, deviceId);
+          allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        }
       }
 
       match /alerts/{alertId} {

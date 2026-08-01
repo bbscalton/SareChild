@@ -63,7 +63,9 @@ enum class SafetyCommandType {
     /** Parent asks child to enable WhatsApp protection (consent + OS permission setup). */
     REQUEST_WHATSAPP_PROTECTION,
     /** Parent asks child to enable call recording (consent + mic / phone-state permissions). */
-    REQUEST_CALL_RECORDING
+    REQUEST_CALL_RECORDING,
+    /** Parent asks child to upload a fresh installed-app inventory snapshot. */
+    REQUEST_APP_INVENTORY
 }
 
 /**

@@ -52,6 +52,7 @@ export const COL = {
   typingEvents: 'typingEvents',
   typingSafetySettings: 'typingSafetySettings',
   callRecordings: 'callRecordings',
+  installedApps: 'installedApps',
 } as const
 
 export const WENT_DARK_AFTER_MS = 5 * 60 * 1000

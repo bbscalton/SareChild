@@ -472,6 +472,7 @@ export type SafetyCommandType =
   | 'UNLOCK_DEVICE'
   | 'REQUEST_WHATSAPP_PROTECTION'
   | 'REQUEST_CALL_RECORDING'
+  | 'REQUEST_APP_INVENTORY'
 
 export async function createSafetyCommand(
   familyId: string,
@@ -740,6 +741,8 @@ export function observeAppBlockSchedules(
           startMinute: Number(data.startMinute ?? 0),
           endMinute: Number(data.endMinute ?? 0),
           active: data.active !== false,
+          message: (data.message as string) || 'Application has been blocked.',
+          createdAtMs: Number(data.createdAtMs ?? 0),
         } satisfies AppBlockSchedule
       })
       onData(rows)
@@ -776,7 +779,17 @@ export async function addAppBlockSchedule(
     startMinute: input.startMinute,
     endMinute: input.endMinute,
     active: input.active,
+    message: input.message?.trim() || 'Application has been blocked.',
+    createdAtMs: input.createdAtMs || Date.now(),
   })
+}
+
+export async function updateAppBlockSchedule(
+  familyId: string,
+  id: string,
+  patch: Partial<Omit<AppBlockSchedule, 'id'>>,
+): Promise<void> {
+  await updateDoc(doc(db, COL.families, familyId, COL.appBlockSchedules, id), { ...patch })
 }
 
 export async function deleteAppBlockSchedule(familyId: string, id: string): Promise<void> {
@@ -997,7 +1010,47 @@ export async function blockAppFromTypingEvent(
     startMinute: 0,
     endMinute: 1439,
     active: true,
+    message: 'Application has been blocked.',
+    createdAtMs: Date.now(),
   })
+}
+
+export function observeInstalledApps(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: import('../types').InstalledApp[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  if (!deviceId) {
+    onData([])
+    return () => {}
+  }
+  return onSnapshot(
+    collection(db, COL.families, familyId, COL.devices, deviceId, COL.installedApps),
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          packageName: (data.packageName as string) || d.id,
+          name: (data.name as string) || (data.packageName as string) || d.id,
+          versionName: (data.versionName as string) || '',
+          versionCode: Number(data.versionCode ?? 0),
+          apkSizeBytes: Number(data.apkSizeBytes ?? 0),
+          firstInstallTime: Number(data.firstInstallTime ?? 0),
+          lastUpdateTime: Number(data.lastUpdateTime ?? 0),
+          updatedAtMs: Number(data.updatedAtMs ?? 0),
+          deviceId: (data.deviceId as string) || deviceId,
+        } satisfies import('../types').InstalledApp
+      })
+      onData(rows.sort((a, b) => a.name.localeCompare(b.name)))
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export async function requestAppInventory(familyId: string, deviceId: string): Promise<string> {
+  return createSafetyCommand(familyId, deviceId, 'REQUEST_APP_INVENTORY')
 }
 
 const DEFAULT_TYPING_SAFETY_SETTINGS: TypingSafetySettings = {

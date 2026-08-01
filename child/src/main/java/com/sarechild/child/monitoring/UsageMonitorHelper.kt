@@ -11,11 +11,13 @@ import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import com.sarechild.child.AppBlockActivity
 import com.sarechild.child.R
 import com.sarechild.child.UsageLimitActivity
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
+import com.sarechild.shared.AppBlockSchedule
 import com.sarechild.shared.FamilyAlert
 import com.sarechild.shared.SareChildConstants
 import com.sarechild.shared.UsageAppEntry
@@ -24,6 +26,21 @@ import java.util.Calendar
 object UsageMonitorHelper {
     private var lastBlockKey: String = ""
     private var lastBlockAtMs: Long = 0L
+    private var lastBlockAlertAtMs: Long = 0L
+    private var activeBlockPackage: String? = null
+
+    /** Never block SareChild itself or critical phone/settings apps by default. */
+    private val PROTECTED_PACKAGES = setOf(
+        "com.sarechild.child",
+        "com.android.settings",
+        "com.android.dialer",
+        "com.google.android.dialer",
+        "com.samsung.android.dialer",
+        "com.android.phone",
+        "com.android.contacts",
+        "com.google.android.contacts",
+        "com.android.emergency"
+    )
 
     fun hasUsageAccess(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -49,6 +66,10 @@ object UsageMonitorHelper {
             Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
+
+    fun isProtectedPackage(packageName: String): Boolean =
+        packageName in PROTECTED_PACKAGES ||
+            packageName.startsWith("com.android.providers.")
 
     suspend fun syncAndEnforce(context: Context, repo: ChildRepository): Int {
         if (!repo.usageConsent || !hasUsageAccess(context)) return 0
@@ -109,35 +130,71 @@ object UsageMonitorHelper {
     suspend fun enforceScheduledBlocks(context: Context, repo: ChildRepository) {
         if (!repo.usageConsent || !hasUsageAccess(context)) return
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val foregroundPackage = currentForegroundPackage(usm) ?: return
-        if (foregroundPackage == context.packageName) return
-        val activeRule = repo.loadAppBlockSchedules()
-            .firstOrNull { it.packageName == foregroundPackage && it.isActiveNow() }
-            ?: return
+        val foregroundPackage = currentForegroundPackage(usm) ?: run {
+            activeBlockPackage = null
+            return
+        }
+        if (isProtectedPackage(foregroundPackage) || foregroundPackage == context.packageName) {
+            activeBlockPackage = null
+            return
+        }
+        val schedules = repo.getCachedAppBlockSchedules().ifEmpty { repo.loadAppBlockSchedules() }
+        val activeRule = schedules.firstOrNull {
+            it.packageName == foregroundPackage && it.isActiveNow()
+        }
+        if (activeRule == null) {
+            activeBlockPackage = null
+            return
+        }
+        showScheduledBlock(context, repo, foregroundPackage, activeRule)
+    }
 
+    private suspend fun showScheduledBlock(
+        context: Context,
+        repo: ChildRepository,
+        packageName: String,
+        activeRule: AppBlockSchedule
+    ) {
         val now = System.currentTimeMillis()
-        val key = "${activeRule.id}_${foregroundPackage}_${now / 60_000L}"
-        if (lastBlockKey == key && now - lastBlockAtMs < 20_000L) return
+        val key = "${activeRule.id}_${packageName}_${now / 30_000L}"
+        val repeatSameApp = activeBlockPackage == packageName
+        if (lastBlockKey == key && now - lastBlockAtMs < 15_000L && repeatSameApp) return
         lastBlockKey = key
         lastBlockAtMs = now
+        activeBlockPackage = packageName
 
         val label = activeRule.label.ifBlank { activeRule.packageName }
         val window = formatWindow(activeRule.startMinute, activeRule.endMinute)
+        val message = activeRule.message.ifBlank { "Application has been blocked." }
         notifyBlock(context, label, window)
-        repo.postAlert(
-            FamilyAlert(
-                type = AlertType.APP_BLOCKED,
-                severity = AlertSeverity.MEDIUM,
-                title = "Scheduled app block — ${repo.childName}",
-                snippet = "$label blocked during $window"
+        if (now - lastBlockAlertAtMs > 5 * 60_000L) {
+            lastBlockAlertAtMs = now
+            repo.postAlert(
+                FamilyAlert(
+                    type = AlertType.APP_BLOCKED,
+                    severity = AlertSeverity.MEDIUM,
+                    title = "Scheduled app block — ${repo.childName}",
+                    snippet = "$label blocked during $window"
+                )
             )
-        )
+        }
         context.startActivity(
-            Intent(context, UsageLimitActivity::class.java).apply {
+            Intent(context, AppBlockActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(AppBlockActivity.EXTRA_LABEL, label)
+                putExtra(AppBlockActivity.EXTRA_MESSAGE, message)
+                putExtra(AppBlockActivity.EXTRA_WINDOW, window)
+                putExtra(AppBlockActivity.EXTRA_PACKAGE, packageName)
+            }
+        )
+        // Nudge away from the blocked app — child can still return, but the enforce loop
+        // will immediately re-show the block screen.
+        context.startActivity(
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                putExtra("mode", "scheduled_block")
-                putExtra("label", label)
-                putExtra("window", window)
             }
         )
     }

@@ -171,6 +171,21 @@ export type AppBlockSchedule = {
   startMinute: number
   endMinute: number
   active: boolean
+  message: string
+  createdAtMs: number
+}
+
+export type InstalledApp = {
+  id: string
+  packageName: string
+  name: string
+  versionName: string
+  versionCode: number
+  apkSizeBytes: number
+  firstInstallTime: number
+  lastUpdateTime: number
+  updatedAtMs: number
+  deviceId: string
 }
 
 export type UsageAppEntry = {
