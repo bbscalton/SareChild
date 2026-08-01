@@ -529,6 +529,7 @@ function TcdDashboard({
             onBusy={setBusy}
             onStatus={setStatusMsg}
             onError={setError}
+            onlineDevices={overview?.onlineDevices ?? null}
           />
         )}
 
