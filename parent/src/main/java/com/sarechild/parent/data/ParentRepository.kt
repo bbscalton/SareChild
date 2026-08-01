@@ -96,9 +96,27 @@ class ParentRepository(
 ) {
     val currentUserId: String? get() = auth.currentUser?.uid
 
-    suspend fun signUp(email: String, password: String): Result<String> = runCatching {
+    suspend fun signUp(email: String, password: String, acceptLegal: Boolean = true): Result<String> = runCatching {
+        if (!acceptLegal) error("You must accept the Terms of Service and Privacy Policy to register.")
         val result = auth.createUserWithEmailAndPassword(email, password).await()
         val uid = result.user?.uid ?: error("No user id")
+        bootstrapNewOwnerFamily(uid, email, withLegal = true)
+    }
+
+    private suspend fun verifyFamilyAccess(uid: String, familyId: String): Boolean {
+        val guardian = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_GUARDIANS).document(uid).get().await()
+        if (guardian.exists()) return true
+        val family = db.collection(SareChildConstants.COL_FAMILIES).document(familyId).get().await()
+        return family.exists() && family.getString("parentUid") == uid
+    }
+
+    private suspend fun bootstrapNewOwnerFamily(
+        uid: String,
+        email: String,
+        withLegal: Boolean = false,
+        preserve: Map<String, Any?> = emptyMap()
+    ): String {
         val now = System.currentTimeMillis()
         val familyRef = db.collection(SareChildConstants.COL_FAMILIES).document()
         familyRef.set(
@@ -108,13 +126,6 @@ class ParentRepository(
                 "parentEmail" to email
             )
         ).await()
-        db.collection("parentProfiles").document(uid).set(
-            mapOf(
-                "familyId" to familyRef.id,
-                "email" to email,
-                "createdAtMs" to now
-            ) + newTrialFields(now)
-        ).await()
         familyRef.collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
             mapOf(
                 "email" to email,
@@ -122,7 +133,73 @@ class ParentRepository(
                 "joinedAtMs" to now
             )
         ).await()
-        familyRef.id
+        val legalFields = if (withLegal) {
+            mapOf(
+                "tosAcceptedAt" to now,
+                "tosVersion" to "2026-08-01",
+                "privacyAcceptedAt" to now
+            )
+        } else emptyMap()
+        db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).set(
+            mapOf(
+                "familyId" to familyRef.id,
+                "ownedFamilyId" to familyRef.id,
+                "email" to email,
+                "createdAtMs" to now,
+                "registeredAt" to now
+            ) + newTrialFields(now) + legalFields + preserve.filterValues { it != null },
+            SetOptions.merge()
+        ).await()
+        return familyRef.id
+    }
+
+    suspend fun ensureParentProfile(email: String = auth.currentUser?.email.orEmpty()): String {
+        val uid = currentUserId ?: error("Not signed in")
+        val profileRef = db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid)
+        val profile = profileRef.get().await()
+        if (!profile.exists()) {
+            return bootstrapNewOwnerFamily(uid, email)
+        }
+        val familyId = profile.getString("familyId")
+        if (familyId.isNullOrBlank()) {
+            return bootstrapNewOwnerFamily(
+                uid,
+                email,
+                preserve = mapOf(
+                    "tosAcceptedAt" to profile.getLong("tosAcceptedAt"),
+                    "tosVersion" to profile.getString("tosVersion"),
+                    "privacyAcceptedAt" to profile.getLong("privacyAcceptedAt"),
+                    "plan" to profile.getString("plan"),
+                    "status" to profile.getString("status"),
+                    "trialStartedAt" to profile.getLong("trialStartedAt"),
+                    "trialEndsAt" to profile.getLong("trialEndsAt"),
+                    "registeredAt" to (profile.getLong("registeredAt") ?: profile.getLong("createdAtMs"))
+                )
+            )
+        }
+        if (!verifyFamilyAccess(uid, familyId)) {
+            return bootstrapNewOwnerFamily(
+                uid,
+                email,
+                preserve = mapOf(
+                    "tosAcceptedAt" to profile.getLong("tosAcceptedAt"),
+                    "tosVersion" to profile.getString("tosVersion"),
+                    "privacyAcceptedAt" to profile.getLong("privacyAcceptedAt"),
+                    "plan" to profile.getString("plan"),
+                    "status" to profile.getString("status"),
+                    "trialStartedAt" to profile.getLong("trialStartedAt"),
+                    "trialEndsAt" to profile.getLong("trialEndsAt"),
+                    "registeredAt" to (profile.getLong("registeredAt") ?: profile.getLong("createdAtMs"))
+                )
+            )
+        }
+        if (profile.getString("ownedFamilyId").isNullOrBlank()) {
+            val family = db.collection(SareChildConstants.COL_FAMILIES).document(familyId).get().await()
+            if (family.getString("parentUid") == uid) {
+                profileRef.set(mapOf("ownedFamilyId" to familyId), SetOptions.merge()).await()
+            }
+        }
+        return familyId
     }
 
     suspend fun signIn(email: String, password: String): Result<Unit> = runCatching {
@@ -140,41 +217,39 @@ class ParentRepository(
         val authResult = auth.signInWithCredential(credential).await()
         val uid = authResult.user?.uid ?: error("No user id")
         val email = authResult.user?.email.orEmpty()
-        val hasProfile = db.collection("parentProfiles").document(uid).get().await().exists()
+        val hasProfile = db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).get().await().exists()
         if (!hasProfile) {
-            val now = System.currentTimeMillis()
-            val familyRef = db.collection(SareChildConstants.COL_FAMILIES).document()
-            familyRef.set(
-                mapOf(
-                    "parentUid" to uid,
-                    "createdAtMs" to now,
-                    "parentEmail" to email
-                )
-            ).await()
-            db.collection("parentProfiles").document(uid).set(
-                mapOf(
-                    "familyId" to familyRef.id,
-                    "email" to email,
-                    "createdAtMs" to now
-                ) + newTrialFields(now)
-            ).await()
-            familyRef.collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
-                mapOf(
-                    "email" to email,
-                    "role" to GuardianRole.OWNER.name,
-                    "joinedAtMs" to now
-                )
-            ).await()
+            bootstrapNewOwnerFamily(uid, email)
+        } else {
+            ensureParentProfile(email)
         }
         Unit
     }
 
     fun signOut() = auth.signOut()
 
-    suspend fun getFamilyId(): String {
+    suspend fun getFamilyId(): String = ensureParentProfile()
+
+    suspend fun needsTermsAcceptance(): Boolean {
+        val uid = currentUserId ?: return true
+        val profile = db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).get().await()
+        if (!profile.exists()) return true
+        return profile.getLong("tosAcceptedAt") == null ||
+            profile.getString("tosVersion") != "2026-08-01"
+    }
+
+    suspend fun acceptTermsOfService() {
         val uid = currentUserId ?: error("Not signed in")
-        val profile = db.collection("parentProfiles").document(uid).get().await()
-        return profile.getString("familyId") ?: error("Family not found")
+        val now = System.currentTimeMillis()
+        db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).set(
+            mapOf(
+                "tosAcceptedAt" to now,
+                "tosVersion" to "2026-08-01",
+                "privacyAcceptedAt" to now,
+                "registeredAt" to now
+            ),
+            SetOptions.merge()
+        ).await()
     }
 
     /** Reads the current trial/subscription status once (used to gate the dashboard). */
@@ -199,7 +274,7 @@ class ParentRepository(
         val uid = currentUserId ?: return
         runCatching {
             db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid)
-                .set(mapOf("lastLoginAt" to System.currentTimeMillis()), SetOptions.merge())
+                .set(mapOf("lastLoginAt" to System.currentTimeMillis(), "lastActiveAt" to System.currentTimeMillis()), SetOptions.merge())
                 .await()
         }
     }
@@ -218,7 +293,7 @@ class ParentRepository(
         lastCheckInWriteMs = now
         runCatching {
             db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid)
-                .set(mapOf("lastParentCheckInAt" to now), SetOptions.merge())
+                .set(mapOf("lastParentCheckInAt" to now, "lastActiveAt" to now), SetOptions.merge())
                 .await()
         }
     }
@@ -966,11 +1041,9 @@ class ParentRepository(
         val role = runCatching {
             GuardianRole.valueOf(invite.getString("role") ?: "CAREGIVER")
         }.getOrDefault(GuardianRole.CAREGIVER)
+        val existingProfile = db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).get().await()
+        val ownedFamilyId = existingProfile.getString("ownedFamilyId")
 
-        db.collection("parentProfiles").document(uid).set(
-            mapOf("familyId" to familyId, "email" to email),
-            SetOptions.merge()
-        ).await()
         db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
             .collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
                 mapOf(
@@ -979,6 +1052,14 @@ class ParentRepository(
                     "joinedAtMs" to System.currentTimeMillis()
                 )
             ).await()
+        db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).set(
+            buildMap {
+                put("familyId", familyId)
+                put("email", email)
+                if (!ownedFamilyId.isNullOrBlank()) put("ownedFamilyId", ownedFamilyId)
+            },
+            SetOptions.merge()
+        ).await()
         inviteRef.update(mapOf("claimed" to true, "claimedByUid" to uid, "claimedAtMs" to System.currentTimeMillis())).await()
         familyId
     }

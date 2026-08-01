@@ -23,8 +23,11 @@ import {
   where,
 } from 'firebase/firestore'
 import { auth, COL, db, WENT_DARK_AFTER_MS } from '../firebase'
+import { isProjectAdmin } from './admin'
 import { DEFAULT_KEYWORDS, generatePairingCode } from './helpers'
+import { TOS_VERSION } from './legal'
 import type {
+  AdminParentAccountRow,
   AppBlockSchedule,
   AppLimit,
   CallSmsPreview,
@@ -37,6 +40,7 @@ import type {
   GuardianRole,
   LocationTrailSample,
   MapPlace,
+  ParentProfileInfo,
   PlaceKind,
   SafeContact,
   SafetyCommand,
@@ -74,31 +78,161 @@ function newTrialFields(now: number) {
     trialEndsAt: now + TRIAL_DAYS * 24 * 60 * 60 * 1000,
     lastLoginAt: now,
     lastParentCheckInAt: now,
+    lastActiveAt: now,
   }
 }
 
-export async function signUp(email: string, password: string): Promise<string> {
-  const result = await createUserWithEmailAndPassword(auth, email, password)
-  const uid = result.user.uid
+function parseTrialInfo(data: Record<string, unknown> | undefined): TrialInfo | null {
+  if (!data || data.plan == null) return null
+  return {
+    plan: (data.plan as TrialInfo['plan']) || 'trial',
+    status: (data.status as TrialInfo['status']) || 'active',
+    trialStartedAt: Number(data.trialStartedAt ?? 0),
+    trialEndsAt: Number(data.trialEndsAt ?? 0),
+    lastLoginAt: data.lastLoginAt == null ? null : Number(data.lastLoginAt),
+    lastParentCheckInAt: data.lastParentCheckInAt == null ? null : Number(data.lastParentCheckInAt),
+  }
+}
+
+function parseParentProfile(data: Record<string, unknown> | undefined): ParentProfileInfo {
+  const familyId = (data?.familyId as string | undefined) ?? null
+  return {
+    familyId,
+    ownedFamilyId: (data?.ownedFamilyId as string | undefined) ?? familyId,
+    email: (data?.email as string | undefined) ?? '',
+    createdAtMs: Number(data?.createdAtMs ?? 0),
+    registeredAt: data?.registeredAt == null ? null : Number(data.registeredAt),
+    tosAcceptedAt: data?.tosAcceptedAt == null ? null : Number(data.tosAcceptedAt),
+    tosVersion: (data?.tosVersion as string | undefined) ?? null,
+    privacyAcceptedAt: data?.privacyAcceptedAt == null ? null : Number(data.privacyAcceptedAt),
+    lastLoginAt: data?.lastLoginAt == null ? null : Number(data.lastLoginAt),
+    lastActiveAt: data?.lastActiveAt == null ? null : Number(data.lastActiveAt),
+    trial: parseTrialInfo(data),
+  }
+}
+
+/** True when this uid is the family owner or has an explicit guardians/{uid} membership row. */
+async function verifyFamilyAccess(uid: string, familyId: string): Promise<boolean> {
+  const [guardianSnap, familySnap] = await Promise.all([
+    getDoc(doc(db, COL.families, familyId, COL.guardians, uid)),
+    getDoc(doc(db, COL.families, familyId)),
+  ])
+  if (guardianSnap.exists()) return true
+  return familySnap.exists() && familySnap.data()?.parentUid === uid
+}
+
+type BootstrapExtras = {
+  withLegal?: boolean
+  preserve?: Record<string, unknown>
+}
+
+async function bootstrapNewOwnerFamily(
+  uid: string,
+  email: string,
+  extras: BootstrapExtras = {},
+): Promise<string> {
   const now = Date.now()
   const familyRef = doc(collection(db, COL.families))
+  const legalFields = extras.withLegal
+    ? {
+        tosAcceptedAt: now,
+        tosVersion: TOS_VERSION,
+        privacyAcceptedAt: now,
+      }
+    : {}
   await setDoc(familyRef, {
     parentUid: uid,
     createdAtMs: now,
     parentEmail: email,
-  })
-  await setDoc(doc(db, COL.parentProfiles, uid), {
-    familyId: familyRef.id,
-    email,
-    createdAtMs: now,
-    ...newTrialFields(now),
   })
   await setDoc(doc(db, COL.families, familyRef.id, COL.guardians, uid), {
     email,
     role: 'OWNER' satisfies GuardianRole,
     joinedAtMs: now,
   })
+  await setDoc(
+    doc(db, COL.parentProfiles, uid),
+    {
+      familyId: familyRef.id,
+      ownedFamilyId: familyRef.id,
+      email,
+      createdAtMs: now,
+      registeredAt: now,
+      ...newTrialFields(now),
+      ...legalFields,
+      ...(extras.preserve ?? {}),
+    },
+    { merge: true },
+  )
   return familyRef.id
+}
+
+/**
+ * Ensures every signed-in parent has a private family they are allowed to access.
+ * Repairs legacy/corrupt rows that pointed new accounts at another family's id.
+ */
+export async function ensureParentProfile(uid: string, email: string): Promise<string> {
+  const profileRef = doc(db, COL.parentProfiles, uid)
+  const profileSnap = await getDoc(profileRef)
+  if (!profileSnap.exists()) {
+    return bootstrapNewOwnerFamily(uid, email)
+  }
+
+  const data = profileSnap.data() ?? {}
+  const familyId = data.familyId as string | undefined
+  if (!familyId) {
+    return bootstrapNewOwnerFamily(uid, email, {
+      preserve: {
+        tosAcceptedAt: data.tosAcceptedAt,
+        tosVersion: data.tosVersion,
+        privacyAcceptedAt: data.privacyAcceptedAt,
+        plan: data.plan,
+        status: data.status,
+        trialStartedAt: data.trialStartedAt,
+        trialEndsAt: data.trialEndsAt,
+        registeredAt: data.registeredAt ?? data.createdAtMs,
+      },
+    })
+  }
+
+  const allowed = await verifyFamilyAccess(uid, familyId)
+  if (!allowed) {
+    console.warn('[SareChild] Repaired cross-tenant family link for', uid, 'away from', familyId)
+    return bootstrapNewOwnerFamily(uid, email, {
+      preserve: {
+        tosAcceptedAt: data.tosAcceptedAt,
+        tosVersion: data.tosVersion,
+        privacyAcceptedAt: data.privacyAcceptedAt,
+        plan: data.plan,
+        status: data.status,
+        trialStartedAt: data.trialStartedAt,
+        trialEndsAt: data.trialEndsAt,
+        registeredAt: data.registeredAt ?? data.createdAtMs,
+      },
+    })
+  }
+
+  if (!data.ownedFamilyId) {
+    const ownedFamilyId =
+      (await getDoc(doc(db, COL.families, familyId))).data()?.parentUid === uid ? familyId : null
+    if (ownedFamilyId) {
+      await setDoc(profileRef, { ownedFamilyId }, { merge: true })
+    }
+  }
+
+  return familyId
+}
+
+export async function signUp(
+  email: string,
+  password: string,
+  acceptLegal: boolean,
+): Promise<string> {
+  if (!acceptLegal) {
+    throw new Error('You must accept the Terms of Service and Privacy Policy to register.')
+  }
+  const result = await createUserWithEmailAndPassword(auth, email, password)
+  return bootstrapNewOwnerFamily(result.user.uid, email, { withLegal: true })
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
@@ -112,29 +246,7 @@ export async function signIn(email: string, password: string): Promise<void> {
 export async function signInWithGoogle(): Promise<void> {
   const provider = new GoogleAuthProvider()
   const result = await signInWithPopup(auth, provider)
-  const uid = result.user.uid
-  const email = result.user.email ?? ''
-  const profileSnap = await getDoc(doc(db, COL.parentProfiles, uid))
-  if (!profileSnap.exists()) {
-    const now = Date.now()
-    const familyRef = doc(collection(db, COL.families))
-    await setDoc(familyRef, {
-      parentUid: uid,
-      createdAtMs: now,
-      parentEmail: email,
-    })
-    await setDoc(doc(db, COL.parentProfiles, uid), {
-      familyId: familyRef.id,
-      email,
-      createdAtMs: now,
-      ...newTrialFields(now),
-    })
-    await setDoc(doc(db, COL.families, familyRef.id, COL.guardians, uid), {
-      email,
-      role: 'OWNER' satisfies GuardianRole,
-      joinedAtMs: now,
-    })
-  }
+  await ensureParentProfile(result.user.uid, result.user.email ?? '')
 }
 
 export async function signOut(): Promise<void> {
@@ -144,10 +256,47 @@ export async function signOut(): Promise<void> {
 export async function getFamilyId(): Promise<string> {
   const uid = auth.currentUser?.uid
   if (!uid) throw new Error('Not signed in')
-  const profile = await getDoc(doc(db, COL.parentProfiles, uid))
-  const familyId = profile.data()?.familyId as string | undefined
-  if (!familyId) throw new Error('Family not found')
-  return familyId
+  const email = auth.currentUser?.email ?? ''
+  return ensureParentProfile(uid, email)
+}
+
+export async function acceptTermsOfService(): Promise<void> {
+  const uid = auth.currentUser?.uid
+  if (!uid) throw new Error('Not signed in')
+  const now = Date.now()
+  await setDoc(
+    doc(db, COL.parentProfiles, uid),
+    {
+      tosAcceptedAt: now,
+      tosVersion: TOS_VERSION,
+      privacyAcceptedAt: now,
+      registeredAt: now,
+    },
+    { merge: true },
+  )
+}
+
+export function observeParentProfile(
+  uid: string,
+  onData: (profile: ParentProfileInfo | null) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, COL.parentProfiles, uid),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null)
+        return
+      }
+      onData(parseParentProfile(snap.data()))
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export function needsTermsAcceptance(profile: ParentProfileInfo | null): boolean {
+  if (!profile) return true
+  return profile.tosAcceptedAt == null || profile.tosVersion !== TOS_VERSION
 }
 
 // ---------- Trial subscription tracking ----------
@@ -160,25 +309,7 @@ export function observeTrialInfo(
   onData: (info: TrialInfo | null) => void,
   onError?: (err: Error) => void,
 ): () => void {
-  return onSnapshot(
-    doc(db, COL.parentProfiles, uid),
-    (snap) => {
-      const data = snap.data()
-      if (!data || data.plan == null) {
-        onData(null)
-        return
-      }
-      onData({
-        plan: (data.plan as TrialInfo['plan']) || 'trial',
-        status: (data.status as TrialInfo['status']) || 'active',
-        trialStartedAt: Number(data.trialStartedAt ?? 0),
-        trialEndsAt: Number(data.trialEndsAt ?? 0),
-        lastLoginAt: data.lastLoginAt == null ? null : Number(data.lastLoginAt),
-        lastParentCheckInAt: data.lastParentCheckInAt == null ? null : Number(data.lastParentCheckInAt),
-      })
-    },
-    (err) => onError?.(err),
-  )
+  return observeParentProfile(uid, (profile) => onData(profile?.trial ?? null), onError)
 }
 
 const CHECKIN_THROTTLE_MS = 60 * 60 * 1000 // once per hour, per the product spec
@@ -190,7 +321,11 @@ export async function recordLogin(uid: string): Promise<void> {
   const now = Date.now()
   if (now - last < CHECKIN_THROTTLE_MS) return
   localStorage.setItem(key, String(now))
-  await setDoc(doc(db, COL.parentProfiles, uid), { lastLoginAt: now }, { merge: true }).catch(() => {
+  await setDoc(
+    doc(db, COL.parentProfiles, uid),
+    { lastLoginAt: now, lastActiveAt: now },
+    { merge: true },
+  ).catch(() => {
     // Best-effort — a purged account's profile write will be denied by rules; that's fine.
   })
 }
@@ -206,7 +341,11 @@ export async function recordParentCheckIn(uid: string): Promise<void> {
   const now = Date.now()
   if (now - last < CHECKIN_THROTTLE_MS) return
   localStorage.setItem(key, String(now))
-  await setDoc(doc(db, COL.parentProfiles, uid), { lastParentCheckInAt: now }, { merge: true }).catch(() => {
+  await setDoc(
+    doc(db, COL.parentProfiles, uid),
+    { lastParentCheckInAt: now, lastActiveAt: now },
+    { merge: true },
+  ).catch(() => {
     // Best-effort — see recordLogin.
   })
 }
@@ -1759,26 +1898,66 @@ export async function acceptGuardianInvite(code: string): Promise<string> {
   const familyId = data.familyId as string
   if (!familyId) throw new Error('Invite missing family')
 
-  await setDoc(
-    doc(db, COL.parentProfiles, uid),
-    {
-      familyId,
-      email: email || (data.email as string) || '',
-      createdAtMs: Date.now(),
-    },
-    { merge: true },
-  )
+  const existingProfile = await getDoc(doc(db, COL.parentProfiles, uid))
+  const ownedFamilyId = existingProfile.data()?.ownedFamilyId as string | undefined
+
   await setDoc(doc(db, COL.families, familyId, COL.guardians, uid), {
     email: email || (data.email as string) || '',
     role: 'CAREGIVER' satisfies GuardianRole,
     joinedAtMs: Date.now(),
   })
+  await setDoc(
+    doc(db, COL.parentProfiles, uid),
+    {
+      familyId,
+      email: email || (data.email as string) || '',
+      ...(ownedFamilyId ? { ownedFamilyId } : {}),
+    },
+    { merge: true },
+  )
   await updateDoc(inviteRef, {
     claimed: true,
     claimedAtMs: Date.now(),
     claimedByUid: uid,
   })
   return familyId
+}
+
+/** Project-owner admin view of parent accounts (requires Firestore admin rule + signed-in admin). */
+export async function loadAdminParentAccounts(): Promise<AdminParentAccountRow[]> {
+  const user = auth.currentUser
+  if (!user || !isProjectAdmin(user)) {
+    throw new Error('Not authorized')
+  }
+  const snap = await getDocs(collection(db, COL.parentProfiles))
+  const rows = await Promise.all(
+    snap.docs.map(async (d) => {
+      const data = d.data()
+      const familyId = (data.familyId as string | undefined) ?? null
+      let deviceCount: number | null = null
+      if (familyId) {
+        try {
+          const devices = await getDocs(collection(db, COL.families, familyId, COL.devices))
+          deviceCount = devices.size
+        } catch {
+          deviceCount = null
+        }
+      }
+      return {
+        uid: d.id,
+        email: (data.email as string | undefined) ?? '',
+        familyId,
+        ownedFamilyId: (data.ownedFamilyId as string | undefined) ?? familyId,
+        registeredAt: data.registeredAt == null ? Number(data.createdAtMs ?? 0) || null : Number(data.registeredAt),
+        lastActiveAt: data.lastActiveAt == null ? null : Number(data.lastActiveAt),
+        lastLoginAt: data.lastLoginAt == null ? null : Number(data.lastLoginAt),
+        deviceCount,
+        plan: (data.plan as string | undefined) ?? null,
+        status: (data.status as string | undefined) ?? null,
+      } satisfies AdminParentAccountRow
+    }),
+  )
+  return rows.sort((a, b) => (b.registeredAt ?? 0) - (a.registeredAt ?? 0))
 }
 
 // ---------- Live viewing (WebRTC + quota) ----------

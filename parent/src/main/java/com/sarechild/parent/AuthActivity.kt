@@ -66,6 +66,7 @@ class AuthActivity : AppCompatActivity() {
             binding.loading.visibility = View.GONE
             result.onSuccess {
                 repo.recordLogin()
+                runCatching { repo.ensureParentProfile() }
                 goToDashboard()
             }.onFailure {
                 showError(it.message ?: "Auth failed")
@@ -81,6 +82,7 @@ class AuthActivity : AppCompatActivity() {
             binding.loading.visibility = View.GONE
             result.onSuccess {
                 repo.recordLogin()
+                runCatching { repo.ensureParentProfile() }
                 goToDashboard()
             }.onFailure {
                 val message = if (it is FirebaseAuthUserCollisionException) {
@@ -94,8 +96,12 @@ class AuthActivity : AppCompatActivity() {
     }
 
     private fun goToDashboard() {
-        startActivity(Intent(this@AuthActivity, DashboardActivity::class.java))
-        finish()
+        lifecycleScope.launch {
+            val needsTerms = runCatching { repo.needsTermsAcceptance() }.getOrDefault(true)
+            val target = if (needsTerms) TermsActivity::class.java else DashboardActivity::class.java
+            startActivity(Intent(this@AuthActivity, target))
+            finish()
+        }
     }
 
     private fun showError(message: String) {

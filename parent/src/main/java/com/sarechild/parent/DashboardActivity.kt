@@ -1318,6 +1318,7 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.WENT_DARK -> R.drawable.ic_offline
         AlertType.TAMPER, AlertType.PERMISSION_REVOKED, AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED,
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE -> R.drawable.ic_alert_shield
+        AlertType.LIVE_VIEW -> R.drawable.ic_alert_shield
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT,
         AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL, AlertType.TYPING_SAFETY,
         AlertType.CALL_RECORDING -> R.drawable.ic_alert_message
@@ -1333,7 +1334,7 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.WENT_DARK -> "Connection"
         AlertType.TAMPER, AlertType.PERMISSION_REVOKED -> "Device tampering"
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE,
-        AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED -> "Safety check"
+        AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED, AlertType.LIVE_VIEW -> "Safety check"
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> "Message safety"
         AlertType.TYPING_SAFETY -> "Typing safety"
         AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL -> "WhatsApp"

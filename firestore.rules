@@ -13,38 +13,28 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/families/$(familyId)).data;
     }
 
-    // Trial/subscription gate: a signed-in user with no parentProfile yet (brand-new
-    // signup, still writing their own bootstrap docs) is treated as active. Once a
-    // parentProfile exists, its `status` must not be "purged" — purged trial accounts
-    // (see purgeInactiveTrials Cloud Function) lose all family read/write access even
-    // though their Auth account and profile tombstone still exist for audit purposes.
-    // Uses .get(key, default) instead of direct field access everywhere below: a
-    // parentProfile written by an older client/repair script without every trial field
-    // (e.g. missing `status`) must never turn into a hard rules-evaluation error that
-    // denies the whole family — it should just fall back to "active".
+    function isProjectAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('(?i)^neuereatec@gmail.com$');
+    }
+
     function requesterActive() {
       return signedIn()
         && (!exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
           || parentProfile().get('status', 'active') != 'purged');
     }
 
-    // True for the parent who owns the family profile record (legacy check, kept
-    // for backward compatibility with existing profile.familyId linkage).
     function isFamilyParent(familyId) {
       return requesterActive()
         && exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
         && parentProfile().get('familyId', '') == familyId;
     }
 
-    // True only for the exact uid stored as families/{familyId}.parentUid.
     function isFamilyOwner(familyId) {
       return requesterActive() && familyDoc(familyId).get('parentUid', '') == request.auth.uid;
     }
 
-    // True for the parent/owner or any invited guardian (caregiver) of the family.
-    // Because every family subcollection rule below is gated on isFamilyGuardian (or
-    // isFamilyParent/isFamilyOwner), routing all three through requesterActive() is a
-    // single choke point that revokes a purged trial account's access everywhere.
     function isFamilyGuardian(familyId) {
       return isFamilyParent(familyId)
         || (requesterActive()
@@ -59,23 +49,26 @@ service cloud.firestore {
     }
 
     match /parentProfiles/{uid} {
-      // Always readable by the owner so a purged/expired user can see their own status
-      // (e.g. "trial expired" screen) even after losing family access.
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow create: if signedIn() && request.auth.uid == uid;
-      // A client may update its own profile (login/check-in timestamps, plan==trial
-      // bootstrap fields, FCM tokens) but can never use a write to un-purge itself or
-      // silently extend its own trial window — only the purge job / an Admin SDK
-      // script may change `status` away from "purged" or move `trialEndsAt`.
+      allow read: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['familyId', 'email'])
+        && get(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.get('parentUid', '')
+          == request.auth.uid;
       allow update: if signedIn() && request.auth.uid == uid
         && (resource.data.get('status', 'active') != 'purged'
           || request.resource.data.get('status', 'active') == 'purged')
         && (!('trialEndsAt' in resource.data)
-          || request.resource.data.trialEndsAt == resource.data.trialEndsAt);
+          || request.resource.data.trialEndsAt == resource.data.trialEndsAt)
+        && (!('familyId' in resource.data)
+          || request.resource.data.familyId == resource.data.familyId
+          || (isFamilyGuardian(request.resource.data.familyId)
+            && exists(/databases/$(database)/documents/families/$(request.resource.data.familyId)/guardians/$(request.auth.uid))));
     }
 
     match /families/{familyId} {
-      allow create: if requesterActive();
+      allow create: if requesterActive()
+        && request.resource.data.get('parentUid', '') == request.auth.uid;
       allow read: if isFamilyGuardian(familyId);
 
       match /devices/{deviceId} {
@@ -105,10 +98,6 @@ service cloud.firestore {
         allow write: if isFamilyGuardian(familyId);
       }
 
-      // Parent-authored map pins (Home/School/Work/Custom) shown on the Live Map
-      // control center. Read is also open to a signed-in device (like geofences
-      // above) so a future child-side "distance to school" feature can reuse it
-      // without a rules change.
       match /mapPlaces/{placeId} {
         allow read: if isFamilyGuardian(familyId) || signedIn();
         allow write: if isFamilyGuardian(familyId);
@@ -120,8 +109,6 @@ service cloud.firestore {
         allow update: if isFamilyGuardian(familyId) || signedIn();
       }
 
-      // Child device telemetry: the (anonymously signed-in) child app creates
-      // these; parents/guardians read them on the dashboard.
       match /appEvents/{eventId} {
         allow read: if isFamilyGuardian(familyId);
         allow create: if signedIn();
@@ -142,37 +129,26 @@ service cloud.firestore {
         allow create: if signedIn();
       }
 
-      // Call recording timeline (native Android MediaRecorder + phone state / VoIP notifications).
-      // Cordova call-recorder plugins are not used — child app writes these rows directly.
       match /callRecordings/{recordingId} {
         allow read: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
-      // Dedicated WhatsApp protection timeline (messages/calls/media events). Written by the
-      // (anonymously signed-in) child device; read by the parent's WhatsApp dashboard section.
       match /whatsappEvents/{eventId} {
         allow read, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
-      // Typing safety / message shield timeline (debounced on-screen text settles from
-      // monitored apps). Written by the (anonymously signed-in) child device; read by the
-      // parent's Typing safety dashboard section.
       match /typingEvents/{eventId} {
         allow read, update: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
-      // Parent-managed Typing safety rules (custom prohibited words, always-monitor /
-      // whitelist app lists, 360 mode, auto-block threshold). The child device only needs
-      // read access to enforce them; only a guardian may change them.
       match /typingSafetySettings/{docId} {
         allow read: if isFamilyGuardian(familyId) || signedIn();
         allow write: if isFamilyGuardian(familyId);
       }
 
-      // Written by the weeklySafetyDigest Cloud Function only.
       match /digests/{digestId} {
         allow read: if isFamilyGuardian(familyId);
         allow write: if false;
@@ -208,32 +184,23 @@ service cloud.firestore {
         allow write: if isFamilyGuardian(familyId);
       }
 
-      // WebRTC live viewing signaling (parent offer/answer + ICE) and session metadata.
       match /liveSessions/{sessionId} {
         allow read: if isFamilyGuardian(familyId) || signedIn();
         allow create: if isFamilyGuardian(familyId);
         allow update: if isFamilyGuardian(familyId) || signedIn();
       }
 
-      // Recorded live viewing sessions (R2 URL + metadata).
       match /liveRecordings/{recordingId} {
         allow read, delete: if isFamilyGuardian(familyId);
         allow create: if isFamilyGuardian(familyId) || signedIn();
       }
 
-      // Owner manages any guardian entry; a user may also write their own
-      // entry (used by signUp for the OWNER doc and acceptGuardianInvite for
-      // a CAREGIVER doc).
       match /guardians/{uid} {
         allow read: if isFamilyGuardian(familyId);
         allow write: if isFamilyOwner(familyId) || (requesterActive() && request.auth.uid == uid);
       }
     }
 
-    // Top-level so a caregiver can look up/claim an invite before they belong
-    // to the family. Only the family owner may create one; anyone signed in
-    // may read/claim (accept) it — matching resource.data.email is preferred
-    // but not required since not every auth provider verifies email.
     match /guardianInvites/{code} {
       allow read: if signedIn();
       allow create: if isFamilyOwner(request.resource.data.familyId);
@@ -242,16 +209,16 @@ service cloud.firestore {
 
     match /pairingCodes/{code} {
       allow read: if signedIn();
-      allow create: if requesterActive();
+      allow create: if requesterActive()
+        && isFamilyGuardian(request.resource.data.familyId);
       allow update: if signedIn();
     }
 
     match /keywordLists/{id} {
       allow read: if signedIn();
-      allow write: if false; // seed via Admin SDK / console
+      allow write: if false;
     }
 
-    // Daily live-view minute credits (1 credit = 1 minute). Parent reads/writes own doc.
     match /liveViewQuota/{uid} {
       allow read, create, update: if signedIn() && request.auth.uid == uid;
     }

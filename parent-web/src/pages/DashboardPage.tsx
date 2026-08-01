@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../AuthContext'
+import { isProjectAdmin } from '../lib/admin'
 import * as repo from '../lib/parentRepo'
 import { WENT_DARK_AFTER_MS } from '../firebase'
 import { LiveViewingSection } from '../components/LiveViewingSection'
@@ -21,6 +22,7 @@ import type {
   SosContact,
   TcdReport,
   TcdOverview,
+  AdminParentAccountRow,
   TypingSafetyEvent,
   TypingSafetySettings,
   UsageDaily,
@@ -179,6 +181,8 @@ export function DashboardPage() {
   const [safeIdentifier, setSafeIdentifier] = useState('')
   const [tcdReport, setTcdReport] = useState<TcdReport | null>(null)
   const [tcdOverview, setTcdOverview] = useState<TcdOverview | null>(null)
+  const [adminAccounts, setAdminAccounts] = useState<AdminParentAccountRow[] | null>(null)
+  const [adminAccountsError, setAdminAccountsError] = useState<string | null>(null)
   const [repairLog, setRepairLog] = useState<string[]>([])
 
   useEffect(() => {
@@ -792,6 +796,19 @@ export function DashboardPage() {
       setStatusMsg('Auto-repair completed and health re-checked.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to run auto-repair')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadAdminAccounts = async () => {
+    if (!isProjectAdmin(user)) return
+    setBusy(true)
+    setAdminAccountsError(null)
+    try {
+      setAdminAccounts(await repo.loadAdminParentAccounts())
+    } catch (e) {
+      setAdminAccountsError(e instanceof Error ? e.message : 'Failed to load parent accounts')
     } finally {
       setBusy(false)
     }
@@ -2731,6 +2748,56 @@ export function DashboardPage() {
                   title="No report yet"
                   body="Press Run health check to generate a live status report for this family."
                 />
+              )}
+
+              {isProjectAdmin(user) && (
+                <div className="card">
+                  <div className="card-head">
+                    <h3>Parent accounts (admin)</h3>
+                    <button className="btn ghost compact" type="button" disabled={busy} onClick={() => void loadAdminAccounts()}>
+                      Refresh list
+                    </button>
+                  </div>
+                  <p className="muted small">
+                    Project-owner view of registered parent profiles across all families.
+                  </p>
+                  {adminAccountsError && <p className="error">{adminAccountsError}</p>}
+                  {adminAccounts && adminAccounts.length === 0 && (
+                    <p className="muted small">No parent profiles found.</p>
+                  )}
+                  {adminAccounts && adminAccounts.length > 0 && (
+                    <div className="wa-table-wrap">
+                      <table className="wa-table">
+                        <thead>
+                          <tr>
+                            <th>Email</th>
+                            <th>Registered</th>
+                            <th>Last active</th>
+                            <th>Family</th>
+                            <th>Devices</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminAccounts.map((row) => (
+                            <tr key={row.uid}>
+                              <td>{row.email || row.uid.slice(0, 8)}</td>
+                              <td>
+                                {row.registeredAt ? new Date(row.registeredAt).toLocaleDateString() : '—'}
+                              </td>
+                              <td>
+                                {row.lastActiveAt ? new Date(row.lastActiveAt).toLocaleString() : '—'}
+                              </td>
+                              <td className="small">{row.familyId ?? '—'}</td>
+                              <td>{row.deviceCount ?? '—'}</td>
+                              <td>{row.status ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               )}
             </section>
           )}

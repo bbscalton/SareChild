@@ -1,10 +1,13 @@
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './AuthContext'
 import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
+import { TosGatePage } from './pages/TosGatePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { TrialExpiredPage } from './pages/TrialExpiredPage'
 
-export default function App() {
-  const { user, loading, trialInfo } = useAuth()
+function AuthedApp() {
+  const { user, loading, trialInfo, needsTerms } = useAuth()
 
   if (loading) {
     return (
@@ -14,11 +17,18 @@ export default function App() {
     )
   }
 
-  if (!user) return <LoginPage />
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    )
+  }
 
-  // Full features while status === "active" and the trial window hasn't elapsed yet.
-  // `trialInfo` briefly being null right after sign-in (profile still loading) is
-  // treated as active so the dashboard doesn't flash an expired screen.
+  if (needsTerms) return <TosGatePage />
+
   const now = Date.now()
   const blocked =
     trialInfo != null &&
@@ -27,5 +37,17 @@ export default function App() {
 
   if (blocked && trialInfo) return <TrialExpiredPage trialInfo={trialInfo} />
 
-  return <DashboardPage />
+  return (
+    <Routes>
+      <Route path="*" element={<DashboardPage />} />
+    </Routes>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthedApp />
+    </BrowserRouter>
+  )
 }

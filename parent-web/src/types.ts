@@ -288,6 +288,34 @@ export type TrialInfo = {
   lastParentCheckInAt: number | null
 }
 
+/** Mirrors parentProfiles/{uid} fields used for registration, legal acceptance, and admin views. */
+export type ParentProfileInfo = {
+  familyId: string | null
+  ownedFamilyId: string | null
+  email: string
+  createdAtMs: number
+  registeredAt: number | null
+  tosAcceptedAt: number | null
+  tosVersion: string | null
+  privacyAcceptedAt: number | null
+  lastLoginAt: number | null
+  lastActiveAt: number | null
+  trial: TrialInfo | null
+}
+
+export type AdminParentAccountRow = {
+  uid: string
+  email: string
+  familyId: string | null
+  ownedFamilyId: string | null
+  registeredAt: number | null
+  lastActiveAt: number | null
+  lastLoginAt: number | null
+  deviceCount: number | null
+  plan: string | null
+  status: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Typing safety / message shield section (families/{familyId}/typingEvents +
 // .../typingSafetySettings). Written by the child app from on-screen text exposed via
