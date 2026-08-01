@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ArchNode, TcdCheck, TcdCheckStatus } from './types'
+
+/** Bump when architecture layout changes — visible in DOM for cache-bust verification */
+export const ARCH_LAYOUT_VERSION = 'arch-map-v4-20260801'
 
 type NodeDef = {
   id: string
@@ -12,29 +15,20 @@ type NodeDef = {
   siteIds?: string[]
 }
 
-type EdgeDef = {
-  from: string
-  to: string
-  verb?: string
-  flows?: FlowId[]
-  /** Shown only when a flow guide is active, or on edge hover */
-  optional?: boolean
-}
-
 type FlowId = 'pairing' | 'liveView' | 'deploy'
 
-const COLUMNS: { id: NodeDef['column']; header: string }[] = [
-  { id: 'apps', header: '1. Apps' },
-  { id: 'firebase', header: '2. Firebase' },
-  { id: 'cloudflare', header: '3. Cloudflare' },
-  { id: 'ops', header: '4. Hosting & tools' },
+const COLUMNS: { id: NodeDef['column']; header: string; num: string }[] = [
+  { id: 'apps', num: '1', header: 'Apps' },
+  { id: 'firebase', num: '2', header: 'Firebase' },
+  { id: 'cloudflare', num: '3', header: 'Cloudflare' },
+  { id: 'ops', num: '4', header: 'Hosting & admin' },
 ]
 
 const NODES: NodeDef[] = [
   {
     id: 'parent-web',
     label: 'Parent web',
-    subtitle: 'Website for guardians',
+    subtitle: 'Guardian dashboard in the browser.',
     group: 'client',
     column: 'apps',
     url: 'parent-web',
@@ -43,7 +37,7 @@ const NODES: NodeDef[] = [
   {
     id: 'parent-apk',
     label: 'Parent app',
-    subtitle: 'Android app for parents',
+    subtitle: 'Android app for parents on the go.',
     group: 'client',
     column: 'apps',
     checkIds: ['parent-apk'],
@@ -51,7 +45,7 @@ const NODES: NodeDef[] = [
   {
     id: 'child-apk',
     label: 'Child app',
-    subtitle: 'Phone on the kid',
+    subtitle: 'Runs on the child phone and reports status.',
     group: 'client',
     column: 'apps',
     checkIds: ['child-apk'],
@@ -59,7 +53,7 @@ const NODES: NodeDef[] = [
   {
     id: 'firebase-auth',
     label: 'Firebase Auth',
-    subtitle: 'Sign-in & accounts',
+    subtitle: 'Sign-in and secure account sessions.',
     group: 'firebase',
     column: 'firebase',
     checkIds: ['firebase-auth'],
@@ -67,7 +61,7 @@ const NODES: NodeDef[] = [
   {
     id: 'firestore',
     label: 'Firestore',
-    subtitle: 'Family & device data',
+    subtitle: 'Family links, devices, and alert records.',
     group: 'firebase',
     column: 'firebase',
     checkIds: ['firestore-family', 'alerts-read'],
@@ -75,14 +69,14 @@ const NODES: NodeDef[] = [
   {
     id: 'fcm',
     label: 'Cloud Messaging',
-    subtitle: 'Push alerts to phones',
+    subtitle: 'Push notifications to parent and child apps.',
     group: 'firebase',
     column: 'firebase',
   },
   {
     id: 'functions',
     label: 'Cloud Functions',
-    subtitle: 'Server-side jobs',
+    subtitle: 'Background jobs and server-side logic.',
     group: 'firebase',
     column: 'firebase',
     checkIds: ['functions-health'],
@@ -90,7 +84,7 @@ const NODES: NodeDef[] = [
   {
     id: 'firebase-hosting',
     label: 'Firebase Hosting',
-    subtitle: 'Serves parent web app',
+    subtitle: 'Delivers the parent web app to browsers.',
     group: 'hosting',
     column: 'firebase',
     siteIds: ['parent-web'],
@@ -98,7 +92,7 @@ const NODES: NodeDef[] = [
   {
     id: 'cf-worker',
     label: 'Cloudflare Worker',
-    subtitle: 'Live video & API edge',
+    subtitle: 'Live video API and edge request routing.',
     group: 'edge',
     column: 'cloudflare',
     checkIds: ['platform-health', 'r2-proxy'],
@@ -106,7 +100,7 @@ const NODES: NodeDef[] = [
   {
     id: 'r2',
     label: 'R2 storage',
-    subtitle: 'Camera frames & media',
+    subtitle: 'Camera frames and media blobs.',
     group: 'edge',
     column: 'cloudflare',
     checkIds: ['r2-proxy', 'parent-apk', 'child-apk'],
@@ -114,7 +108,7 @@ const NODES: NodeDef[] = [
   {
     id: 'd1',
     label: 'D1 database',
-    subtitle: 'Structured edge data',
+    subtitle: 'Structured data at the edge.',
     group: 'edge',
     column: 'cloudflare',
     checkIds: ['platform-health'],
@@ -122,7 +116,7 @@ const NODES: NodeDef[] = [
   {
     id: 'kv',
     label: 'KV cache',
-    subtitle: 'Fast edge lookups',
+    subtitle: 'Fast edge key-value lookups.',
     group: 'edge',
     column: 'cloudflare',
     checkIds: ['platform-health'],
@@ -130,7 +124,7 @@ const NODES: NodeDef[] = [
   {
     id: 'gh-pages',
     label: 'GitHub Pages',
-    subtitle: 'Public marketing site',
+    subtitle: 'Public marketing site and docs.',
     group: 'hosting',
     column: 'ops',
     siteIds: ['marketing-site', 'tcd-page'],
@@ -138,7 +132,7 @@ const NODES: NodeDef[] = [
   {
     id: 'tcd',
     label: 'TCD console',
-    subtitle: 'This admin dashboard',
+    subtitle: 'This operator dashboard you are using.',
     group: 'hosting',
     column: 'ops',
     siteIds: ['tcd-page'],
@@ -146,52 +140,42 @@ const NODES: NodeDef[] = [
   {
     id: 'google-maps',
     label: 'Google Maps',
-    subtitle: 'Location on maps',
+    subtitle: 'Map tiles for live location views.',
     group: 'external',
     column: 'ops',
     checkIds: ['google-maps'],
   },
 ]
 
-/** Nearest-neighbor column bridges — always visible, no labels */
-const COLUMN_EDGES: EdgeDef[] = [
-  { from: 'parent-apk', to: 'firestore', optional: true },
-  { from: 'firestore', to: 'cf-worker', optional: true },
-  { from: 'cf-worker', to: 'tcd', optional: true },
-]
-
-const FLOW_EDGES: Record<FlowId, EdgeDef[]> = {
-  pairing: [
-    { from: 'child-apk', to: 'firestore', verb: 'register' },
-    { from: 'parent-apk', to: 'firebase-auth', verb: 'sign in' },
-    { from: 'parent-apk', to: 'firestore', verb: 'link family' },
-    { from: 'parent-web', to: 'firebase-auth', verb: 'sign in' },
-    { from: 'parent-web', to: 'firestore', verb: 'link family' },
-  ],
-  liveView: [
-    { from: 'child-apk', to: 'r2', verb: 'upload frames' },
-    { from: 'cf-worker', to: 'r2', verb: 'read frames' },
-    { from: 'parent-web', to: 'cf-worker', verb: 'watch live' },
-    { from: 'parent-apk', to: 'cf-worker', verb: 'watch live' },
-  ],
-  deploy: [
-    { from: 'firebase-hosting', to: 'parent-web', verb: 'publish web' },
-    { from: 'gh-pages', to: 'tcd', verb: 'publish TCD' },
-  ],
-}
-
-const FLOW_META: Record<FlowId, { label: string; hint: string }> = {
+const FLOW_META: Record<FlowId, { label: string; hint: string; steps: string[]; nodeIds: string[] }> = {
   pairing: {
-    label: 'Show pairing path',
-    hint: 'Child registers → parents sign in → family link saved in Firestore.',
+    label: 'Pairing',
+    hint: 'How a new child phone joins a family.',
+    steps: [
+      'Child app registers the device in Firestore.',
+      'Parent signs in through Firebase Auth (app or web).',
+      'Parent links the family record so both sides share data.',
+    ],
+    nodeIds: ['child-apk', 'parent-apk', 'parent-web', 'firebase-auth', 'firestore'],
   },
   liveView: {
-    label: 'Show live viewing path',
-    hint: 'Child uploads camera frames → edge worker streams them to parent apps.',
+    label: 'Live viewing',
+    hint: 'How parents watch a live camera feed.',
+    steps: [
+      'Child app uploads camera frames to R2 storage.',
+      'Cloudflare Worker reads frames and serves the stream.',
+      'Parent web or app connects to the Worker to watch live.',
+    ],
+    nodeIds: ['child-apk', 'r2', 'cf-worker', 'parent-web', 'parent-apk'],
   },
   deploy: {
-    label: 'Show website deploy path',
-    hint: 'Builds publish to Firebase Hosting & GitHub Pages → live sites update.',
+    label: 'Deploy',
+    hint: 'How website builds reach production.',
+    steps: [
+      'CI builds publish the parent web app to Firebase Hosting.',
+      'Marketing site and this TCD console deploy to GitHub Pages.',
+    ],
+    nodeIds: ['firebase-hosting', 'parent-web', 'gh-pages', 'tcd'],
   },
 }
 
@@ -242,31 +226,6 @@ export function buildArchNodes(
   }))
 }
 
-type NodeRect = { cx: number; cy: number; right: number; left: number }
-
-function edgeKey(from: string, to: string): string {
-  return `${from}→${to}`
-}
-
-/** Gentle orthogonal path: horizontal exit → vertical → horizontal entry */
-function buildOrthPath(a: NodeRect, b: NodeRect): string {
-  const x1 = a.right
-  const y1 = a.cy
-  const x2 = b.left
-  const y2 = b.cy
-  const midX = (x1 + x2) / 2
-  return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`
-}
-
-function labelPoint(a: NodeRect, b: NodeRect): { x: number; y: number } {
-  const x1 = a.right
-  const y1 = a.cy
-  const x2 = b.left
-  const y2 = b.cy
-  const midX = (x1 + x2) / 2
-  return { x: midX, y: (y1 + y2) / 2 - 8 }
-}
-
 export function ArchitectureTree({
   nodes,
   selectedId,
@@ -278,115 +237,59 @@ export function ArchitectureTree({
   onSelect: (id: string) => void
   loading?: boolean
 }) {
-  const boardRef = useRef<HTMLDivElement>(null)
-  const nodeRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
-  const [rects, setRects] = useState<Map<string, NodeRect>>(new Map())
-  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null)
   const [activeFlow, setActiveFlow] = useState<FlowId | null>(null)
   const [revealed, setRevealed] = useState(false)
-  const [stacked, setStacked] = useState(false)
 
   useEffect(() => {
     const t = window.setTimeout(() => setRevealed(true), 60)
     return () => window.clearTimeout(t)
   }, [])
 
-  const measure = useCallback(() => {
-    const board = boardRef.current
-    if (!board) return
-    const boardBox = board.getBoundingClientRect()
-    const next = new Map<string, NodeRect>()
-    nodeRefs.current.forEach((el, id) => {
-      const box = el.getBoundingClientRect()
-      next.set(id, {
-        cx: box.left + box.width / 2 - boardBox.left,
-        cy: box.top + box.height / 2 - boardBox.top,
-        right: box.right - boardBox.left,
-        left: box.left - boardBox.left,
-      })
-    })
-    setRects(next)
-    setStacked(window.matchMedia('(max-width: 860px)').matches)
-  }, [])
-
-  useLayoutEffect(() => {
-    measure()
-    const board = boardRef.current
-    if (!board) return
-    const ro = new ResizeObserver(measure)
-    ro.observe(board)
-    window.addEventListener('resize', measure)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', measure)
-    }
-  }, [measure])
-
   const archMap = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
-
-  const visibleEdges = useMemo(() => {
-    if (activeFlow) return FLOW_EDGES[activeFlow]
-    return COLUMN_EDGES
-  }, [activeFlow])
-
-  const highlightEdgeKeys = useMemo(() => {
-    if (activeFlow) {
-      return new Set(FLOW_EDGES[activeFlow].map(({ from, to }) => edgeKey(from, to)))
-    }
-    return null
-  }, [activeFlow])
 
   const highlightNodes = useMemo(() => {
     if (!activeFlow) return null
-    const set = new Set<string>()
-    FLOW_EDGES[activeFlow].forEach(({ from, to }) => {
-      set.add(from)
-      set.add(to)
-    })
-    return set
+    return new Set(FLOW_META[activeFlow].nodeIds)
   }, [activeFlow])
 
   const toggleFlow = useCallback((flow: FlowId) => {
     setActiveFlow((prev) => (prev === flow ? null : flow))
   }, [])
 
-  const setNodeRef = useCallback((id: string, el: HTMLButtonElement | null) => {
-    if (el) nodeRefs.current.set(id, el)
-    else nodeRefs.current.delete(id)
-  }, [])
-
   const probesPending = loading || nodes.length === 0
   const selected = selectedId ? archMap.get(selectedId) : null
-  const svgSize = boardRef.current
-    ? { w: boardRef.current.clientWidth, h: boardRef.current.clientHeight }
-    : { w: 0, h: 0 }
+  const activeMeta = activeFlow ? FLOW_META[activeFlow] : null
 
   return (
-    <div className={`tcd-arch-wrap ${revealed ? 'is-revealed' : ''}`}>
+    <div
+      className={`tcd-arch-wrap ${revealed ? 'is-revealed' : ''}`}
+      data-arch-version={ARCH_LAYOUT_VERSION}
+    >
       <p className="tcd-arch-intro">
-        This map shows how SareChild pieces talk to each other. Left = phones &amp; websites.
-        Middle = databases &amp; cloud. Right = where the admin tools live.
+        SareChild connects phones, cloud services, and hosting in four layers. Each card shows live
+        health from probes — green is healthy, amber needs attention, red needs a fix. Pick a flow
+        below to see how data moves for common tasks.
       </p>
 
       <div className="tcd-arch-toolbar">
-        <div className="tcd-arch-flows" role="group" aria-label="Architecture flow guides">
+        <div className="tcd-arch-flow-tabs" role="tablist" aria-label="Architecture flow guides">
           {(Object.keys(FLOW_META) as FlowId[]).map((flow) => (
             <button
               key={flow}
               type="button"
-              className={`tcd-arch-flow-btn ${activeFlow === flow ? 'active' : ''}`}
+              role="tab"
+              aria-selected={activeFlow === flow}
+              className={`tcd-arch-flow-tab ${activeFlow === flow ? 'is-active' : ''}`}
               onClick={() => toggleFlow(flow)}
-              aria-pressed={activeFlow === flow}
             >
               {FLOW_META[flow].label}
-              {activeFlow === flow ? ' ✕' : ''}
             </button>
           ))}
         </div>
         <p className="tcd-arch-flow-hint">
-          {activeFlow
-            ? FLOW_META[activeFlow].hint
-            : 'Tap a component for health details. Use the buttons above to highlight a common data path.'}
+          {activeMeta
+            ? activeMeta.hint
+            : 'Select a component for probe details. Use the tabs above to highlight a common data path.'}
         </p>
       </div>
 
@@ -397,60 +300,21 @@ export function ArchitectureTree({
         </div>
       )}
 
-      <div className="tcd-arch-board-wrap">
-        <div className="tcd-arch-board" ref={boardRef}>
-          {!stacked && svgSize.w > 0 && svgSize.h > 0 && (
-            <svg
-              className="tcd-arch-edges-svg"
-              width={svgSize.w}
-              height={svgSize.h}
-              aria-hidden="true"
-            >
-              <defs>
-                <marker id="arch-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" className="tcd-arch-arrowhead" />
-                </marker>
-                <marker id="arch-arrow-hot" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" className="tcd-arch-arrowhead-hot" />
-                </marker>
-              </defs>
-              {visibleEdges.map(({ from, to, verb, optional }) => {
-                const a = rects.get(from)
-                const b = rects.get(to)
-                if (!a || !b) return null
-                const key = edgeKey(from, to)
-                const hot = highlightEdgeKeys?.has(key) ?? !optional
-                const dimmed = highlightEdgeKeys != null && !hot
-                const showLabel = Boolean(verb && (hot || hoveredEdge === key))
-                return (
-                  <g
-                    key={key}
-                    className={`tcd-arch-edge-group ${hot ? 'hot' : ''} ${dimmed ? 'dimmed' : ''}`}
-                    onMouseEnter={() => setHoveredEdge(key)}
-                    onMouseLeave={() => setHoveredEdge(null)}
-                  >
-                    <path
-                      d={buildOrthPath(a, b)}
-                      className="tcd-arch-edge"
-                      markerEnd={hot ? 'url(#arch-arrow-hot)' : 'url(#arch-arrow)'}
-                      fill="none"
-                    />
-                    {showLabel && verb && (
-                      <text x={labelPoint(a, b).x} y={labelPoint(a, b).y} className="tcd-arch-edge-label" textAnchor="middle">
-                        {verb}
-                      </text>
-                    )}
-                  </g>
-                )
-              })}
-            </svg>
-          )}
-
-          <div className="tcd-arch-columns">
-            {COLUMNS.map((col) => (
-              <section key={col.id} className={`tcd-arch-col col-${col.id}`} aria-label={col.header}>
-                <h3 className="tcd-arch-col-header">{col.header}</h3>
-                <div className="tcd-arch-col-nodes">
+      <div className="tcd-arch-map-scroll">
+        <div className="tcd-arch-map" role="list" aria-label="System architecture map">
+          {COLUMNS.map((col, colIndex) => (
+            <div key={col.id} className="tcd-arch-map-segment">
+              {colIndex > 0 && (
+                <div className="tcd-arch-step-arrow" aria-hidden="true">
+                  <span className="tcd-arch-step-arrow-icon" />
+                </div>
+              )}
+              <section className={`tcd-arch-step-col col-${col.id}`} aria-label={`${col.num}. ${col.header}`}>
+                <header className="tcd-arch-step-header">
+                  <span className="tcd-arch-step-num">{col.num}</span>
+                  <span className="tcd-arch-step-title">{col.header}</span>
+                </header>
+                <div className="tcd-arch-step-cards">
                   {NODES.filter((n) => n.column === col.id).map((n) => {
                     const arch = archMap.get(n.id)
                     const status = arch?.status ?? 'warn'
@@ -460,55 +324,77 @@ export function ArchitectureTree({
                     return (
                       <button
                         key={n.id}
-                        ref={(el) => setNodeRef(n.id, el)}
                         type="button"
-                        className={`tcd-arch-card-node group-${n.group} status-${status} ${isSelected ? 'selected' : ''} ${inFlow ? 'flow-hot' : ''} ${dimmed ? 'flow-dimmed' : ''}`}
+                        role="listitem"
+                        className={[
+                          'tcd-arch-component-card',
+                          `group-${n.group}`,
+                          `status-${status}`,
+                          isSelected ? 'is-selected' : '',
+                          inFlow ? 'is-flow-active' : '',
+                          dimmed ? 'is-flow-dimmed' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
                         onClick={() => onSelect(n.id)}
                         aria-pressed={isSelected}
                         aria-label={`${n.label}, status ${STATUS_LABEL[status]}`}
                       >
-                        <span className={`tcd-arch-status-badge status-${status}`} aria-hidden="true">
+                        <span className={`tcd-arch-status-pill status-${status}`} aria-hidden="true">
                           {STATUS_LABEL[status]}
                         </span>
-                        <span className="tcd-arch-card-title">{n.label}</span>
-                        <span className="tcd-arch-card-sub">{n.subtitle}</span>
+                        <span className="tcd-arch-component-title">{n.label}</span>
+                        <span className="tcd-arch-component-desc">{n.subtitle}</span>
                       </button>
                     )
                   })}
                 </div>
               </section>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
 
+      {activeMeta && (
+        <div className="tcd-arch-data-flow" aria-live="polite">
+          <h4 className="tcd-arch-data-flow-title">How data moves — {activeMeta.label}</h4>
+          <ol className="tcd-arch-data-flow-list">
+            {activeMeta.steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+
       <div className="tcd-arch-legend">
         <span className="tcd-arch-legend-item">
-          <span className="tcd-arch-legend-badge status-ok">OK</span> Healthy
+          <span className="tcd-arch-legend-pill status-ok">OK</span> Healthy
         </span>
         <span className="tcd-arch-legend-item">
-          <span className="tcd-arch-legend-badge status-warn">WARN</span> Check soon
+          <span className="tcd-arch-legend-pill status-warn">WARN</span> Check soon
         </span>
         <span className="tcd-arch-legend-item">
-          <span className="tcd-arch-legend-badge status-fail">FAIL</span> Needs fix
+          <span className="tcd-arch-legend-pill status-fail">FAIL</span> Needs fix
         </span>
       </div>
 
       <div className={`tcd-arch-detail ${selected ? 'has-selection' : ''}`}>
         {selected ? (
           <>
-            <strong>{selected.label}</strong>
-            <span className={`tcd-arch-detail-badge status-${selected.status}`}>
+            <strong className="tcd-arch-detail-name">{selected.label}</strong>
+            <span className={`tcd-arch-detail-pill status-${selected.status}`}>
               {STATUS_LABEL[selected.status]}
             </span>
             {selected.detail ? (
-              <p className="muted small">{selected.detail}</p>
+              <p className="tcd-arch-detail-text">{selected.detail}</p>
             ) : (
-              <p className="muted small">No probe wired for this component — inferred healthy or not monitored.</p>
+              <p className="tcd-arch-detail-text">
+                No probe wired for this component — inferred healthy or not monitored.
+              </p>
             )}
           </>
         ) : (
-          <p className="muted small tcd-arch-detail-empty">Select a component to see live probe details.</p>
+          <p className="tcd-arch-detail-empty">Select a component to see live probe details.</p>
         )}
       </div>
     </div>

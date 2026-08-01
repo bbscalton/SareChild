@@ -12,6 +12,11 @@ const base = process.env.GITHUB_PAGES === 'true' ? '/SareChild/' : '/'
 export default defineConfig({
   plugins: [react()],
   base,
+  resolve: {
+    alias: {
+      '@marketing-tcd': resolve(__dirname, '../marketing/src/tcd'),
+    },
+  },
   build: {
     rollupOptions: {
       input: {

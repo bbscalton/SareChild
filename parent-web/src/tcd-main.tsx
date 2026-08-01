@@ -1,13 +1,16 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { AuthProvider } from './AuthContext'
-import { TcdStandalonePage } from './pages/TcdStandalonePage'
-import './index.css'
+import '../../marketing/src/index.css'
+import '../../marketing/src/tcd/tcd.css'
+import { AuthProvider } from '../../marketing/src/tcd/authContext'
+import { TcdApp } from '../../marketing/src/tcd/TcdApp'
+
+document.body.classList.add('tcd-body')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthProvider>
-      <TcdStandalonePage />
+      <TcdApp />
     </AuthProvider>
   </StrictMode>,
 )
