@@ -12,6 +12,8 @@ import com.sarechild.shared.AlertType
 import com.sarechild.shared.AppBlockSchedule
 import com.sarechild.shared.AppLimit
 import com.sarechild.shared.BatterySample
+import com.sarechild.shared.CallRecordingEvent
+import com.sarechild.shared.CallRecordingType
 import com.sarechild.shared.CallSmsPreview
 import com.sarechild.shared.DeviceStatus
 import com.sarechild.shared.FamilyAlert
@@ -32,7 +34,10 @@ import com.sarechild.shared.ScreenShareSchedule
 import com.sarechild.shared.SafeContact
 import com.sarechild.shared.SosContact
 import com.sarechild.shared.UsageAppEntry
+import com.sarechild.shared.TypingSafetyEvent
 import com.sarechild.shared.WeeklyDigest
+import com.sarechild.shared.WhatsAppEvent
+import com.sarechild.shared.WhatsAppEventType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -976,6 +981,117 @@ class ParentRepository(
             ).await()
         inviteRef.update(mapOf("claimed" to true, "claimedByUid" to uid, "claimedAtMs" to System.currentTimeMillis())).await()
         familyId
+    }
+
+    fun observeWhatsAppEvents(familyId: String): Flow<List<WhatsAppEvent>> = callbackFlow {
+        val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
+            .orderBy("createdAtMs", Query.Direction.DESCENDING)
+            .limit(300)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val rows = snap?.documents?.map { doc ->
+                    WhatsAppEvent(
+                        id = doc.id,
+                        deviceId = doc.getString("deviceId") ?: "",
+                        eventType = runCatching {
+                            WhatsAppEventType.valueOf(doc.getString("eventType") ?: "MESSAGE")
+                        }.getOrDefault(WhatsAppEventType.MESSAGE),
+                        contactLabel = doc.getString("contactLabel") ?: "Unknown contact",
+                        contactSafe = doc.getBoolean("contactSafe") ?: false,
+                        direction = doc.getString("direction") ?: "IN",
+                        preview = doc.getString("preview"),
+                        mediaUrl = doc.getString("mediaUrl"),
+                        mediaType = doc.getString("mediaType"),
+                        durationSec = doc.getLong("durationSec")?.toInt(),
+                        riskScore = doc.getLong("riskScore")?.toInt(),
+                        riskFlag = doc.getBoolean("riskFlag") ?: false,
+                        source = doc.getString("source") ?: "notification",
+                        createdAtMs = doc.getLong("createdAtMs") ?: 0L
+                    )
+                } ?: emptyList()
+                trySend(rows)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    fun observeCallRecordings(familyId: String): Flow<List<CallRecordingEvent>> = callbackFlow {
+        val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_CALL_RECORDINGS)
+            .orderBy("createdAtMs", Query.Direction.DESCENDING)
+            .limit(200)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val rows = snap?.documents?.map { doc ->
+                    CallRecordingEvent(
+                        id = doc.id,
+                        deviceId = doc.getString("deviceId") ?: "",
+                        callType = runCatching {
+                            CallRecordingType.valueOf(doc.getString("callType") ?: "CELLULAR")
+                        }.getOrDefault(CallRecordingType.CELLULAR),
+                        direction = doc.getString("direction") ?: "UNKNOWN",
+                        numberMasked = doc.getString("numberMasked"),
+                        contactLabel = doc.getString("contactLabel"),
+                        packageName = doc.getString("packageName"),
+                        durationSec = (doc.getLong("durationSec") ?: 0L).toInt(),
+                        audioUrl = doc.getString("audioUrl"),
+                        audioCaptured = doc.getBoolean("audioCaptured") ?: false,
+                        audioSourceNote = doc.getString("audioSourceNote"),
+                        createdAtMs = doc.getLong("createdAtMs") ?: 0L
+                    )
+                } ?: emptyList()
+                trySend(rows)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    fun observeTypingSafetyEvents(familyId: String): Flow<List<TypingSafetyEvent>> = callbackFlow {
+        val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_TYPING_EVENTS)
+            .orderBy("createdAtMs", Query.Direction.DESCENDING)
+            .limit(300)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val rows = snap?.documents?.map { doc ->
+                    @Suppress("UNCHECKED_CAST")
+                    val matched = (doc.get("matchedWords") as? List<String>) ?: emptyList()
+                    TypingSafetyEvent(
+                        id = doc.id,
+                        deviceId = doc.getString("deviceId") ?: "",
+                        packageName = doc.getString("packageName") ?: "",
+                        appLabel = doc.getString("appLabel") ?: doc.getString("packageName") ?: "Unknown app",
+                        snippet = doc.getString("snippet") ?: "",
+                        matchedWords = matched,
+                        category = doc.getString("category"),
+                        severity = runCatching {
+                            AlertSeverity.valueOf(doc.getString("severity") ?: "LOW")
+                        }.getOrDefault(AlertSeverity.LOW),
+                        riskScore = (doc.getLong("riskScore") ?: 0L).toInt(),
+                        mode = doc.getString("mode") ?: "communication",
+                        reviewed = doc.getBoolean("reviewed") ?: false,
+                        createdAtMs = doc.getLong("createdAtMs") ?: 0L
+                    )
+                } ?: emptyList()
+                trySend(rows)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    suspend fun markTypingEventReviewed(familyId: String, eventId: String) {
+        db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_TYPING_EVENTS)
+            .document(eventId)
+            .update("reviewed", true)
+            .await()
     }
 
     /** Seeds keywordLists/default once if missing (uses open test-mode rules until you deploy strict rules). */

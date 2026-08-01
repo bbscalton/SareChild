@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import androidx.browser.customtabs.CustomTabsIntent
 import android.text.InputType
 import android.text.format.DateUtils
 import android.view.Gravity
@@ -45,6 +46,7 @@ import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
 import com.sarechild.shared.AppBlockSchedule
 import com.sarechild.shared.AppLimit
+import com.sarechild.shared.CallRecordingEvent
 import com.sarechild.shared.CallSmsPreview
 import com.sarechild.shared.DeviceStatus
 import com.sarechild.shared.FamilyAlert
@@ -57,7 +59,10 @@ import com.sarechild.shared.ScreenShareSchedule
 import com.sarechild.shared.SafeContact
 import com.sarechild.shared.SareChildConstants
 import com.sarechild.shared.SosContact
+import com.sarechild.shared.TypingSafetyEvent
 import com.sarechild.shared.WeeklyDigest
+import com.sarechild.shared.WhatsAppEvent
+import com.sarechild.shared.WhatsAppEventType
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -88,6 +93,16 @@ class DashboardActivity : AppCompatActivity() {
     private var safetySettings: FamilySafetySettings = FamilySafetySettings()
     private var screenShareSchedules: List<ScreenShareSchedule> = emptyList()
     private var screenShareDurationMinutes = 10
+    private var whatsAppEvents: List<WhatsAppEvent> = emptyList()
+    private var callRecordings: List<CallRecordingEvent> = emptyList()
+    private var typingEvents: List<TypingSafetyEvent> = emptyList()
+    private var whatsAppFilter: WhatsAppFilter = WhatsAppFilter.ALL
+    private var typingFilter: TypingFilter = TypingFilter.ALL
+    private var callRecordingFilter: CallRecordingFilter = CallRecordingFilter.ALL
+
+    private enum class WhatsAppFilter { ALL, UNKNOWN, CALLS, MEDIA }
+    private enum class TypingFilter { ALL, FLAGGED, UNREVIEWED }
+    private enum class CallRecordingFilter { ALL, CELLULAR, VOIP, MISSED }
 
     private val addressCache = mutableMapOf<String, String?>()
     private val mapBitmapCache = mutableMapOf<String, Bitmap?>()
@@ -213,6 +228,7 @@ class DashboardActivity : AppCompatActivity() {
                 Triple("home", "Home", "\uD83C\uDFE0"),
                 Triple("alerts", "Alerts", "\uD83D\uDD14"),
                 Triple("chat", "Chat", "\uD83D\uDCAC"),
+                Triple("livemap", "Live map", "\uD83D\uDEF0\uFE0F"),
                 Triple("map", "Map & locations", "\uD83D\uDCCD"),
             )
         )
@@ -221,6 +237,24 @@ class DashboardActivity : AppCompatActivity() {
             listOf(
                 Triple("pair", "Pair a device", "\uD83D\uDCF1"),
                 Triple("guardians", "Guardians", "\uD83D\uDC6A"),
+            )
+        )
+        addGroup(
+            "WhatsApp protection",
+            listOf(
+                Triple("whatsapp", "WhatsApp", "\uD83D\uDFE2"),
+            )
+        )
+        addGroup(
+            "Communication",
+            listOf(
+                Triple("callrecording", "Call recording", "\uD83D\uDCDE"),
+            )
+        )
+        addGroup(
+            "Typing safety",
+            listOf(
+                Triple("typing", "Typing safety", "\u2328\uFE0F"),
             )
         )
         addGroup(
@@ -239,6 +273,20 @@ class DashboardActivity : AppCompatActivity() {
         }
         container.addView(spacer)
         container.addView(sidebarDivider())
+        container.addView(
+            MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "Open full web dashboard"
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_text))
+                strokeColor = android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_divider)
+                )
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.setMargins(dp(20), dp(14), dp(20), dp(8)) }
+                setOnClickListener { openWebDashboard() }
+            }
+        )
         container.addView(
             MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                 text = "Sign out"
@@ -507,6 +555,24 @@ class DashboardActivity : AppCompatActivity() {
                     if (currentSection == "safety") refreshSection()
                 }
             }
+            launch {
+                repo.observeWhatsAppEvents(familyId).collectLatest {
+                    whatsAppEvents = it
+                    if (currentSection == "whatsapp") refreshSection()
+                }
+            }
+            launch {
+                repo.observeCallRecordings(familyId).collectLatest {
+                    callRecordings = it
+                    if (currentSection == "callrecording") refreshSection()
+                }
+            }
+            launch {
+                repo.observeTypingSafetyEvents(familyId).collectLatest {
+                    typingEvents = it
+                    if (currentSection == "typing") refreshSection()
+                }
+            }
             // Device "went dark" is a function of wall-clock time, not a new write, so
             // heartbeats stopping wouldn't otherwise refresh the Online/Offline pill.
             launch {
@@ -536,7 +602,11 @@ class DashboardActivity : AppCompatActivity() {
             "home" -> showHomeTab(container)
             "alerts" -> showAlertsTab(container)
             "chat" -> showChatTab(container)
+            "livemap" -> showLiveMapTab(container)
             "map" -> showMapTab(container)
+            "whatsapp" -> showWhatsAppTab(container)
+            "callrecording" -> showCallRecordingTab(container)
+            "typing" -> showTypingTab(container)
             "safety" -> showSafetyTab(container)
             "usage" -> showUsageTab(container)
             "digests" -> showDigestsTab(container)
@@ -551,7 +621,11 @@ class DashboardActivity : AppCompatActivity() {
         "home" -> "SareChild"
         "alerts" -> "Alerts"
         "chat" -> "Family chat"
+        "livemap" -> "Live map"
         "map" -> "Map & locations"
+        "whatsapp" -> "WhatsApp protection"
+        "callrecording" -> "Call recording"
+        "typing" -> "Typing safety"
         "safety" -> "Safety checks"
         "usage" -> "App usage & limits"
         "digests" -> "Weekly digests"
@@ -559,6 +633,286 @@ class DashboardActivity : AppCompatActivity() {
         "geofences" -> "Safe zones"
         "pair" -> "Pair a device"
         else -> "SareChild"
+    }
+
+    /** Opens the signed-in parent web dashboard in Chrome Custom Tabs (Live map, TCD, etc.). */
+    private fun openWebDashboard() {
+        val url = getString(R.string.parent_web_dashboard_url)
+        CustomTabsIntent.Builder()
+            .setShowTitle(true)
+            .build()
+            .launchUrl(this, Uri.parse(url))
+    }
+
+    /** Live map control center — native quick maps plus web dashboard for full experience. */
+    private fun showLiveMapTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Live map control center"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "See every child's last location on the native map, or open the full web dashboard for trails, stops, and multi-device live tracking."
+            setPadding(0, dp(8), 0, dp(16))
+        })
+        root.addView(MaterialButton(this).apply {
+            text = "Open full web dashboard"
+            setOnClickListener { openWebDashboard() }
+        })
+        if (devices.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "Pair a device to see live locations."
+                setPadding(0, dp(16), 0, 0)
+            })
+            return
+        }
+        devices.forEach { device ->
+            val loc = device.lastLocation
+            root.addView(TextView(this).apply {
+                text = device.childName
+                textSize = 17f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, dp(16), 0, dp(4))
+            })
+            root.addView(TextView(this).apply {
+                text = if (isDeviceOnline(device)) "Online" else "Offline"
+            })
+            if (loc != null) {
+                root.addView(MaterialButton(this).apply {
+                    text = "Open ${device.childName}'s map"
+                    setOnClickListener { openDeviceMap(device) }
+                })
+            } else {
+                root.addView(TextView(this).apply { text = "Waiting for first location…" })
+            }
+        }
+    }
+
+    private fun showWhatsAppTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        val unknownCount = whatsAppEvents.count { !it.contactSafe }
+        root.addView(TextView(this).apply {
+            text = "WhatsApp protection"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "${whatsAppEvents.size} events · $unknownCount from unknown contacts"
+            setPadding(0, dp(8), 0, dp(12))
+        })
+
+        devices.forEach { device ->
+            root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "Request WhatsApp protection · ${device.childName}"
+                setOnClickListener {
+                    sendQuickCommand(device, SafetyCommandType.REQUEST_WHATSAPP_PROTECTION)
+                }
+            })
+        }
+
+        val filterRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        filterRow.addView(filterChip("All (${whatsAppEvents.size})", whatsAppFilter == WhatsAppFilter.ALL) {
+            whatsAppFilter = WhatsAppFilter.ALL; showSection("whatsapp")
+        })
+        filterRow.addView(filterChip("Unknown ($unknownCount)", whatsAppFilter == WhatsAppFilter.UNKNOWN) {
+            whatsAppFilter = WhatsAppFilter.UNKNOWN; showSection("whatsapp")
+        })
+        root.addView(filterRow)
+
+        val filtered = when (whatsAppFilter) {
+            WhatsAppFilter.ALL -> whatsAppEvents
+            WhatsAppFilter.UNKNOWN -> whatsAppEvents.filter { !it.contactSafe }
+            WhatsAppFilter.CALLS -> whatsAppEvents.filter { it.eventType == WhatsAppEventType.CALL }
+            WhatsAppFilter.MEDIA -> whatsAppEvents.filter {
+                it.eventType in listOf(
+                    WhatsAppEventType.IMAGE, WhatsAppEventType.VOICE_NOTE,
+                    WhatsAppEventType.VIDEO, WhatsAppEventType.DOCUMENT
+                )
+            }
+        }
+
+        if (filtered.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "No WhatsApp activity yet. Enable protection on the child device and send a test message."
+                setPadding(0, dp(12), 0, 0)
+            })
+            return
+        }
+
+        filtered.take(50).forEach { ev ->
+            val deviceName = devices.firstOrNull { it.id == ev.deviceId }?.childName ?: "Child"
+            root.addView(TextView(this).apply {
+                text = buildString {
+                    append("${ev.contactLabel} · ${ev.eventType.name} · ${ev.direction}")
+                    append("\n$deviceName · ${relativeTime(ev.createdAtMs)}")
+                    ev.preview?.let { append("\n\"$it\"") }
+                    if (ev.riskFlag) append("\n⚠ Review recommended")
+                }
+                setPadding(0, dp(10), 0, dp(4))
+            })
+            if (!ev.mediaUrl.isNullOrBlank()) {
+                root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "Open media"
+                    setOnClickListener {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ev.mediaUrl)))
+                    }
+                })
+            }
+        }
+    }
+
+    private fun showCallRecordingTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        val withAudio = callRecordings.count { it.audioCaptured }
+        root.addView(TextView(this).apply {
+            text = "Call recording"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "${callRecordings.size} recordings · $withAudio with audio. Cellular and VoIP (mic-side) capture on the child device."
+            setPadding(0, dp(8), 0, dp(12))
+        })
+
+        devices.forEach { device ->
+            root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "Request call recording · ${device.childName}"
+                setOnClickListener {
+                    sendQuickCommand(device, SafetyCommandType.REQUEST_CALL_RECORDING)
+                }
+            })
+        }
+
+        if (callRecordings.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "No call recordings yet. Request consent on the child device first."
+                setPadding(0, dp(12), 0, 0)
+            })
+            return
+        }
+
+        callRecordings.take(40).forEach { rec ->
+            val deviceName = devices.firstOrNull { it.id == rec.deviceId }?.childName ?: "Child"
+            root.addView(TextView(this).apply {
+                text = buildString {
+                    append("${rec.callType.name} · ${rec.direction}")
+                    rec.contactLabel?.let { append(" · $it") }
+                    rec.numberMasked?.let { append(" · $it") }
+                    append("\n$deviceName · ${rec.durationSec}s · ${relativeTime(rec.createdAtMs)}")
+                    if (rec.audioCaptured) append(" · audio captured")
+                    rec.audioSourceNote?.let { append("\n$it") }
+                }
+                setPadding(0, dp(10), 0, dp(4))
+            })
+            if (!rec.audioUrl.isNullOrBlank()) {
+                root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "Play recording"
+                    setOnClickListener {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(rec.audioUrl)))
+                    }
+                })
+            }
+        }
+    }
+
+    private fun showTypingTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        val flagged = typingEvents.count { it.matchedWords.isNotEmpty() }
+        val unreviewed = typingEvents.count { it.matchedWords.isNotEmpty() && !it.reviewed }
+        root.addView(TextView(this).apply {
+            text = "Typing safety"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "${typingEvents.size} events · $flagged flagged · $unreviewed unreviewed"
+            setPadding(0, dp(8), 0, dp(12))
+        })
+
+        val filterRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        filterRow.addView(filterChip("All", typingFilter == TypingFilter.ALL) {
+            typingFilter = TypingFilter.ALL; showSection("typing")
+        })
+        filterRow.addView(filterChip("Flagged ($flagged)", typingFilter == TypingFilter.FLAGGED) {
+            typingFilter = TypingFilter.FLAGGED; showSection("typing")
+        })
+        filterRow.addView(filterChip("Unreviewed ($unreviewed)", typingFilter == TypingFilter.UNREVIEWED) {
+            typingFilter = TypingFilter.UNREVIEWED; showSection("typing")
+        })
+        root.addView(filterRow)
+
+        val filtered = when (typingFilter) {
+            TypingFilter.ALL -> typingEvents
+            TypingFilter.FLAGGED -> typingEvents.filter { it.matchedWords.isNotEmpty() }
+            TypingFilter.UNREVIEWED -> typingEvents.filter { it.matchedWords.isNotEmpty() && !it.reviewed }
+        }
+
+        if (filtered.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "No typing safety events yet. Enable message monitoring on the child device."
+                setPadding(0, dp(12), 0, 0)
+            })
+            return
+        }
+
+        filtered.take(50).forEach { ev ->
+            val deviceName = devices.firstOrNull { it.id == ev.deviceId }?.childName ?: "Child"
+            root.addView(TextView(this).apply {
+                text = buildString {
+                    append("${ev.appLabel} · ${ev.severity.name}")
+                    if (ev.matchedWords.isNotEmpty()) append(" · matched: ${ev.matchedWords.joinToString(", ")}")
+                    append("\n$deviceName · ${relativeTime(ev.createdAtMs)}")
+                    if (ev.snippet.isNotBlank()) append("\n\"${ev.snippet.take(120)}\"")
+                }
+                setPadding(0, dp(10), 0, dp(4))
+            })
+            if (ev.matchedWords.isNotEmpty() && !ev.reviewed) {
+                root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "Mark reviewed"
+                    setOnClickListener {
+                        val fid = familyId ?: return@setOnClickListener
+                        lifecycleScope.launch {
+                            runCatching { repo.markTypingEventReviewed(fid, ev.id) }
+                        }
+                    }
+                })
+            }
+        }
     }
 
     /** Bigger map-first view of every paired child's last known location, for sidebar parity with the web dashboard. */
@@ -965,7 +1319,8 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.TAMPER, AlertType.PERMISSION_REVOKED, AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED,
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE -> R.drawable.ic_alert_shield
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT,
-        AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL, AlertType.TYPING_SAFETY -> R.drawable.ic_alert_message
+        AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL, AlertType.TYPING_SAFETY,
+        AlertType.CALL_RECORDING -> R.drawable.ic_alert_message
         AlertType.APP_INSTALL, AlertType.APP_UNINSTALL, AlertType.USAGE_LIMIT, AlertType.APP_BLOCKED -> R.drawable.ic_alert_app
         AlertType.CHECK_IN, AlertType.OFFLINE_EVIDENCE, AlertType.CALL_SMS_SYNC -> R.drawable.ic_alert_info
     }
@@ -982,6 +1337,7 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> "Message safety"
         AlertType.TYPING_SAFETY -> "Typing safety"
         AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL -> "WhatsApp"
+        AlertType.CALL_RECORDING -> "Call recording"
         AlertType.APP_INSTALL, AlertType.APP_UNINSTALL -> "App activity"
         AlertType.USAGE_LIMIT, AlertType.APP_BLOCKED -> "Screen time"
         AlertType.CHECK_IN -> "Check-in"

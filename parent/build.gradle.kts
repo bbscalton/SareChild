@@ -12,8 +12,8 @@ android {
         applicationId = "com.sarechild.parent"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val mapsApiKey = (rootProject.extra["MAPS_API_KEY"] as String?) ?: "YOUR_MAPS_API_KEY"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
@@ -60,5 +60,6 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.drawerlayout:drawerlayout:1.2.0")
+    implementation("androidx.browser:browser:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 }
