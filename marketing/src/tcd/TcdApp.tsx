@@ -539,7 +539,12 @@ function TcdDashboard({
               <h2>System architecture</h2>
               <span className="tcd-card-timestamp">live probe status</span>
             </div>
-            <ArchitectureTree nodes={archNodes} selectedId={archSelected} onSelect={setArchSelected} />
+            <ArchitectureTree
+              nodes={archNodes}
+              selectedId={archSelected}
+              onSelect={setArchSelected}
+              loading={!report}
+            />
           </div>
         )}
 
