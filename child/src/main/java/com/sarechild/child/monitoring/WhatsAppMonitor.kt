@@ -46,16 +46,44 @@ object WhatsAppMonitor {
         WhatsAppEventType.DOCUMENT
     )
     private val CALL_PHRASES = listOf(
-        "missed voice call", "missed video call",
+        "missed voice call", "missed video call", "missed call",
         "incoming voice call", "incoming video call",
         "ongoing voice call", "ongoing video call",
-        "voice call ended", "video call ended", "calling…", "calling..."
+        "voice call ended", "video call ended",
+        "voice call", "video call",
+        "calling…", "calling...", "calling"
+    )
+    private val WHATSAPP_CHROME_PHRASES = listOf(
+        "ask meta ai",
+        "ask meta ai or search",
+        "inbox filters",
+        "communities",
+        "start your community",
+        "swipe down to reveal",
+        "new status update",
+        "status updates",
+        "archived chats",
+        "starred messages",
+        "search chats",
+        "linked devices",
+        "broadcast lists",
+        "disappearing messages",
+        "view status"
+    )
+    private val WHATSAPP_INBOX_MARKERS = listOf(
+        "inbox filters",
+        "communities",
+        "ask meta ai"
+    )
+    private val WHATSAPP_CHROME_TABS = setOf(
+        "chats", "updates", "calls", "communities", "status", "camera", "search", "settings"
     )
     private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{5,}\d""")
     private const val KNOWN_CONTACTS_PREF_KEY = "whatsapp_known_contact_keys"
     private const val KNOWN_CONTACTS_MAX = 500
 
     private val recentAlerts = ConcurrentHashMap<String, Long>()
+    private val recentEventHashes = ConcurrentHashMap<String, Long>()
     // Correlates a media-store file addition with whichever contact most recently appeared in
     // a WhatsApp notification for the same package — MediaStore rows carry no contact info.
     private val lastContactByPackage = ConcurrentHashMap<String, Pair<String, Long>>()
@@ -75,6 +103,109 @@ object WhatsAppMonitor {
         } else {
             null
         }
+    }
+
+    /** True when [text] looks like a WhatsApp home/inbox accessibility dump, not a real message. */
+    fun isChromeDump(text: String): Boolean {
+        val lower = text.lowercase().replace(Regex("\\s+"), " ").trim()
+        if (lower.isBlank()) return true
+        val inboxHits = WHATSAPP_INBOX_MARKERS.count { lower.contains(it) }
+        if (inboxHits >= 2) return true
+        if (inboxHits >= 1 && lower.length > 180) return true
+        if (lower.length > 100 && WHATSAPP_CHROME_PHRASES.any { lower.contains(it) }) {
+            val lineCount = text.lines().count { it.isNotBlank() }
+            if (lineCount > 6) return true
+        }
+        return false
+    }
+
+    private fun isChromeLine(line: String): Boolean {
+        val lower = line.lowercase().trim()
+        if (lower.length <= 2) return true
+        if (WHATSAPP_CHROME_PHRASES.any { lower.contains(it) }) return true
+        return lower in WHATSAPP_CHROME_TABS
+    }
+
+    private fun isTimestampLine(line: String): Boolean {
+        val t = line.trim()
+        return t.matches(Regex("""^\d{1,2}:\d{2}(\s*[AP]M)?$""", RegexOption.IGNORE_CASE)) ||
+            t.matches(
+                Regex(
+                    """^(today|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+    }
+
+    data class ParsedWhatsAppScreen(
+        val contact: String,
+        val message: String,
+        val eventType: WhatsAppEventType,
+        val direction: String = "IN"
+    )
+
+    /** Extract contact + last message bubble from on-screen accessibility text. */
+    fun parseOnScreenText(raw: String): ParsedWhatsAppScreen? {
+        val trimmed = raw.trim()
+        if (trimmed.length < 3) return null
+        if (isChromeDump(trimmed)) return null
+
+        val eventType = classify("", trimmed, trimmed)
+        if (eventType == WhatsAppEventType.CALL) {
+            val contact = extractCallContact(trimmed)
+            val message = trimmed.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { line ->
+                    line.isNotBlank() &&
+                        CALL_PHRASES.any { line.lowercase().contains(it) }
+                }
+                ?.take(160)
+                ?: trimmed.take(120)
+            return ParsedWhatsAppScreen(contact, message, WhatsAppEventType.CALL)
+        }
+
+        val lines = trimmed.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !isChromeLine(it) }
+        if (lines.isEmpty()) return null
+
+        val contact = lines.first().let { first ->
+            when {
+                isTimestampLine(first) || first.length > 60 -> "Unknown contact"
+                else -> first
+            }
+        }
+
+        val messageCandidates = lines.drop(1).filter { !isTimestampLine(it) && it != contact }
+        val message = messageCandidates.lastOrNull()?.take(160) ?: return null
+        if (message.length < 2) return null
+        if (isChromeDump(message)) return null
+
+        return ParsedWhatsAppScreen(
+            contact = contact,
+            message = message,
+            eventType = classify(contact, message, trimmed)
+        )
+    }
+
+    private fun extractCallContact(text: String): String {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() && !isChromeLine(it) }
+        val callLineIdx = lines.indexOfFirst { line ->
+            CALL_PHRASES.any { line.lowercase().contains(it) }
+        }
+        if (callLineIdx > 0) return lines[callLineIdx - 1]
+        return lines.firstOrNull { !CALL_PHRASES.any { p -> it.lowercase().contains(p) } }
+            ?: "Unknown caller"
+    }
+
+    private fun shouldSkipDuplicateEvent(contact: String, message: String, eventType: WhatsAppEventType): Boolean {
+        val key = "${normalizeIdentifier(contact)}|${eventType.name}|${message.take(80).hashCode()}"
+        val now = System.currentTimeMillis()
+        val last = recentEventHashes[key]
+        if (last != null && now - last < SareChildConstants.WHATSAPP_ONSCREEN_DEDUPE_MS) return true
+        recentEventHashes[key] = now
+        recentEventHashes.entries.removeIf { now - it.value > 15 * 60_000L }
+        return false
     }
 
     fun normalizeIdentifier(value: String): String {
@@ -158,11 +289,21 @@ object WhatsAppMonitor {
         if (!repo.whatsappMonitorConsent) return
         val combined = listOf(title, text, big).filter { it.isNotBlank() }.joinToString(" — ")
         if (combined.isBlank()) return
+        if (isChromeDump(combined)) return
 
         val contentType = classify(title, text, big)
         val contactRaw = extractContact(contentType, title, text)
         val normalized = normalizeIdentifier(contactRaw)
         lastContactByPackage[packageName] = contactRaw to System.currentTimeMillis()
+
+        val previewBody = when {
+            contentType == WhatsAppEventType.CALL -> text.ifBlank { big }.ifBlank { combined }
+            text.isNotBlank() -> text
+            big.isNotBlank() -> big
+            else -> combined
+        }.take(160)
+
+        if (shouldSkipDuplicateEvent(contactRaw, previewBody, contentType)) return
 
         val safe = isKnownSafe(repo, normalized)
         val firstSighting = !safe && isFirstSighting(context, "$packageName|$normalized")
@@ -176,7 +317,7 @@ object WhatsAppMonitor {
                 contactLabel = contactRaw,
                 contactSafe = safe,
                 direction = "IN",
-                preview = combined.take(160),
+                preview = previewBody,
                 riskScore = riskScore.takeIf { it > 0 },
                 riskFlag = riskFlag,
                 source = "notification"
@@ -205,19 +346,19 @@ object WhatsAppMonitor {
     suspend fun recordOnScreenMessage(repo: ChildRepository, packageName: String, text: String) {
         if (!isWhatsApp(packageName)) return
         if (!repo.whatsappMonitorConsent) return
-        val trimmed = text.trim()
-        if (trimmed.length < 3) return
-        val firstLine = trimmed.lineSequence().firstOrNull()?.trim().orEmpty()
-        val contactRaw = extractContact(WhatsAppEventType.MESSAGE, firstLine, trimmed)
-        val normalized = normalizeIdentifier(contactRaw)
-        lastContactByPackage[packageName] = contactRaw to System.currentTimeMillis()
+        val parsed = parseOnScreenText(text) ?: return
+        if (shouldSkipDuplicateEvent(parsed.contact, parsed.message, parsed.eventType)) return
+
+        val normalized = normalizeIdentifier(parsed.contact)
+        lastContactByPackage[packageName] = parsed.contact to System.currentTimeMillis()
         val safe = isKnownSafe(repo, normalized)
         repo.postWhatsAppEvent(
             WhatsAppEvent(
-                eventType = WhatsAppEventType.MESSAGE,
-                contactLabel = contactRaw,
+                eventType = parsed.eventType,
+                contactLabel = parsed.contact,
                 contactSafe = safe,
-                preview = trimmed.take(160),
+                direction = parsed.direction,
+                preview = parsed.message.take(160),
                 source = "onscreen"
             )
         )

@@ -91,6 +91,8 @@ object SareChildConstants {
     const val TYPING_SAFETY_SNIPPET_MAX = 220
     // Re-captures of unchanged text in the same app are suppressed for this long.
     const val TYPING_SAFETY_DEDUPE_MS = 30_000L
+    /** On-screen WhatsApp rows with the same contact+message are suppressed for this long. */
+    const val WHATSAPP_ONSCREEN_DEDUPE_MS = 3 * 60_000L
 
     const val PREFS_NAME = "sarechild_prefs"
     const val PREF_FAMILY_ID = "family_id"

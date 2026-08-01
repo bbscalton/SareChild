@@ -951,6 +951,178 @@ select {
   margin: 0;
 }
 
+/* WhatsApp events data table */
+.wa-table-card { padding: 0; overflow: hidden; }
+
+.wa-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.1rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.wa-table-header h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: 0.06em;
+  font-size: 0.95rem;
+}
+
+.wa-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.wa-page-size {
+  font-size: 0.85rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wa-page-size select,
+.wa-search,
+.wa-filter-row input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  font: inherit;
+  background: #fff;
+}
+
+.wa-search { min-width: 160px; }
+
+.wa-tools-wrap { position: relative; }
+
+.wa-tools-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  min-width: 140px;
+  display: grid;
+}
+
+.wa-tools-menu button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.wa-tools-menu button:hover { background: #f4f7f6; }
+
+.wa-type-chips { padding: 0.65rem 1.1rem 0; }
+
+.wa-table-scroll { overflow-x: auto; }
+
+.wa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.wa-table th,
+.wa-table td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.wa-table thead th {
+  background: #f7faf8;
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wa-filter-row input {
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+.wa-col-check { width: 36px; }
+
+.wa-col-name { min-width: 120px; }
+.wa-col-message { min-width: 200px; max-width: 420px; word-break: break-word; }
+.wa-col-date { white-space: nowrap; }
+
+.wa-sort-btn {
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+}
+
+.wa-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.wa-badge-in { background: #e7f7ee; color: #0f6b4c; }
+.wa-badge-out { background: #eef4ff; color: #2563eb; }
+.wa-badge-call { background: #fff4e5; color: #b45309; }
+.wa-badge-media { background: #f3e8ff; color: #7c3aed; }
+.wa-badge-unknown { background: #fde8e8; color: #b3261e; }
+
+.wa-row-risk { background: #fdf4f3; }
+
+.wa-media-link {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.78rem;
+}
+
+.wa-empty-cell {
+  text-align: center;
+  color: var(--muted);
+  padding: 2rem !important;
+}
+
+.wa-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1.1rem 1rem;
+}
+
+.wa-page-btns {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pill.compact {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+  margin-left: 0.35rem;
+}
+
+.wa-trash { color: var(--danger, #b3261e); }
+
 /* --- Call recording section (native Android — not Cordova) --- */
 .callrecording-hero {
   background: linear-gradient(135deg, #eef4ff 0%, #ffffff 70%);

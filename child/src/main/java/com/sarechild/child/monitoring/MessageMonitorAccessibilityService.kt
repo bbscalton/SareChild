@@ -153,8 +153,10 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         val snippet = text.take(SareChildConstants.TYPING_SAFETY_SNIPPET_MAX)
 
         if (WhatsAppMonitor.isWhatsApp(pkg) && repo.whatsappMonitorConsent) {
-            maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
-            runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
+            if (!WhatsAppMonitor.isChromeDump(text)) {
+                maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
+                runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
+            }
         }
 
         if (!repo.messageMonitorConsent) return

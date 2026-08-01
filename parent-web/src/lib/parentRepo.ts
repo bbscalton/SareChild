@@ -846,6 +846,12 @@ const WHATSAPP_EVENT_TYPES: WhatsAppEventType[] = [
   'UNKNOWN_CONTACT',
 ]
 
+export async function deleteWhatsAppEvents(familyId: string, ids: string[]): Promise<void> {
+  await Promise.all(
+    ids.map((id) => deleteDoc(doc(db, COL.families, familyId, COL.whatsappEvents, id))),
+  )
+}
+
 export function observeWhatsAppEvents(
   familyId: string,
   onData: (rows: WhatsAppEvent[]) => void,

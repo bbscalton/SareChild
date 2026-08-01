@@ -146,7 +146,7 @@ service cloud.firestore {
       // Dedicated WhatsApp protection timeline (messages/calls/media events). Written by the
       // (anonymously signed-in) child device; read by the parent's WhatsApp dashboard section.
       match /whatsappEvents/{eventId} {
-        allow read: if isFamilyGuardian(familyId);
+        allow read, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 

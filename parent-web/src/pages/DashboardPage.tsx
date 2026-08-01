@@ -23,7 +23,6 @@ import type {
   UsageDaily,
   WeeklyDigest,
   WhatsAppEvent,
-  WhatsAppEventType,
   CallRecording,
 } from '../types'
 import { mediaKind } from '../types'
@@ -31,6 +30,8 @@ import type { SafetyCommandType } from '../lib/parentRepo'
 import { alertCategoryLabel, alertIcon, relativeTime, severityTone } from '../lib/alertPresentation'
 import { reverseGeocode } from '../lib/googleMaps'
 import { LiveMapPage } from './LiveMapPage'
+import { WhatsAppEventsTable } from '../components/WhatsAppEventsTable'
+import type { WhatsAppDisplayType } from '../lib/whatsappEventDisplay'
 
 type Section =
   | 'home'
@@ -49,7 +50,7 @@ type Section =
   | 'guardians'
   | 'tcd'
 type AlertFilter = 'all' | 'critical' | 'info'
-type WhatsAppFilter = 'all' | 'messages' | 'calls' | 'media' | 'voice' | 'video' | 'unknown'
+type WhatsAppTableTypeFilter = WhatsAppDisplayType | 'ALL'
 type TypingFilter = 'all' | 'flagged' | 'unreviewed'
 type CallRecordingFilter = 'all' | 'cellular' | 'voip' | 'missed'
 
@@ -84,7 +85,7 @@ export function DashboardPage() {
   const [guardians, setGuardians] = useState<GuardianInfo[]>([])
   const [safeContacts, setSafeContacts] = useState<SafeContact[]>([])
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
-  const [whatsAppFilter, setWhatsAppFilter] = useState<WhatsAppFilter>('all')
+  const [whatsAppTypeFilter, setWhatsAppTypeFilter] = useState<WhatsAppTableTypeFilter>('ALL')
   const [callRecordings, setCallRecordings] = useState<CallRecording[]>([])
   const [callRecordingFilter, setCallRecordingFilter] = useState<CallRecordingFilter>('all')
   const [typingEvents, setTypingEvents] = useState<TypingSafetyEvent[]>([])
@@ -292,19 +293,11 @@ export function DashboardPage() {
     }
   }, [devices])
 
-  const filteredWhatsAppEvents = useMemo(() => {
-    if (whatsAppFilter === 'all') return whatsAppEvents
-    if (whatsAppFilter === 'unknown') return whatsAppEvents.filter((e) => !e.contactSafe)
-    const typeMap: Record<Exclude<WhatsAppFilter, 'all' | 'unknown'>, WhatsAppEventType[]> = {
-      messages: ['MESSAGE', 'UNKNOWN_CONTACT'],
-      calls: ['CALL'],
-      media: ['IMAGE', 'DOCUMENT'],
-      voice: ['VOICE_NOTE'],
-      video: ['VIDEO'],
-    }
-    const types = typeMap[whatsAppFilter as Exclude<WhatsAppFilter, 'all' | 'unknown'>]
-    return whatsAppEvents.filter((e) => types.includes(e.eventType))
-  }, [whatsAppEvents, whatsAppFilter])
+  const whatsAppDeviceNames = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const d of devices) map[d.id] = d.childName
+    return map
+  }, [devices])
 
   const callRecordingStats = useMemo(() => {
     const total = callRecordings.length
@@ -1531,78 +1524,26 @@ export function DashboardPage() {
                 </div>
               )}
 
-              <div className="card">
-                <h3>Timeline</h3>
-                <div className="filter-row">
-                  {(
-                    [
-                      ['all', `All (${whatsAppEvents.length})`],
-                      ['messages', 'Messages'],
-                      ['calls', 'Calls'],
-                      ['media', 'Media'],
-                      ['voice', 'Voice notes'],
-                      ['video', 'Video'],
-                      ['unknown', `Unknown only (${whatsAppUnknownCount})`],
-                    ] as [WhatsAppFilter, string][]
-                  ).map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className={whatsAppFilter === id ? 'chip active' : 'chip'}
-                      onClick={() => setWhatsAppFilter(id)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {filteredWhatsAppEvents.length === 0 ? (
+              {whatsAppEvents.length === 0 ? (
+                <div className="card">
                   <Empty
                     title="No WhatsApp activity yet"
                     body="Events appear here once the child device has consent, notification access, and (optionally) accessibility enabled. Send a test WhatsApp message to verify."
                   />
-                ) : (
-                  <ul className="whatsapp-timeline">
-                    {filteredWhatsAppEvents.map((ev) => {
-                      const name = devices.find((d) => d.id === ev.deviceId)?.childName || ev.deviceId
-                      return (
-                        <li
-                          key={ev.id}
-                          className={`whatsapp-event ${ev.riskFlag ? 'whatsapp-event-risk' : ''}`}
-                        >
-                          <span className="whatsapp-event-icon" aria-hidden="true">
-                            {whatsAppEventIcon(ev.eventType)}
-                          </span>
-                          <div className="whatsapp-event-body">
-                            <div className="whatsapp-event-top">
-                              <strong>{ev.contactLabel}</strong>
-                              <span className={`pill ${ev.contactSafe ? 'online' : 'offline'}`}>
-                                {ev.contactSafe ? 'Safe list' : 'Unknown'}
-                              </span>
-                              {ev.riskFlag && <span className="pill offline">Review</span>}
-                              <span className="muted small whatsapp-event-time">
-                                {new Date(ev.createdAtMs).toLocaleString()}
-                              </span>
-                            </div>
-                            <p className="muted small">
-                              {name} · {whatsAppEventLabel(ev.eventType)} · {ev.direction}
-                              {ev.durationSec != null && ev.durationSec > 0
-                                ? ` · ${Math.round(ev.durationSec)}s`
-                                : ''}
-                            </p>
-                            {ev.preview && <p className="whatsapp-event-preview">&ldquo;{ev.preview}&rdquo;</p>}
-                            {ev.mediaUrl && (
-                              <figure className="gallery-item whatsapp-event-media">
-                                <MediaThumb url={ev.mediaUrl} />
-                              </figure>
-                            )}
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
+                </div>
+              ) : (
+                <WhatsAppEventsTable
+                  events={whatsAppEvents}
+                  deviceNames={whatsAppDeviceNames}
+                  typeFilter={whatsAppTypeFilter}
+                  onTypeFilterChange={setWhatsAppTypeFilter}
+                  deleteEnabled={Boolean(familyId)}
+                  onDeleteSelected={async (ids) => {
+                    if (!familyId) return
+                    await repo.deleteWhatsAppEvents(familyId, ids)
+                  }}
+                />
+              )}
 
               <div className="card form-card">
                 <h3>Safe WhatsApp contacts</h3>
@@ -2756,47 +2697,6 @@ function TrialBannerText({ trialInfo }: { trialInfo: import('../types').TrialInf
       coming later; no card required for now.
     </span>
   )
-}
-
-function whatsAppEventIcon(t: WhatsAppEventType): string {
-  switch (t) {
-    case 'MESSAGE':
-    case 'UNKNOWN_CONTACT':
-      return '\u{1F4AC}'
-    case 'CALL':
-      return '\u{1F4DE}'
-    case 'IMAGE':
-      return '\u{1F5BC}\uFE0F'
-    case 'VOICE_NOTE':
-      return '\u{1F3A4}'
-    case 'VIDEO':
-      return '\u{1F3A5}'
-    case 'DOCUMENT':
-      return '\u{1F4CE}'
-    default:
-      return '\u{1F7E2}'
-  }
-}
-
-function whatsAppEventLabel(t: WhatsAppEventType): string {
-  switch (t) {
-    case 'MESSAGE':
-      return 'Message'
-    case 'UNKNOWN_CONTACT':
-      return 'New unknown contact'
-    case 'CALL':
-      return 'Call'
-    case 'IMAGE':
-      return 'Image'
-    case 'VOICE_NOTE':
-      return 'Voice note'
-    case 'VIDEO':
-      return 'Video'
-    case 'DOCUMENT':
-      return 'File'
-    default:
-      return t
-  }
 }
 
 function yesNo(v: boolean) {
