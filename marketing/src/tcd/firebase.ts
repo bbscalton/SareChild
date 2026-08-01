@@ -39,6 +39,9 @@ export const COL = {
   familyChat: 'familyChat',
   safetySettings: 'safetySettings',
   keywordLists: 'keywordLists',
+  liveViewQuota: 'liveViewQuota',
+  adminConfig: 'adminConfig',
+  adminFeatureOverrides: 'adminFeatureOverrides',
 } as const
 
 export const WENT_DARK_AFTER_MS = 5 * 60 * 1000
@@ -48,3 +51,5 @@ export const PLATFORM_HEALTH_URL =
 export const FUNCTIONS_HEALTH_URL = readEnv('VITE_FUNCTIONS_HEALTH_URL')
 export const PARENT_WEB_URL = readEnv('VITE_PARENT_WEB_URL') || 'https://safechild-f34ac.web.app/'
 export const MARKETING_URL = readEnv('VITE_MARKETING_URL') || 'https://bbscalton.github.io/SareChild/'
+export const TCD_URL = readEnv('VITE_TCD_URL') || `${MARKETING_URL.replace(/\/?$/, '/')}tcd.html`
+export const GITHUB_REPO_URL = readEnv('VITE_GITHUB_REPO_URL') || 'https://github.com/bbscalton/SareChild'

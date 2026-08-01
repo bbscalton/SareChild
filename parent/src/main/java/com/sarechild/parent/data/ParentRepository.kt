@@ -74,10 +74,12 @@ data class TrialInfo(
     val trialStartedAt: Long = 0L,
     val trialEndsAt: Long = 0L,
     val lastLoginAt: Long? = null,
-    val lastParentCheckInAt: Long? = null
+    val lastParentCheckInAt: Long? = null,
+    val adminBlocked: Boolean = false
 ) {
     val isBlocked: Boolean
-        get() = status == "purged" || (plan == "trial" && trialEndsAt > 0 && System.currentTimeMillis() > trialEndsAt)
+        get() = adminBlocked || status == "blocked" || status == "purged" ||
+            (plan == "trial" && trialEndsAt > 0 && System.currentTimeMillis() > trialEndsAt)
 }
 
 private fun newTrialFields(now: Long): Map<String, Any> = mapOf(
@@ -263,7 +265,8 @@ class ParentRepository(
             trialStartedAt = doc.getLong("trialStartedAt") ?: 0L,
             trialEndsAt = doc.getLong("trialEndsAt") ?: 0L,
             lastLoginAt = doc.getLong("lastLoginAt"),
-            lastParentCheckInAt = doc.getLong("lastParentCheckInAt")
+            lastParentCheckInAt = doc.getLong("lastParentCheckInAt"),
+            adminBlocked = doc.getBoolean("adminBlocked") == true
         )
     }
 

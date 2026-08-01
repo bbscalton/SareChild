@@ -388,15 +388,18 @@ class DashboardActivity : AppCompatActivity() {
             setPadding(dp(16), dp(24), dp(16), dp(24))
         }
         container.addView(root, matchFrameParams())
-        val title = if (trial.status == "purged") {
-            "This trial account was removed"
-        } else {
-            "Your free trial has ended"
+        val title = when {
+            trial.status == "blocked" || trial.adminBlocked -> "Account suspended"
+            trial.status == "purged" -> "This trial account was removed"
+            else -> "Your free trial has ended"
         }
-        val body = if (trial.status == "purged") {
-            "This account was inactive for too long during its free trial and was automatically removed along with its family data, per our trial cleanup policy."
-        } else {
-            "Your 30-day free trial has finished. Paid plans are coming later — thanks for trying SareChild!"
+        val body = when {
+            trial.status == "blocked" || trial.adminBlocked ->
+                "Your SareChild account has been suspended by the project administrator. Contact support if you believe this is a mistake."
+            trial.status == "purged" ->
+                "This account was inactive for too long during its free trial and was automatically removed along with its family data, per our trial cleanup policy."
+            else ->
+                "Your 30-day free trial has finished. Paid plans are coming later — thanks for trying SareChild!"
         }
         root.addView(TextView(this).apply {
             text = title

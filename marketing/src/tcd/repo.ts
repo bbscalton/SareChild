@@ -11,7 +11,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore'
-import { auth, COL, db, FUNCTIONS_HEALTH_URL, MARKETING_URL, PARENT_WEB_URL, PLATFORM_HEALTH_URL, R2_BASE_URL, WENT_DARK_AFTER_MS } from './firebase'
+import { auth, COL, db, FUNCTIONS_HEALTH_URL, MARKETING_URL, PARENT_WEB_URL, PLATFORM_HEALTH_URL, R2_BASE_URL, TCD_URL, WENT_DARK_AFTER_MS } from './firebase'
 import type {
   ApkHealth,
   ChatActivity,
@@ -248,6 +248,50 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
       group: 'platform',
       status: 'fail',
       message: e instanceof Error ? e.message : 'Failed to reach Cloudflare platform health.',
+    })
+  }
+
+  if (FUNCTIONS_HEALTH_URL) {
+    try {
+      const started = performance.now()
+      const res = await fetch(FUNCTIONS_HEALTH_URL)
+      checks.push({
+        id: 'functions-health',
+        label: 'Cloud Functions',
+        group: 'platform',
+        status: res.ok ? 'ok' : 'warn',
+        message: res.ok ? 'Functions health endpoint reachable.' : `Functions health HTTP ${res.status}.`,
+        latencyMs: Math.round(performance.now() - started),
+      })
+    } catch (e) {
+      checks.push({
+        id: 'functions-health',
+        label: 'Cloud Functions',
+        group: 'platform',
+        status: 'warn',
+        message: e instanceof Error ? e.message : 'Functions health unreachable.',
+      })
+    }
+  }
+
+  try {
+    const started = performance.now()
+    await fetch('https://maps.googleapis.com/maps/api/js', { method: 'GET', mode: 'no-cors', cache: 'no-store' })
+    checks.push({
+      id: 'google-maps',
+      label: 'Google Maps platform',
+      group: 'platform',
+      status: 'ok',
+      message: 'Maps JS API endpoint reachable.',
+      latencyMs: Math.round(performance.now() - started),
+    })
+  } catch (e) {
+    checks.push({
+      id: 'google-maps',
+      label: 'Google Maps platform',
+      group: 'platform',
+      status: 'warn',
+      message: e instanceof Error ? e.message : 'Maps endpoint probe failed.',
     })
   }
 
@@ -570,6 +614,7 @@ async function probeSite(id: string, label: string, url: string): Promise<SiteUp
 export async function loadSiteUptime(): Promise<SiteUptime[]> {
   return Promise.all([
     probeSite('marketing-site', 'Marketing site (GitHub Pages)', MARKETING_URL),
+    probeSite('tcd-page', 'TCD console (GitHub Pages)', TCD_URL),
     probeSite('parent-web', 'Parent web (Firebase Hosting)', PARENT_WEB_URL),
   ])
 }

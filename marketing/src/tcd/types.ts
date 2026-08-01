@@ -61,7 +61,7 @@ export type SafetyCommand = {
 }
 
 export type TrialPlan = 'trial' | 'paid'
-export type TrialStatus = 'active' | 'at_risk' | 'purged'
+export type TrialStatus = 'active' | 'at_risk' | 'purged' | 'blocked'
 
 export type TrialInfo = {
   plan: TrialPlan
@@ -105,3 +105,81 @@ export type SiteUptime = {
   message: string
   latencyMs?: number | null
 }
+
+// ---------- Admin control plane ----------
+
+export const FEATURE_KEYS = [
+  'whatsappProtection',
+  'typingSafety',
+  'callRecording',
+  'liveViewing',
+  'appsBlocking',
+  'mapsLiveMap',
+  'chat',
+  'screenShare',
+  'trialPurge',
+] as const
+
+export type FeatureKey = (typeof FEATURE_KEYS)[number]
+
+export const FEATURE_LABELS: Record<FeatureKey, string> = {
+  whatsappProtection: 'WhatsApp protection',
+  typingSafety: 'Typing safety',
+  callRecording: 'Call recording',
+  liveViewing: 'Live viewing',
+  appsBlocking: 'Apps blocking',
+  mapsLiveMap: 'Maps / live map',
+  chat: 'Family chat',
+  screenShare: 'Screen share',
+  trialPurge: 'Trial purge job',
+}
+
+export type AdminFeatureConfig = {
+  global: Record<FeatureKey, boolean>
+  liveView: {
+    defaultDailyCredits: number
+    maxSessionMinutes: number
+  }
+  updatedAtMs: number
+  updatedBy: string | null
+}
+
+export type AdminParentAccountRow = {
+  uid: string
+  email: string
+  familyId: string | null
+  registeredAt: number | null
+  lastActiveAt: number | null
+  lastLoginAt: number | null
+  plan: string | null
+  status: string | null
+  adminBlocked: boolean
+  trialEndsAt: number | null
+  deviceCount: number | null
+}
+
+export type LiveViewQuotaAdmin = {
+  creditsRemaining: number
+  dailyAllowance: number
+  resetAtMs: number
+  bonusCredits: number
+}
+
+export type ArchNode = {
+  id: string
+  label: string
+  group: 'client' | 'firebase' | 'edge' | 'hosting' | 'external'
+  status: TcdCheckStatus
+  detail?: string
+  url?: string
+}
+
+export type PlatformFault = {
+  id: string
+  severity: 'critical' | 'warning' | 'info'
+  title: string
+  detail: string
+  source: string
+}
+
+export type TcdTab = 'overview' | 'accounts' | 'features' | 'architecture'

@@ -22,7 +22,9 @@ service cloud.firestore {
     function requesterActive() {
       return signedIn()
         && (!exists(/databases/$(database)/documents/parentProfiles/$(request.auth.uid))
-          || parentProfile().get('status', 'active') != 'purged');
+          || (parentProfile().get('status', 'active') != 'purged'
+            && parentProfile().get('status', 'active') != 'blocked'
+            && parentProfile().get('adminBlocked', false) != true));
     }
 
     function isFamilyParent(familyId) {
@@ -55,15 +57,18 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll(['familyId', 'email'])
         && get(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.get('parentUid', '')
           == request.auth.uid;
-      allow update: if signedIn() && request.auth.uid == uid
+      allow update: if isProjectAdmin()
+        || (signedIn() && request.auth.uid == uid
         && (resource.data.get('status', 'active') != 'purged'
           || request.resource.data.get('status', 'active') == 'purged')
+        && (resource.data.get('status', 'active') != 'blocked'
+          && resource.data.get('adminBlocked', false) != true)
         && (!('trialEndsAt' in resource.data)
           || request.resource.data.trialEndsAt == resource.data.trialEndsAt)
         && (!('familyId' in resource.data)
           || request.resource.data.familyId == resource.data.familyId
           || (isFamilyGuardian(request.resource.data.familyId)
-            && exists(/databases/$(database)/documents/families/$(request.resource.data.familyId)/guardians/$(request.auth.uid))));
+            && exists(/databases/$(database)/documents/families/$(request.resource.data.familyId)/guardians/$(request.auth.uid)))));
     }
 
     match /families/{familyId} {
@@ -220,7 +225,18 @@ service cloud.firestore {
     }
 
     match /liveViewQuota/{uid} {
-      allow read, create, update: if signedIn() && request.auth.uid == uid;
+      allow read: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
+      allow create, update: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
+    }
+
+    match /adminConfig/{docId} {
+      allow read: if signedIn();
+      allow write: if isProjectAdmin();
+    }
+
+    match /adminFeatureOverrides/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
+      allow write: if isProjectAdmin();
     }
   }
 }

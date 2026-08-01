@@ -273,7 +273,7 @@ export type WhatsAppEvent = {
 }
 
 export type TrialPlan = 'trial' | 'paid'
-export type TrialStatus = 'active' | 'at_risk' | 'purged'
+export type TrialStatus = 'active' | 'at_risk' | 'purged' | 'blocked'
 
 // Mirrors parentProfiles/{uid} trial fields (see functions/src/index.ts
 // purgeInactiveTrials for the server-side rules that consume these). Kept as its own
@@ -301,6 +301,8 @@ export type ParentProfileInfo = {
   lastLoginAt: number | null
   lastActiveAt: number | null
   trial: TrialInfo | null
+  adminBlocked: boolean
+  accountStatus: string | null
 }
 
 export type AdminParentAccountRow = {

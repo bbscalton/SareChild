@@ -2,8 +2,13 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { FirebaseError } from 'firebase/app'
 import { useAuth } from './authContext'
 import * as repo from './repo'
-import { PARENT_WEB_URL, WENT_DARK_AFTER_MS } from './firebase'
+import * as adminRepo from './adminRepo'
+import { AdminAccountsPanel } from './AdminAccountsPanel'
+import { AdminFeaturesPanel } from './AdminFeaturesPanel'
+import { ArchitectureTree, buildArchNodes } from './ArchitectureTree'
+import { PARENT_WEB_URL, TCD_URL, WENT_DARK_AFTER_MS } from './firebase'
 import type {
+  AdminParentAccountRow,
   ApkHealth,
   ChatActivity,
   DeviceStatus,
@@ -11,12 +16,14 @@ import type {
   GuardianInfo,
   GuardianInviteStats,
   PairingStats,
+  PlatformFault,
   SafetyCommand,
   SiteUptime,
   TcdCheck,
   TcdCheckStatus,
   TcdOverview,
   TcdReport,
+  TcdTab,
 } from './types'
 
 const STATUS_RANK: Record<TcdCheckStatus, number> = { ok: 0, warn: 1, fail: 2 }
@@ -43,7 +50,8 @@ function isDeviceOnline(d: DeviceStatus, nowMs: number): boolean {
 }
 
 export function TcdApp() {
-  const { configured, user, loading, familyId, trialInfo, refreshFamilyId, signIn, signInWithGoogle, signOut } = useAuth()
+  const { configured, user, loading, isAdmin, blockedMessage, familyId, trialInfo, refreshFamilyId, signIn, signInWithGoogle, signOut } =
+    useAuth()
 
   if (!configured) {
     return (
@@ -68,9 +76,22 @@ export function TcdApp() {
     return <TcdLogin signIn={signIn} signInWithGoogle={signInWithGoogle} />
   }
 
+  if (blockedMessage) {
+    return (
+      <div className="tcd-auth-wrap">
+        <div className="tcd-auth-card">
+          <p className="eyebrow eyebrow-on-dark">SareChild Ops</p>
+          <h1>Account suspended</h1>
+          <p className="muted on-dark">{blockedMessage}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <TcdDashboard
       email={user.email || ''}
+      isAdmin={isAdmin}
       familyId={familyId}
       trialInfo={trialInfo}
       refreshFamilyId={refreshFamilyId}
@@ -125,9 +146,9 @@ function TcdLogin({
       <form className="tcd-auth-card" onSubmit={(e) => void onSubmit(e)}>
         <div>
           <p className="eyebrow eyebrow-on-dark">SareChild Ops</p>
-          <h1>TCD Monitor Console</h1>
+          <h1>TCD Control Plane</h1>
           <p className="muted on-dark small" style={{ marginTop: '0.5rem' }}>
-            Sign in with your SareChild parent account to view platform health, fleet status, and run diagnostics.
+            Sign in with your SareChild parent account. Project owner gets full admin: accounts, features, architecture, and repairs.
           </p>
         </div>
 
@@ -163,17 +184,22 @@ function TcdLogin({
 
 function TcdDashboard({
   email,
+  isAdmin,
   familyId,
   trialInfo,
   refreshFamilyId,
   signOut,
 }: {
   email: string
+  isAdmin: boolean
   familyId: string | null
   trialInfo: import('./types').TrialInfo | null
   refreshFamilyId: () => Promise<void>
   signOut: () => Promise<void>
 }) {
+  const [tab, setTab] = useState<TcdTab>('overview')
+  const [adminAccounts, setAdminAccounts] = useState<AdminParentAccountRow[]>([])
+  const [archSelected, setArchSelected] = useState<string | null>(null)
   const [report, setReport] = useState<TcdReport | null>(null)
   const [overview, setOverview] = useState<TcdOverview | null>(null)
   const [apkHealth, setApkHealth] = useState<ApkHealth[]>([])
@@ -210,19 +236,30 @@ function TcdDashboard({
     return () => unsubs.forEach((u) => u())
   }, [familyId])
 
+  useEffect(() => {
+    if (!isAdmin) return
+    return adminRepo.observeAdminAccounts(setAdminAccounts, (e) => setError(e.message))
+  }, [isAdmin])
+
   const run = async () => {
-    if (!familyId) return
     setBusy(true)
     setError(null)
     try {
+      const healthFamilyId = familyId ?? adminAccounts.find((a) => a.familyId)?.familyId
+      const healthPromise = healthFamilyId ? repo.runTcdHealthCheck(healthFamilyId) : Promise.resolve({ generatedAtMs: Date.now(), checks: [] as TcdCheck[] })
+      const overviewPromise = healthFamilyId ? repo.loadTcdOverview(healthFamilyId) : Promise.resolve(null)
+      const pairingPromise = healthFamilyId ? repo.loadPairingStats(healthFamilyId) : Promise.resolve(null)
+      const invitesPromise = healthFamilyId ? repo.loadGuardianInviteStats(healthFamilyId) : Promise.resolve(null)
+      const chatPromise = healthFamilyId ? repo.loadChatActivity(healthFamilyId) : Promise.resolve(null)
+
       const [nextReport, nextOverview, apk, uptime, pairing, invites, chat] = await Promise.all([
-        repo.runTcdHealthCheck(familyId),
-        repo.loadTcdOverview(familyId),
+        healthPromise,
+        overviewPromise,
         repo.loadApkHealth(),
         repo.loadSiteUptime(),
-        repo.loadPairingStats(familyId),
-        repo.loadGuardianInviteStats(familyId),
-        repo.loadChatActivity(familyId),
+        pairingPromise,
+        invitesPromise,
+        chatPromise,
       ])
       setReport(nextReport)
       setOverview(nextOverview)
@@ -240,13 +277,18 @@ function TcdDashboard({
   }
 
   const runRepair = async () => {
-    if (!familyId) return
     setBusy(true)
     setError(null)
     setStatusMsg(null)
     try {
-      const log = await repo.runTcdAutoRepair(familyId)
-      setRepairLog(log)
+      const logs: string[] = []
+      if (familyId) {
+        logs.push(...(await repo.runTcdAutoRepair(familyId)))
+      }
+      if (isAdmin) {
+        logs.push(...(await adminRepo.runPlatformAutoRepair()))
+      }
+      setRepairLog(logs)
       await run()
       setStatusMsg('Auto-repair completed and health re-checked.')
     } catch (e) {
@@ -257,12 +299,12 @@ function TcdDashboard({
   }
 
   useEffect(() => {
-    if (!familyId) return
+    if (!familyId && !isAdmin) return
     void run()
     const id = window.setInterval(() => void run(), 60_000)
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId])
+  }, [familyId, isAdmin])
 
   const liveFleet = useMemo(() => {
     const cutoff24h = nowTick - 24 * 60 * 60 * 1000
@@ -300,6 +342,47 @@ function TcdDashboard({
     warn: { title: 'Degraded — attention needed', sub: 'One or more checks need a look. See action items below.' },
     fail: { title: 'Critical — action required', sub: 'A core service is down. See action items below for the fastest fix.' },
   }
+
+  const siteStatusMap = useMemo(() => Object.fromEntries(siteUptime.map((s) => [s.id, s.status])), [siteUptime])
+
+  const archNodes = useMemo(
+    () => buildArchNodes([...(report?.checks ?? []), ...apkHealth.map((a) => ({ id: a.id, label: a.label, group: 'platform' as const, status: a.status, message: a.message }))], siteStatusMap),
+    [report, apkHealth, siteStatusMap],
+  )
+
+  const platformFaults = useMemo((): PlatformFault[] => {
+    const faults: PlatformFault[] = []
+    report?.checks.forEach((c) => {
+      if (c.status === 'fail') {
+        faults.push({ id: c.id, severity: 'critical', title: c.label, detail: c.message, source: 'health-check' })
+      } else if (c.status === 'warn') {
+        faults.push({ id: c.id, severity: 'warning', title: c.label, detail: c.message, source: 'health-check' })
+      }
+    })
+    apkHealth.forEach((a) => {
+      if (a.status === 'fail') {
+        faults.push({ id: a.id, severity: 'critical', title: a.label, detail: a.message, source: 'apk-download' })
+      }
+    })
+    siteUptime.forEach((s) => {
+      if (s.status === 'fail') {
+        faults.push({ id: s.id, severity: 'critical', title: s.label, detail: s.message, source: 'uptime' })
+      }
+    })
+    if (isAdmin) {
+      const blockedCount = adminAccounts.filter((a) => a.adminBlocked || a.status === 'blocked').length
+      if (blockedCount > 0) {
+        faults.push({
+          id: 'blocked-accounts',
+          severity: 'info',
+          title: `${blockedCount} blocked account(s)`,
+          detail: 'Review the Accounts tab for suspended users.',
+          source: 'admin',
+        })
+      }
+    }
+    return faults
+  }, [report, apkHealth, siteUptime, isAdmin, adminAccounts])
 
   const actionItems = useMemo(() => {
     const items: string[] = []
@@ -343,10 +426,33 @@ function TcdDashboard({
           <div className="tcd-identity">
             <p>
               Signed in as <strong>{email}</strong>
+              {isAdmin && <span className="tcd-admin-badge">ADMIN</span>}
             </p>
             <p>Family: {familyId || 'not linked yet'}</p>
           </div>
         </div>
+
+        {isAdmin && (
+          <nav className="tcd-tabs" aria-label="Control plane sections">
+            {(
+              [
+                ['overview', 'Overview'],
+                ['accounts', 'Accounts'],
+                ['features', 'Features'],
+                ['architecture', 'Architecture'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`tcd-tab ${tab === id ? 'active' : ''}`}
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
 
         <div className="tcd-status-composition">
           <div className={`tcd-orb status-${overallStatus}`}>
@@ -356,10 +462,10 @@ function TcdDashboard({
             <h1 className="tcd-status-title">{statusCopy[overallStatus].title}</h1>
             <p className="tcd-status-sub">{statusCopy[overallStatus].sub}</p>
             <div className="tcd-hero-actions">
-              <button className="btn btn-primary" type="button" disabled={busy || !familyId} onClick={() => void run()}>
+              <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void run()}>
                 {busy ? 'Running…' : 'Run health check'}
               </button>
-              <button className="btn btn-ghost-on-dark" type="button" disabled={busy || !familyId} onClick={() => void runRepair()}>
+              <button className="btn btn-ghost-on-dark" type="button" disabled={busy} onClick={() => void runRepair()}>
                 Run auto-repair
               </button>
               <a className="btn btn-ghost-on-dark" href={PARENT_WEB_URL} target="_blank" rel="noreferrer">
@@ -384,7 +490,25 @@ function TcdDashboard({
         {error && <div className="tcd-banner error">{error}</div>}
         {statusMsg && <div className="tcd-banner ok">{statusMsg}</div>}
 
-        {actionItems.length > 0 && (
+        {platformFaults.length > 0 && tab === 'overview' && (
+          <section className="tcd-faults">
+            <h2>Alerts &amp; faults</h2>
+            <ul>
+              {platformFaults.map((f) => (
+                <li key={f.id} className={`tcd-fault severity-${f.severity}`}>
+                  <span className={`pill tcd-${f.severity === 'critical' ? 'fail' : f.severity === 'warning' ? 'warn' : 'ok'}`}>
+                    {f.severity.toUpperCase()}
+                  </span>
+                  <span>
+                    <strong>{f.title}</strong> — {f.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {actionItems.length > 0 && tab === 'overview' && (
           <section className="tcd-action-items">
             <h2>Action items</h2>
             <ul>
@@ -395,6 +519,31 @@ function TcdDashboard({
           </section>
         )}
 
+        {tab === 'accounts' && isAdmin && (
+          <AdminAccountsPanel
+            accounts={adminAccounts}
+            busy={busy}
+            onBusy={setBusy}
+            onStatus={setStatusMsg}
+            onError={setError}
+          />
+        )}
+
+        {tab === 'features' && isAdmin && (
+          <AdminFeaturesPanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
+        )}
+
+        {tab === 'architecture' && isAdmin && (
+          <div className="tcd-card tcd-card-wide tcd-arch-card">
+            <div className="tcd-card-head">
+              <h2>System architecture</h2>
+              <span className="tcd-card-timestamp">live probe status</span>
+            </div>
+            <ArchitectureTree nodes={archNodes} selectedId={archSelected} onSelect={setArchSelected} />
+          </div>
+        )}
+
+        {tab === 'overview' && (
         <div className="tcd-grid">
           <FleetCard liveFleet={liveFleet} overview={overview} checks={fleetChecks} chatActivity={chatActivity} nowTick={nowTick} />
           <PlatformCard checks={platformChecks} generatedAtMs={report?.generatedAtMs} />
@@ -414,11 +563,19 @@ function TcdDashboard({
             </div>
           )}
         </div>
+        )}
       </main>
 
       <p className="tcd-footer-note">
-        SareChild Total Control Dashboard · <a href={PARENT_WEB_URL}>Firebase Hosting mirror</a> ·{' '}
+        SareChild Total Control Dashboard · <a href={TCD_URL}>GitHub Pages TCD</a> ·{' '}
+        <a href={PARENT_WEB_URL}>Firebase Hosting mirror</a> ·{' '}
         <a href="./">Back to marketing site</a>
+        {isAdmin && (
+          <>
+            {' '}
+            · Hard-refresh (Ctrl+Shift+R) after deploys to bust cached JS/CSS.
+          </>
+        )}
       </p>
     </div>
   )

@@ -70,6 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return repo.observeParentProfile(
       user.uid,
       (profile) => {
+        if (profile?.adminBlocked || profile?.accountStatus === 'blocked' || profile?.trial?.status === 'blocked') {
+          void repo.signOut()
+          return
+        }
         setParentProfile(profile)
         setTrialInfo(profile?.trial ?? null)
         if (profile?.familyId) setFamilyId(profile.familyId)

@@ -108,6 +108,8 @@ function parseParentProfile(data: Record<string, unknown> | undefined): ParentPr
     lastLoginAt: data?.lastLoginAt == null ? null : Number(data.lastLoginAt),
     lastActiveAt: data?.lastActiveAt == null ? null : Number(data.lastActiveAt),
     trial: parseTrialInfo(data),
+    adminBlocked: Boolean(data?.adminBlocked),
+    accountStatus: (data?.status as string | undefined) ?? null,
   }
 }
 

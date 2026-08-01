@@ -5,9 +5,10 @@ import { RegisterPage } from './pages/RegisterPage'
 import { TosGatePage } from './pages/TosGatePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { TrialExpiredPage } from './pages/TrialExpiredPage'
+import { BlockedAccountPage } from './pages/BlockedAccountPage'
 
 function AuthedApp() {
-  const { user, loading, trialInfo, needsTerms } = useAuth()
+  const { user, loading, trialInfo, parentProfile, needsTerms } = useAuth()
 
   if (loading) {
     return (
@@ -28,6 +29,13 @@ function AuthedApp() {
   }
 
   if (needsTerms) return <TosGatePage />
+
+  const accountBlocked =
+    parentProfile?.adminBlocked === true ||
+    parentProfile?.accountStatus === 'blocked' ||
+    trialInfo?.status === 'blocked'
+
+  if (accountBlocked) return <BlockedAccountPage />
 
   const now = Date.now()
   const blocked =

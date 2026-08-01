@@ -52,6 +52,8 @@ jobs:
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
           VITE_R2_MEDIA_PROXY_BASE_URL: ${{ secrets.VITE_R2_MEDIA_PROXY_BASE_URL }}
           VITE_PLATFORM_HEALTH_URL: ${{ secrets.VITE_PLATFORM_HEALTH_URL }}
+          VITE_PARENT_WEB_URL: ${{ secrets.VITE_PARENT_WEB_URL }}
+          VITE_MARKETING_URL: ${{ secrets.VITE_MARKETING_URL }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

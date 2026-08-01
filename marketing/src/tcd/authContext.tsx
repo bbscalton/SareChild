@@ -16,12 +16,15 @@ import {
 } from 'firebase/auth'
 import { doc, getDoc, onSnapshot } from 'firebase/firestore'
 import { auth, COL, db, FIREBASE_CONFIGURED } from './firebase'
+import { isProjectAdmin } from './admin'
 import type { TrialInfo } from './types'
 
 type AuthContextValue = {
   configured: boolean
   user: User | null
   loading: boolean
+  isAdmin: boolean
+  blockedMessage: string | null
   familyId: string | null
   trialInfo: TrialInfo | null
   refreshFamilyId: () => Promise<void>
@@ -37,6 +40,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [familyId, setFamilyId] = useState<string | null>(null)
   const [trialInfo, setTrialInfo] = useState<TrialInfo | null>(null)
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null)
+
+  const isAdmin = isProjectAdmin(user)
 
   const refreshFamilyId = async () => {
     if (!auth?.currentUser || !db) {
@@ -69,6 +75,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user || !db) return
     return onSnapshot(doc(db, COL.parentProfiles, user.uid), (snap) => {
       const data = snap.data()
+      if (data?.status === 'blocked' || data?.adminBlocked === true) {
+        setBlockedMessage(
+          (data.blockedReason as string | undefined) ||
+            'Your SareChild account has been suspended by the project administrator.',
+        )
+        if (auth) void firebaseSignOut(auth)
+        return
+      }
       if (!data || data.plan == null) {
         setTrialInfo(null)
         return
@@ -89,6 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       configured: FIREBASE_CONFIGURED,
       user,
       loading,
+      isAdmin,
+      blockedMessage,
       familyId,
       trialInfo,
       refreshFamilyId,
@@ -105,7 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await firebaseSignOut(auth)
       },
     }),
-    [user, loading, familyId, trialInfo],
+    [user, loading, isAdmin, blockedMessage, familyId, trialInfo],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
