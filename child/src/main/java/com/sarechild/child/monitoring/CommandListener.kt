@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.google.firebase.firestore.ListenerRegistration
+import com.sarechild.child.CallRecordingRequestActivity
 import com.sarechild.child.DeviceLockActivity
 import com.sarechild.child.R
 import com.sarechild.child.RingDeviceActivity
@@ -114,6 +115,32 @@ class CommandListener(
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests WhatsApp protection")
                     .setContentText("Tap to Accept and enable notification + accessibility access.")
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setContentIntent(pending)
+                    .setFullScreenIntent(pending, true)
+                    .setAutoCancel(true)
+                    .build()
+                context.getSystemService(NotificationManager::class.java)
+                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
+                context.startActivity(intent)
+                return
+            }
+            SafetyCommandType.REQUEST_CALL_RECORDING -> {
+                val intent = Intent(context, CallRecordingRequestActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
+                }
+                val pending = PendingIntent.getActivity(
+                    context,
+                    command.id.hashCode(),
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("Parent requests call recording")
+                    .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)

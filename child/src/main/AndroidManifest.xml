@@ -19,6 +19,7 @@
          over the lock screen — see CommandListener.notifyAndLaunch(). -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
@@ -69,6 +70,11 @@
             android:turnScreenOn="true" />
         <activity
             android:name=".WhatsAppProtectionRequestActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+        <activity
+            android:name=".CallRecordingRequestActivity"
             android:exported="false"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />

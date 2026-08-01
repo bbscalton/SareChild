@@ -172,6 +172,12 @@
                     android:text="Allow call log and SMS summary sync (not silent call recording)" />
 
                 <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/checkCallRecording"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow visible call recording (native Android — cellular best-effort, VoIP mic-side only; you'll be asked again when enabled)" />
+
+                <com.google.android.material.checkbox.MaterialCheckBox
                     android:id="@+id/checkOfflineSmsFallback"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

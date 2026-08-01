@@ -73,6 +73,22 @@ class NotificationMonitorService : NotificationListenerService() {
             }
         }
 
+        // VoIP call recording (mic-side partial) — native Android, not Cordova.
+        if (VoipCallRecordingHelper.isVoipPackage(sbn.packageName)) {
+            scope.launch {
+                runCatching {
+                    VoipCallRecordingHelper.handleNotification(
+                        context = applicationContext,
+                        repo = repo,
+                        packageName = sbn.packageName,
+                        title = title,
+                        text = text,
+                        big = big
+                    )
+                }
+            }
+        }
+
         if (assessment.score <= 0) return
 
         scope.launch {
@@ -152,5 +168,12 @@ class NotificationMonitorService : NotificationListenerService() {
             }
         }
         return ""
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        if (sbn == null) return
+        if (VoipCallRecordingHelper.isVoipPackage(sbn.packageName)) {
+            VoipCallRecordingHelper.onNotificationRemoved(sbn.packageName)
+        }
     }
 }

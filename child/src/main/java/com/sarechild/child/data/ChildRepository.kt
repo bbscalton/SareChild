@@ -15,6 +15,8 @@ import com.sarechild.shared.AlertType
 import com.sarechild.shared.AppBlockSchedule
 import com.sarechild.shared.AppLimit
 import com.sarechild.shared.BatterySample
+import com.sarechild.shared.CallRecordingEvent
+import com.sarechild.shared.CallRecordingType
 import com.sarechild.shared.CallSmsPreview
 import com.sarechild.shared.FamilyAlert
 import com.sarechild.shared.FamilyChatMessage
@@ -116,6 +118,18 @@ class ChildRepository(
         get() = prefs.getBoolean(SareChildConstants.PREF_WHATSAPP_MONITOR_CONSENT, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_WHATSAPP_MONITOR_CONSENT, value).apply()
 
+    /** Consent for visible call recording (cellular + VoIP partial). Not Cordova — native Android. */
+    var callRecordingConsent: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_CALL_RECORDING_CONSENT, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_CALL_RECORDING_CONSENT, value).apply()
+
+    var callRecordingEnabled: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_CALL_RECORDING_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_CALL_RECORDING_ENABLED, value).apply()
+
+    fun lastCallRecordingAtMs(): Long =
+        prefs.getLong(SareChildConstants.PREF_LAST_CALL_RECORDING_AT_MS, 0L)
+
     fun lastWhatsAppEventAtMs(): Long =
         prefs.getLong(SareChildConstants.PREF_LAST_WHATSAPP_EVENT_AT_MS, 0L)
 
@@ -212,6 +226,8 @@ class ChildRepository(
         "offlineSmsFallbackConsent" to offlineSmsFallbackConsent,
         "offlineAutoCallConsent" to offlineAutoCallConsent,
         "whatsappMonitorConsent" to whatsappMonitorConsent,
+        "callRecordingConsent" to callRecordingConsent,
+        "callRecordingEnabled" to callRecordingEnabled,
         "activeSession" to activeSession
     )
 
@@ -233,7 +249,8 @@ class ChildRepository(
         monitoringActive: Boolean,
         todayScreenMinutes: Int = 0,
         whatsappMediaPermission: Boolean = false,
-        whatsappProtection: Map<String, Any?> = emptyMap()
+        whatsappProtection: Map<String, Any?> = emptyMap(),
+        callRecordingStatus: Map<String, Any?> = emptyMap()
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -252,6 +269,9 @@ class ChildRepository(
         )
         if (whatsappProtection.isNotEmpty()) {
             data["whatsappProtection"] = whatsappProtection
+        }
+        if (callRecordingStatus.isNotEmpty()) {
+            data["callRecordingStatus"] = callRecordingStatus
         }
         data.putAll(consentMap())
         if (location != null) {
@@ -673,6 +693,70 @@ class ChildRepository(
                 )
                 .await()
         }
+    }
+
+    /**
+     * Writes one row to the parent "Call recording" timeline. Native Android capture —
+     * Cordova call-recorder plugins are not used in this project.
+     */
+    suspend fun postCallRecording(
+        callType: CallRecordingType,
+        direction: String,
+        numberMasked: String? = null,
+        contactLabel: String? = null,
+        packageName: String? = null,
+        durationSec: Int,
+        audioUrl: String? = null,
+        audioCaptured: Boolean,
+        audioSourceNote: String? = null
+    ) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        ensureSignedIn()
+        val now = System.currentTimeMillis()
+        val event = CallRecordingEvent(
+            deviceId = did,
+            callType = callType,
+            direction = direction,
+            numberMasked = numberMasked,
+            contactLabel = contactLabel,
+            packageName = packageName,
+            durationSec = durationSec,
+            audioUrl = audioUrl,
+            audioCaptured = audioCaptured,
+            audioSourceNote = audioSourceNote,
+            createdAtMs = now
+        )
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_CALL_RECORDINGS)
+            .add(event.toMap())
+            .await()
+        prefs.edit().putLong(SareChildConstants.PREF_LAST_CALL_RECORDING_AT_MS, now).apply()
+        runCatching {
+            db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+                .collection(SareChildConstants.COL_DEVICES).document(did)
+                .set(
+                    mapOf(
+                        "lastCallRecordingAtMs" to now,
+                        "callRecordingStatus" to mapOf("lastRecordingAtMs" to now)
+                    ),
+                    SetOptions.merge()
+                )
+                .await()
+        }
+        postAlert(
+            FamilyAlert(
+                type = AlertType.CALL_RECORDING,
+                severity = if (audioCaptured) AlertSeverity.MEDIUM else AlertSeverity.LOW,
+                title = "Call recorded — $childName",
+                snippet = buildString {
+                    append(callType.name.lowercase().replace('_', ' '))
+                    append(" · ${durationSec}s")
+                    if (!audioCaptured) append(" (event only — no audio)")
+                },
+                mediaUrl = audioUrl
+            )
+        )
     }
 
     fun listenPendingCommands(

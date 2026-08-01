@@ -25,6 +25,7 @@ class ConsentActivity : AppCompatActivity() {
         binding.checkInstalls.isChecked = repo.installMonitorConsent
         binding.checkUsage.isChecked = repo.usageConsent
         binding.checkCallSms.isChecked = repo.callSmsConsent
+        binding.checkCallRecording.isChecked = repo.callRecordingConsent
         binding.checkOfflineSmsFallback.isChecked = repo.offlineSmsFallbackConsent
         binding.checkOfflineAutoCall.isChecked = repo.offlineAutoCallConsent
 
@@ -45,6 +46,7 @@ class ConsentActivity : AppCompatActivity() {
             binding.checkInstalls,
             binding.checkUsage,
             binding.checkCallSms,
+            binding.checkCallRecording,
             binding.checkOfflineSmsFallback,
             binding.checkOfflineAutoCall,
             binding.checkWhatsapp
@@ -61,6 +63,10 @@ class ConsentActivity : AppCompatActivity() {
             repo.installMonitorConsent = binding.checkInstalls.isChecked
             repo.usageConsent = binding.checkUsage.isChecked
             repo.callSmsConsent = binding.checkCallSms.isChecked
+            repo.callRecordingConsent = binding.checkCallRecording.isChecked
+            if (binding.checkCallRecording.isChecked) {
+                repo.callRecordingEnabled = true
+            }
             repo.offlineSmsFallbackConsent = binding.checkOfflineSmsFallback.isChecked
             repo.offlineAutoCallConsent = binding.checkOfflineAutoCall.isChecked
             repo.whatsappMonitorConsent = binding.checkWhatsapp.isChecked

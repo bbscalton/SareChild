@@ -52,6 +52,9 @@ import type {
   WhatsAppEvent,
   WhatsAppEventType,
   WhatsAppProtectionStatus,
+  CallRecording,
+  CallRecordingStatus,
+  CallRecordingType,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
@@ -235,6 +238,19 @@ function parseWhatsAppProtection(raw: unknown): WhatsAppProtectionStatus | null 
   }
 }
 
+function parseCallRecordingStatus(raw: unknown): CallRecordingStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  return {
+    consent: Boolean(data.consent),
+    enabled: Boolean(data.enabled),
+    micPermission: Boolean(data.micPermission),
+    phoneStatePermission: Boolean(data.phoneStatePermission),
+    lastRecordingAtMs: Number(data.lastRecordingAtMs ?? 0),
+    updatedAtMs: Number(data.updatedAtMs ?? 0),
+  }
+}
+
 export function observeDevices(
   familyId: string,
   onData: (devices: DeviceStatus[]) => void,
@@ -272,6 +288,10 @@ export function observeDevices(
           whatsappMediaPermission: Boolean(data.whatsappMediaPermission),
           lastWhatsAppEventAtMs: Number(data.lastWhatsAppEventAtMs ?? 0),
           whatsappProtection: parseWhatsAppProtection(data.whatsappProtection),
+          callRecordingConsent: Boolean(data.callRecordingConsent),
+          callRecordingEnabled: Boolean(data.callRecordingEnabled),
+          lastCallRecordingAtMs: Number(data.lastCallRecordingAtMs ?? 0),
+          callRecordingStatus: parseCallRecordingStatus(data.callRecordingStatus),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           offlineCallEnabled: Boolean(data.offlineCallEnabled),
@@ -451,6 +471,7 @@ export type SafetyCommandType =
   | 'LOCK_DEVICE'
   | 'UNLOCK_DEVICE'
   | 'REQUEST_WHATSAPP_PROTECTION'
+  | 'REQUEST_CALL_RECORDING'
 
 export async function createSafetyCommand(
   familyId: string,
@@ -857,6 +878,47 @@ export function observeWhatsAppEvents(
           source: (data.source as string) || 'notification',
           createdAtMs: Number(data.createdAtMs ?? 0),
         } satisfies WhatsAppEvent
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+// ---------- Call recording section (native Android — not Cordova) ----------
+
+const CALL_RECORDING_TYPES: CallRecordingType[] = ['CELLULAR', 'VOIP_PARTIAL', 'MISSED']
+
+export function observeCallRecordings(
+  familyId: string,
+  onData: (rows: CallRecording[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.callRecordings),
+    orderBy('createdAtMs', 'desc'),
+    limit(200),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        const rawType = String(data.callType ?? 'CELLULAR') as CallRecordingType
+        return {
+          id: d.id,
+          deviceId: (data.deviceId as string) || '',
+          callType: CALL_RECORDING_TYPES.includes(rawType) ? rawType : 'CELLULAR',
+          direction: (data.direction as string) || 'UNKNOWN',
+          numberMasked: (data.numberMasked as string | null) ?? null,
+          contactLabel: (data.contactLabel as string | null) ?? null,
+          packageName: (data.packageName as string | null) ?? null,
+          durationSec: Number(data.durationSec ?? 0),
+          audioUrl: (data.audioUrl as string | null) ?? null,
+          audioCaptured: Boolean(data.audioCaptured),
+          audioSourceNote: (data.audioSourceNote as string | null) ?? null,
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        } satisfies CallRecording
       })
       onData(rows)
     },

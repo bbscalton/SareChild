@@ -136,6 +136,13 @@ service cloud.firestore {
         allow create: if signedIn();
       }
 
+      // Call recording timeline (native Android MediaRecorder + phone state / VoIP notifications).
+      // Cordova call-recorder plugins are not used — child app writes these rows directly.
+      match /callRecordings/{recordingId} {
+        allow read: if isFamilyGuardian(familyId);
+        allow create: if signedIn();
+      }
+
       // Dedicated WhatsApp protection timeline (messages/calls/media events). Written by the
       // (anonymously signed-in) child device; read by the parent's WhatsApp dashboard section.
       match /whatsappEvents/{eventId} {

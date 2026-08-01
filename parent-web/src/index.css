@@ -951,6 +951,123 @@ select {
   margin: 0;
 }
 
+/* --- Call recording section (native Android — not Cordova) --- */
+.callrecording-hero {
+  background: linear-gradient(135deg, #eef4ff 0%, #ffffff 70%);
+  border-color: rgba(37, 99, 235, 0.22);
+}
+
+.callrecording-hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.callrecording-hero-head h3 { margin: 0; }
+
+.callrecording-limits {
+  margin: 0.75rem 0 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.callrecording-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.callrecording-stat {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem 0.9rem;
+  display: grid;
+  gap: 0.15rem;
+  text-align: center;
+}
+
+.callrecording-stat-num {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.callrecording-stat-num.small { font-size: 1rem; }
+
+.callrecording-stat-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.callrecording-timeline {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.callrecording-event {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.callrecording-event-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+  flex: none;
+}
+
+.callrecording-event-body { display: grid; gap: 0.3rem; min-width: 0; flex: 1; }
+
+.callrecording-event-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.callrecording-event-time { margin-left: auto; }
+
+.callrecording-event-media { max-width: 360px; }
+
+.callrecording-device-status {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.callrecording-device-row {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.callrecording-device-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.callrecording-device-checks { margin: 0; }
+
 /* --- Typing safety / message shield section --- */
 .typing-hero {
   background: linear-gradient(135deg, #eef1ff 0%, #ffffff 70%);

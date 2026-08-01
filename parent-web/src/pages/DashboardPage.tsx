@@ -24,6 +24,7 @@ import type {
   WeeklyDigest,
   WhatsAppEvent,
   WhatsAppEventType,
+  CallRecording,
 } from '../types'
 import { mediaKind } from '../types'
 import type { SafetyCommandType } from '../lib/parentRepo'
@@ -40,6 +41,7 @@ type Section =
   | 'pair'
   | 'safety'
   | 'whatsapp'
+  | 'callrecording'
   | 'typing'
   | 'usage'
   | 'geofences'
@@ -49,6 +51,7 @@ type Section =
 type AlertFilter = 'all' | 'critical' | 'info'
 type WhatsAppFilter = 'all' | 'messages' | 'calls' | 'media' | 'voice' | 'video' | 'unknown'
 type TypingFilter = 'all' | 'flagged' | 'unreviewed'
+type CallRecordingFilter = 'all' | 'cellular' | 'voip' | 'missed'
 
 type NavItem = {
   id: Section
@@ -82,6 +85,8 @@ export function DashboardPage() {
   const [safeContacts, setSafeContacts] = useState<SafeContact[]>([])
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppFilter, setWhatsAppFilter] = useState<WhatsAppFilter>('all')
+  const [callRecordings, setCallRecordings] = useState<CallRecording[]>([])
+  const [callRecordingFilter, setCallRecordingFilter] = useState<CallRecordingFilter>('all')
   const [typingEvents, setTypingEvents] = useState<TypingSafetyEvent[]>([])
   const [typingFilter, setTypingFilter] = useState<TypingFilter>('all')
   const [typingSettings, setTypingSettings] = useState<TypingSafetySettings>({
@@ -183,6 +188,7 @@ export function DashboardPage() {
       repo.observeSosContacts(familyId, setSosContacts, (e) => setError(e.message)),
       repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
       repo.observeWhatsAppEvents(familyId, setWhatsAppEvents, (e) => setError(e.message)),
+      repo.observeCallRecordings(familyId, setCallRecordings, (e) => setError(e.message)),
       repo.observeTypingSafetyEvents(familyId, setTypingEvents, (e) => setError(e.message)),
       repo.observeTypingSafetySettings(familyId, setTypingSettings, (e) => setError(e.message)),
       repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
@@ -299,6 +305,25 @@ export function DashboardPage() {
     const types = typeMap[whatsAppFilter as Exclude<WhatsAppFilter, 'all' | 'unknown'>]
     return whatsAppEvents.filter((e) => types.includes(e.eventType))
   }, [whatsAppEvents, whatsAppFilter])
+
+  const callRecordingStats = useMemo(() => {
+    const total = callRecordings.length
+    const withAudio = callRecordings.filter((r) => r.audioCaptured).length
+    const totalDurationSec = callRecordings.reduce((sum, r) => sum + r.durationSec, 0)
+    const lastMs = callRecordings.reduce((max, r) => Math.max(max, r.createdAtMs), 0)
+    return { total, withAudio, totalDurationSec, lastMs }
+  }, [callRecordings])
+
+  const filteredCallRecordings = useMemo(() => {
+    if (callRecordingFilter === 'all') return callRecordings
+    if (callRecordingFilter === 'cellular') {
+      return callRecordings.filter((r) => r.callType === 'CELLULAR')
+    }
+    if (callRecordingFilter === 'voip') {
+      return callRecordings.filter((r) => r.callType === 'VOIP_PARTIAL')
+    }
+    return callRecordings.filter((r) => r.callType === 'MISSED')
+  }, [callRecordings, callRecordingFilter])
 
   const typingFlaggedCount = useMemo(
     () => typingEvents.filter((e) => e.matchedWords.length > 0).length,
@@ -798,6 +823,18 @@ export function DashboardPage() {
       ],
     },
     {
+      label: 'Communication',
+      items: [
+        {
+          id: 'callrecording',
+          label: 'Call recording',
+          sub: 'Cellular & VoIP (native Android)',
+          icon: '\u{1F4DE}',
+          badge: callRecordingStats.total > 0 ? callRecordingStats.total : undefined,
+        },
+      ],
+    },
+    {
       label: 'Typing safety',
       items: [
         {
@@ -830,6 +867,7 @@ export function DashboardPage() {
     pair: 'Pair a device',
     safety: 'Safety checks',
     whatsapp: 'WhatsApp protection',
+    callrecording: 'Call recording',
     typing: 'Typing safety',
     usage: 'App usage & limits',
     geofences: 'Safe zones (geofences)',
@@ -1611,6 +1649,192 @@ export function DashboardPage() {
                   </ul>
                 </div>
               )}
+            </section>
+          )}
+
+          {section === 'callrecording' && (
+            <section className="stack">
+              <div className="card callrecording-hero">
+                <div className="callrecording-hero-head">
+                  <h3>Call recording</h3>
+                  <span className="pill online">Native Android</span>
+                </div>
+                <p className="muted">
+                  Consent-based call monitoring on paired devices. SareChild is a native Kotlin app —{' '}
+                  <strong>Cordova plugins (<code>cordova-plugin-callrecorder</code> /{' '}
+                  <code>cordova-plugin-callrecorder-cellular</code>) do not apply here.</strong>{' '}
+                  We use native <code>MediaRecorder</code>, phone-state callbacks, and notification-assisted
+                  VoIP detection instead.
+                </p>
+                <ul className="muted small callrecording-limits">
+                  <li>
+                    <strong>Cellular:</strong> best-effort two-way audio when Android allows (often limited on
+                    Android 10+). Call events are always logged even when audio capture fails.
+                  </li>
+                  <li>
+                    <strong>VoIP</strong> (WhatsApp, Telegram, Zoom, etc.): mic-side partial recording only while
+                    a call notification is active — full two-way VoIP recording is not reliably available on modern
+                    Android.
+                  </li>
+                  <li>
+                    <strong>Missed:</strong> ring-without-answer events logged without audio.
+                  </li>
+                </ul>
+                <div className="callrecording-stats">
+                  <div className="callrecording-stat">
+                    <span className="callrecording-stat-num">{callRecordingStats.total}</span>
+                    <span className="callrecording-stat-label">Total recordings</span>
+                  </div>
+                  <div className="callrecording-stat">
+                    <span className="callrecording-stat-num">{callRecordingStats.withAudio}</span>
+                    <span className="callrecording-stat-label">With audio</span>
+                  </div>
+                  <div className="callrecording-stat">
+                    <span className="callrecording-stat-num">
+                      {Math.floor(callRecordingStats.totalDurationSec / 60)}m
+                    </span>
+                    <span className="callrecording-stat-label">Total duration</span>
+                  </div>
+                  <div className="callrecording-stat">
+                    <span className="callrecording-stat-num small">
+                      {callRecordingStats.lastMs > 0
+                        ? new Date(callRecordingStats.lastMs).toLocaleDateString()
+                        : '—'}
+                    </span>
+                    <span className="callrecording-stat-label">Last recording</span>
+                  </div>
+                </div>
+              </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Device status</h3>
+                  <p className="muted small">
+                    Each child phone needs consent, microphone, phone-state (cellular), and notification access
+                    (VoIP). Tap Request call recording to send the visible Accept flow with countdown auto-allow.
+                  </p>
+                  <ul className="callrecording-device-status">
+                    {devices.map((d) => {
+                      const cr = d.callRecordingStatus
+                      const consent = cr?.consent ?? d.callRecordingConsent
+                      const enabled = cr?.enabled ?? d.callRecordingEnabled
+                      const mic = cr?.micPermission ?? false
+                      const phone = cr?.phoneStatePermission ?? false
+                      const notif = d.notificationAccess
+                      const lastMs = Math.max(cr?.lastRecordingAtMs ?? 0, d.lastCallRecordingAtMs)
+                      const ready = consent && enabled && mic
+                      return (
+                        <li key={d.id} className="callrecording-device-row">
+                          <div className="callrecording-device-head">
+                            <strong>{d.childName}</strong>
+                            <span className={`pill ${ready ? 'online' : 'offline'}`}>
+                              {ready ? 'Recording enabled' : 'Setup incomplete'}
+                            </span>
+                          </div>
+                          <ul className="meta callrecording-device-checks">
+                            <li>{consent ? '✓' : '✗'} Child consent</li>
+                            <li>{enabled ? '✓' : '✗'} Recording enabled</li>
+                            <li>{mic ? '✓' : '✗'} Microphone permission</li>
+                            <li>{phone ? '✓' : '○'} Phone state (cellular)</li>
+                            <li>{notif ? '✓' : '○'} Notification access (VoIP)</li>
+                            <li>
+                              Last recording:{' '}
+                              {lastMs > 0
+                                ? new Date(lastMs).toLocaleString()
+                                : 'None yet — place a test call'}
+                            </li>
+                          </ul>
+                          <button
+                            className="btn primary compact"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void requestCheck(d.id, 'REQUEST_CALL_RECORDING')}
+                          >
+                            Request call recording
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <div className="card">
+                <h3>Recorded calls</h3>
+                <div className="filter-row">
+                  {(
+                    [
+                      ['all', `All (${callRecordings.length})`],
+                      ['cellular', 'Cellular'],
+                      ['voip', 'VoIP'],
+                      ['missed', 'Missed'],
+                    ] as [CallRecordingFilter, string][]
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={callRecordingFilter === id ? 'chip active' : 'chip'}
+                      onClick={() => setCallRecordingFilter(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredCallRecordings.length === 0 ? (
+                  <Empty
+                    title="No call recordings yet"
+                    body="Enable call recording on the child device, grant mic + phone-state permissions, then place a cellular call or WhatsApp voice call. Events appear here within a minute."
+                  />
+                ) : (
+                  <ul className="callrecording-timeline">
+                    {filteredCallRecordings.map((rec) => {
+                      const name = devices.find((dev) => dev.id === rec.deviceId)?.childName || rec.deviceId
+                      const typeLabel =
+                        rec.callType === 'CELLULAR'
+                          ? 'Cellular'
+                          : rec.callType === 'VOIP_PARTIAL'
+                            ? 'VoIP (mic partial)'
+                            : 'Missed'
+                      const contact =
+                        rec.numberMasked || rec.contactLabel || rec.packageName || 'Unknown'
+                      return (
+                        <li key={rec.id} className="callrecording-event">
+                          <span className="callrecording-event-icon" aria-hidden="true">
+                            {rec.callType === 'CELLULAR'
+                              ? '📞'
+                              : rec.callType === 'VOIP_PARTIAL'
+                                ? '🎧'
+                                : '📵'}
+                          </span>
+                          <div className="callrecording-event-body">
+                            <div className="callrecording-event-top">
+                              <strong>{contact}</strong>
+                              <span className="pill online">{typeLabel}</span>
+                              {!rec.audioCaptured && (
+                                <span className="pill offline">Event only</span>
+                              )}
+                              <span className="muted small callrecording-event-time">
+                                {new Date(rec.createdAtMs).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="muted small">
+                              {name} · {rec.direction}
+                              {rec.durationSec > 0 ? ` · ${rec.durationSec}s` : ''}
+                              {rec.audioSourceNote ? ` · ${rec.audioSourceNote}` : ''}
+                            </p>
+                            {rec.audioUrl && (
+                              <figure className="gallery-item callrecording-event-media">
+                                <MediaThumb url={rec.audioUrl} />
+                              </figure>
+                            )}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
             </section>
           )}
 

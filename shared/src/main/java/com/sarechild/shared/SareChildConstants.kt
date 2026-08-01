@@ -39,6 +39,9 @@ object SareChildConstants {
     // by either Android app — kept here so the collection name stays a single
     // source of truth if a future on-device feature (e.g. "distance to school") needs it.
     const val COL_MAP_PLACES = "mapPlaces"
+    // Parent "Call recording" section: one row per cellular / VoIP call event (with optional
+    // uploaded audio). Written by child/monitoring/CallRecordingMonitor and VoipCallRecordingHelper.
+    const val COL_CALL_RECORDINGS = "callRecordings"
 
     const val KEYWORD_LIST_DEFAULT = "default"
 
@@ -105,7 +108,12 @@ object SareChildConstants {
     const val PREF_OFFLINE_SMS_FALLBACK_CONSENT = "offline_sms_fallback_consent"
     const val PREF_OFFLINE_AUTO_CALL_CONSENT = "offline_auto_call_consent"
     const val PREF_WHATSAPP_MONITOR_CONSENT = "whatsapp_monitor_consent"
+    /** Consent for visible call recording (cellular best-effort + VoIP mic-side partial). */
+    const val PREF_CALL_RECORDING_CONSENT = "call_recording_consent"
+    /** Whether call recording is actively enabled after consent (parent can request enable). */
+    const val PREF_CALL_RECORDING_ENABLED = "call_recording_enabled"
     const val PREF_LAST_WHATSAPP_EVENT_AT_MS = "last_whatsapp_event_at_ms"
+    const val PREF_LAST_CALL_RECORDING_AT_MS = "last_call_recording_at_ms"
     const val PREF_OFFLINE_CALL_ENABLED = "offline_call_enabled"
     const val PREF_OFFLINE_CALL_NUMBER = "offline_call_number"
     const val PREF_OFFLINE_CALL_MAX_ATTEMPTS = "offline_call_max_attempts"
@@ -131,6 +139,8 @@ object SareChildConstants {
     const val USAGE_NOTIFICATION_ID = 1007
     const val DEVICE_LOCK_NOTIFICATION_ID = 1008
     const val CHAT_NOTIFICATION_ID = 1009
+    const val CALL_RECORDING_NOTIFICATION_ID = 1010
+    const val NOTIFICATION_CHANNEL_CALL_RECORDING = "call_recording"
 
     // FCM data-payload keys shared by the family chat Cloud Function and both apps.
     const val FCM_DATA_TYPE = "type"

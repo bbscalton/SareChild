@@ -366,6 +366,44 @@ data class CallSmsPreview(
 }
 
 /**
+ * One row in the parent "Call recording" dashboard section (`families/{familyId}/callRecordings`).
+ * Native Android implementation — MediaRecorder + phone-state for cellular, notification-assisted
+ * mic-side capture for VoIP apps. Cordova call-recorder plugins are not used.
+ */
+data class CallRecordingEvent(
+    val id: String = "",
+    val deviceId: String = "",
+    val callType: CallRecordingType = CallRecordingType.CELLULAR,
+    val direction: String = "UNKNOWN",
+    val numberMasked: String? = null,
+    val contactLabel: String? = null,
+    val packageName: String? = null,
+    val durationSec: Int = 0,
+    val audioUrl: String? = null,
+    val audioCaptured: Boolean = false,
+    /** e.g. mic_only, voice_call, voice_communication, capture_failed_android10 */
+    val audioSourceNote: String? = null,
+    val createdAtMs: Long = System.currentTimeMillis(),
+    val retainUntilMs: Long = System.currentTimeMillis() +
+        SareChildConstants.MEDIA_RETENTION_DAYS * 24L * 60L * 60L * 1000L
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "deviceId" to deviceId,
+        "callType" to callType.name,
+        "direction" to direction,
+        "numberMasked" to numberMasked,
+        "contactLabel" to contactLabel,
+        "packageName" to packageName,
+        "durationSec" to durationSec,
+        "audioUrl" to audioUrl,
+        "audioCaptured" to audioCaptured,
+        "audioSourceNote" to audioSourceNote,
+        "createdAtMs" to createdAtMs,
+        "retainUntilMs" to retainUntilMs
+    )
+}
+
+/**
  * A single WhatsApp activity record for the parent's dedicated "WhatsApp" dashboard section
  * (see `families/{familyId}/whatsappEvents`). Written by [com.sarechild.child.monitoring
  * .WhatsAppMonitor] / `WhatsAppMediaObserver` on the child device from notification text,

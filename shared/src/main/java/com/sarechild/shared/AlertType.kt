@@ -26,6 +26,8 @@ enum class AlertType {
     DEVICE_UNLOCKED,
     WHATSAPP_MEDIA,
     WHATSAPP_CALL,
+    /** A call recording was uploaded or a call event logged (cellular / VoIP partial). */
+    CALL_RECORDING,
     // A prohibited-word match from the Typing safety / message shield monitor
     // (see TypingSafetyEvent / MessageMonitorAccessibilityService). Distinct from
     // KEYWORD (legacy on-screen risk alert) so parent-web/parent-Android can route
@@ -59,7 +61,21 @@ enum class SafetyCommandType {
     LOCK_DEVICE,
     UNLOCK_DEVICE,
     /** Parent asks child to enable WhatsApp protection (consent + OS permission setup). */
-    REQUEST_WHATSAPP_PROTECTION
+    REQUEST_WHATSAPP_PROTECTION,
+    /** Parent asks child to enable call recording (consent + mic / phone-state permissions). */
+    REQUEST_CALL_RECORDING
+}
+
+/**
+ * Classification for a call recording row. Native Android — not Cordova plugins.
+ * CELLULAR: best-effort via MediaRecorder + phone state (full two-way may be blocked on Android 10+).
+ * VOIP_PARTIAL: mic-side only while a VoIP call notification is active (WhatsApp, Telegram, etc.).
+ * MISSED: call event logged without audio (ring → idle, or log-only when capture failed).
+ */
+enum class CallRecordingType {
+    CELLULAR,
+    VOIP_PARTIAL,
+    MISSED
 }
 
 enum class SafetyCommandStatus {

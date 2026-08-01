@@ -21,6 +21,32 @@ export type WhatsAppProtectionStatus = {
   updatedAtMs: number
 }
 
+export type CallRecordingStatus = {
+  consent: boolean
+  enabled: boolean
+  micPermission: boolean
+  phoneStatePermission: boolean
+  lastRecordingAtMs: number
+  updatedAtMs: number
+}
+
+export type CallRecordingType = 'CELLULAR' | 'VOIP_PARTIAL' | 'MISSED'
+
+export type CallRecording = {
+  id: string
+  deviceId: string
+  callType: CallRecordingType
+  direction: string
+  numberMasked: string | null
+  contactLabel: string | null
+  packageName: string | null
+  durationSec: number
+  audioUrl: string | null
+  audioCaptured: boolean
+  audioSourceNote: string | null
+  createdAtMs: number
+}
+
 export type DeviceStatus = {
   id: string
   childName: string
@@ -46,6 +72,10 @@ export type DeviceStatus = {
   whatsappMediaPermission: boolean
   lastWhatsAppEventAtMs: number
   whatsappProtection: WhatsAppProtectionStatus | null
+  callRecordingConsent: boolean
+  callRecordingEnabled: boolean
+  lastCallRecordingAtMs: number
+  callRecordingStatus: CallRecordingStatus | null
   chatOnline: boolean
   chatLastSeenMs: number
   offlineCallEnabled: boolean

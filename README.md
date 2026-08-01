@@ -57,8 +57,21 @@ Parents approve and pair a child device. The child app stays visible (“Protect
 - **Family live chat** — child + parent/guardians can group chat with text, images, and voice notes; chat includes simple online indicators and stays within each family
 - **Unidentified WhatsApp contact alerts** — parent-managed safe contact list; WhatsApp contacts not on the safe list trigger alerts with risk scoring from visible message previews/on-screen text
 
+### Call recording (native Android — parent-web sidebar: Communication → Call recording)
+SareChild is **not a Cordova app**. Cordova plugins such as `cordova-plugin-callrecorder` (VoIP) and `cordova-plugin-callrecorder-cellular` **do not apply**. Call recording uses native Kotlin:
+
+| Type | What we capture | Limits |
+|------|-----------------|--------|
+| **Cellular** | `MediaRecorder` + `TelephonyManager` phone-state callbacks | Android 10+ often blocks full uplink+downlink; we try `VOICE_COMMUNICATION` / `MIC` and still log call events when audio fails |
+| **VoIP partial** | Mic-side recording while WhatsApp/Telegram/Zoom/etc. call notification is active | Not full two-way VoIP — remote party audio is not reliably capturable on stock Android |
+| **Missed** | Ring → idle without answer | Event only, no audio |
+
+Child flow: parent sends **Request call recording** → child sees Accept screen with **30s countdown auto-allow** (same pattern as screen share / WhatsApp protection) → grants mic, phone-state, and notification access.
+
+Firestore: `families/{familyId}/callRecordings` (audio URLs via R2 media proxy, same as other media).
+
 ### Explicitly not included
-- Silent / background call recording
+- **Silent / hidden** call recording (all recording requires child consent + visible Accept flow)
 - Hidden ambient mic or camera
 - Full WhatsApp / Telegram encrypted DB dumps
 - Hidden app icon / stealth mode

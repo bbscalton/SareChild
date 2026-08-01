@@ -55,6 +55,7 @@ class MonitoringForegroundService : Service() {
     private var commandListener: CommandListener? = null
     private var scheduleWatcher: ScreenShareScheduleWatcher? = null
     private var whatsAppMediaObserver: WhatsAppMediaObserver? = null
+    private var callRecordingMonitor: CallRecordingMonitor? = null
     private var lastWallClockMs: Long = 0L
     private var lastElapsedRealtimeMs: Long = 0L
     private var lastCheckInPromptMs: Long = 0L
@@ -80,6 +81,7 @@ class MonitoringForegroundService : Service() {
         startUsageBlockLoop()
         commandListener = CommandListener(this, repo).also { it.start() }
         scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
+        ensureCallRecordingMonitor()
         scope.launch { refreshGeofences() }
         return START_STICKY
     }
@@ -172,7 +174,15 @@ class MonitoringForegroundService : Service() {
             mediaPermission = waMediaPerm,
             lastEventAtMs = lastEventAtMs
         )
+        val callRecProtection = VoipCallRecordingHelper.protectionStatusMap(
+            consent = repo.callRecordingConsent,
+            enabled = repo.callRecordingEnabled,
+            micPermission = hasRecordAudioPermission(),
+            phoneStatePermission = hasPhoneStatePermission(),
+            lastRecordingAtMs = repo.lastCallRecordingAtMs()
+        )
         ensureWhatsAppMediaObserver(notif, waMediaPerm)
+        ensureCallRecordingMonitor()
 
         if (lastNotifAccess == true && !notif) {
             repo.postPermissionRevoked("Notification access disabled")
@@ -232,7 +242,8 @@ class MonitoringForegroundService : Service() {
             monitoringActive = true,
             todayScreenMinutes = screenMinutes,
             whatsappMediaPermission = waMediaPerm,
-            whatsappProtection = waProtection
+            whatsappProtection = waProtection,
+            callRecordingStatus = callRecProtection
         )
         scheduleWatcher?.tick()
     }
@@ -346,6 +357,26 @@ class MonitoringForegroundService : Service() {
         }
     }
 
+    private fun ensureCallRecordingMonitor() {
+        val shouldRun = repo.callRecordingConsent && repo.callRecordingEnabled
+        if (shouldRun && callRecordingMonitor == null) {
+            callRecordingMonitor = CallRecordingMonitor(this, repo, scope).also { it.start() }
+        } else if (!shouldRun && callRecordingMonitor != null) {
+            callRecordingMonitor?.stop()
+            callRecordingMonitor = null
+        } else if (shouldRun) {
+            callRecordingMonitor?.refresh()
+        }
+    }
+
+    private fun hasRecordAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun hasPhoneStatePermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_PHONE_STATE) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun isNotificationAccessEnabled(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
         return flat?.contains(packageName) == true
@@ -370,6 +401,8 @@ class MonitoringForegroundService : Service() {
         commandListener?.stop()
         scheduleWatcher?.stop()
         whatsAppMediaObserver?.stop()
+        callRecordingMonitor?.stop()
+        callRecordingMonitor = null
         fused.removeLocationUpdates(locationCallback)
         heartbeatJob?.cancel()
         usageBlockJob?.cancel()
