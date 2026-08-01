@@ -182,4 +182,16 @@ export type PlatformFault = {
   source: string
 }
 
-export type TcdTab = 'overview' | 'accounts' | 'features' | 'architecture'
+export type TcdTab = 'overview' | 'accounts' | 'features' | 'architecture' | 'system'
+
+export type AdminAuditLogEntry = {
+  id: string
+  action: string
+  adminEmail: string
+  targetUid: string
+  targetEmail?: string | null
+  detail?: string
+  atMs: number
+}
+
+export type AdminAccountAction = 'reset' | 'delete' | 'trial' | 'revoke' | null

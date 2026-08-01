@@ -483,6 +483,74 @@
   background: #fdf5f4;
 }
 
+.tcd-admin-table tr.row-admin-self {
+  background: #fff9ee;
+}
+
+.tcd-row-actions-wrap {
+  max-width: 320px;
+}
+
+.tcd-inline-form-wrap {
+  flex-wrap: wrap;
+}
+
+.tcd-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(15, 12, 41, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.tcd-modal {
+  width: min(100%, 480px);
+  background: #fff;
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.35rem;
+  box-shadow: 0 24px 64px rgba(15, 12, 41, 0.25);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tcd-modal h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.tcd-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.tcd-system-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tcd-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.tcd-link-list a {
+  color: var(--indigo-mid);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tcd-link-list a:hover {
+  text-decoration: underline;
+}
+
 .tcd-cell-main { font-weight: 600; }
 .tcd-cell-sub { font-size: 0.75rem; color: var(--ink-soft); }
 .tcd-cell-mono { font-family: ui-monospace, monospace; font-size: 0.78rem; }

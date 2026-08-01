@@ -238,5 +238,11 @@ service cloud.firestore {
       allow read: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
       allow write: if isProjectAdmin();
     }
+
+    match /adminAuditLogs/{logId} {
+      allow read: if isProjectAdmin();
+      allow create: if isProjectAdmin();
+      allow update, delete: if false;
+    }
   }
 }

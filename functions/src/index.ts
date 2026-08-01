@@ -3,182 +3,30 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
+import { runPurgeInactiveTrials } from "./purgeTrials";
 
-admin.initializeApp();
+export {
+  adminWipeUser,
+  adminDeleteUser,
+  adminRevokeSessions,
+  adminAdjustTrial,
+  adminTriggerPurgeTrials,
+  adminRepairOrphans,
+  adminSendTestFcm,
+} from "./admin";
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
 const db = admin.firestore();
 
 const WENT_DARK_MS = 5 * 60 * 1000;
 const ALERT_RETENTION_DAYS = 30;
 const MEDIA_RETENTION_DAYS = 7;
 
-// ---------- Trial subscription model ----------
-// Data model (parentProfiles/{uid}): plan: "trial" | "paid", status: "active" | "at_risk"
-// | "purged", trialStartedAt, trialEndsAt, lastLoginAt, lastParentCheckInAt. `plan`/`status`
-// are designed so a future "paid" plan can be added later (billing fields, renewal dates)
-// without a data-model rewrite — purge logic below only ever touches plan === "trial".
-const TRIAL_DAYS = 30;
-const CHECK_IN_STALE_DAYS = 7;
-const INACTIVITY_GRACE_DAYS = 3;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Subcollections that hang off a family doc and must be deleted with it. */
-const FAMILY_SUBCOLLECTIONS = [
-  "devices",
-  "alerts",
-  "familyChat",
-  "geofences",
-  "commands",
-  "appEvents",
-  "usageDaily",
-  "locationTrail",
-  "callSmsPreviews",
-  "digests",
-  "sosContacts",
-  "safeContacts",
-  "safetySettings",
-  "appLimits",
-  "appBlockSchedules",
-  "screenShareSchedules",
-  "guardians",
-];
-
-async function deleteCollectionRecursive(
-  ref: FirebaseFirestore.CollectionReference,
-  batchSize = 200
-): Promise<void> {
-  // Loops in pages so this works regardless of collection size without needing the
-  // (Node-only) firebase-tools bulk delete helper inside a Cloud Function.
-  for (;;) {
-    const snap = await ref.limit(batchSize).get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-    if (snap.size < batchSize) return;
-  }
-}
-
-/** Deletes a family document, all of its known subcollections, and its Auth/profile trace. */
-async function deleteFamilyDeep(familyId: string): Promise<void> {
-  const familyRef = db.collection("families").doc(familyId);
-  for (const sub of FAMILY_SUBCOLLECTIONS) {
-    await deleteCollectionRecursive(familyRef.collection(sub));
-  }
-  await familyRef.delete();
-}
-
-type TrialDecision = "keep" | "warn" | "purge";
-
-/**
- * Implements the trial auto-cleanup rule from the product spec:
- *   1. Trial lasts 30 days with full features.
- *   2. Weekly engagement is expected: if there's been no parent check-in (dashboard
- *      open / device view / alert view) in the last 7 days, the account is "at risk";
- *      after a further grace period with still no check-in, it is purged.
- *   3. If the trial's full 30-day window has elapsed, the account is purged outright
- *      regardless of check-in recency (a trial's over is over).
- * "Check-in" and "login" are tracked separately because a parent could leave the app
- * open (no fresh login) yet still be actively checking on their kids, or vice versa.
- */
-function decideTrialFate(
-  now: number,
-  data: FirebaseFirestore.DocumentData
-): TrialDecision {
-  if (data.plan !== "trial") return "keep";
-  if (data.status === "purged") return "keep"; // already handled
-
-  const trialStartedAt = Number(data.trialStartedAt ?? now);
-  const trialEndsAt = Number(data.trialEndsAt ?? trialStartedAt + TRIAL_DAYS * DAY_MS);
-  const lastLoginAt = data.lastLoginAt ? Number(data.lastLoginAt) : null;
-  const lastCheckInAt = data.lastParentCheckInAt ? Number(data.lastParentCheckInAt) : null;
-
-  // Rule 3: the trial month is simply over — no grace period, matches "full trial,
-  // then it ends" expectations rather than silently running forever.
-  if (now > trialEndsAt) return "purge";
-
-  // Rule 1+2: never logged in again after day 30 of a still-open trial window can't
-  // happen (trialEndsAt already covers that), so the inactivity path is really about
-  // an *engaged-once-then-gone* parent: no login for 30+ days from trial start AND no
-  // weekly kid check-in — i.e. they set it up and walked away.
-  const neverLoggedBackIn = !lastLoginAt || now - trialStartedAt > TRIAL_DAYS * DAY_MS;
-  const loginStale = lastLoginAt != null && now - lastLoginAt > TRIAL_DAYS * DAY_MS;
-  const checkInStale = !lastCheckInAt || now - lastCheckInAt > CHECK_IN_STALE_DAYS * DAY_MS;
-  const inactive = (neverLoggedBackIn || loginStale) && checkInStale;
-
-  if (!inactive) return "keep";
-
-  const warnedAt = data.purgeWarnedAt ? Number(data.purgeWarnedAt) : null;
-  if (warnedAt && now - warnedAt > INACTIVITY_GRACE_DAYS * DAY_MS) return "purge";
-  return "warn";
-}
-
-/**
- * Daily cron: finds trial accounts that should be warned or purged per
- * `decideTrialFate` and applies the action. Purge deletes the Firebase Auth user,
- * deletes the owned family + all subcollections (caregivers only lose their own
- * guardian membership + profile — the family itself belongs to its owner), and turns
- * the parentProfile into a `status: "purged"` tombstone so Firestore rules keep
- * denying access even though the doc still exists for support/audit purposes.
- */
+/** Daily cron: warns or purges inactive trial accounts (see purgeTrials.ts). */
 export const purgeInactiveTrials = onSchedule("every 24 hours", async () => {
-  const now = Date.now();
-  const profiles = await db.collection("parentProfiles").where("plan", "==", "trial").get();
-
-  let warned = 0;
-  let purged = 0;
-
-  for (const profile of profiles.docs) {
-    const data = profile.data();
-    const decision = decideTrialFate(now, data);
-    if (decision === "keep") continue;
-
-    if (decision === "warn") {
-      if (!data.purgeWarnedAt) {
-        await profile.ref.set(
-          { status: "at_risk", purgeWarnedAt: now },
-          { merge: true }
-        );
-        warned++;
-      }
-      continue;
-    }
-
-    // decision === "purge"
-    const uid = profile.id;
-    const familyId = data.familyId as string | undefined;
-    try {
-      if (familyId) {
-        const familySnap = await db.collection("families").doc(familyId).get();
-        if (familySnap.exists && familySnap.get("parentUid") === uid) {
-          await deleteFamilyDeep(familyId);
-        } else {
-          // Caregiver, not the owner: only remove their own guardian membership.
-          await db
-            .collection("families")
-            .doc(familyId)
-            .collection("guardians")
-            .doc(uid)
-            .delete()
-            .catch(() => undefined);
-        }
-      }
-      await admin
-        .auth()
-        .deleteUser(uid)
-        .catch((err) => logger.warn(`Auth delete failed for ${uid}`, err));
-      // Full overwrite (merge: false) intentionally drops familyId/email/fcmTokens —
-      // this is the minimal "tombstone" the requesterActive() Firestore rule checks.
-      await profile.ref.set(
-        { status: "purged", plan: "trial", purgedAtMs: now },
-        { merge: false }
-      );
-      purged++;
-    } catch (err) {
-      logger.error(`Failed to purge trial account ${uid}`, err);
-    }
-  }
-
-  logger.info(`purgeInactiveTrials: warned=${warned} purged=${purged} scanned=${profiles.size}`);
+  await runPurgeInactiveTrials();
 });
 
 type FcmMessage = {

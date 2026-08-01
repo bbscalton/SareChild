@@ -5,6 +5,7 @@ import * as repo from './repo'
 import * as adminRepo from './adminRepo'
 import { AdminAccountsPanel } from './AdminAccountsPanel'
 import { AdminFeaturesPanel } from './AdminFeaturesPanel'
+import { AdminSystemPanel } from './AdminSystemPanel'
 import { ArchitectureTree, buildArchNodes } from './ArchitectureTree'
 import { PARENT_WEB_URL, TCD_URL, WENT_DARK_AFTER_MS } from './firebase'
 import type {
@@ -439,6 +440,7 @@ function TcdDashboard({
                 ['overview', 'Overview'],
                 ['accounts', 'Accounts'],
                 ['features', 'Features'],
+                ['system', 'System'],
                 ['architecture', 'Architecture'],
               ] as const
             ).map(([id, label]) => (
@@ -522,11 +524,16 @@ function TcdDashboard({
         {tab === 'accounts' && isAdmin && (
           <AdminAccountsPanel
             accounts={adminAccounts}
+            adminEmail={email}
             busy={busy}
             onBusy={setBusy}
             onStatus={setStatusMsg}
             onError={setError}
           />
+        )}
+
+        {tab === 'system' && isAdmin && (
+          <AdminSystemPanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
         )}
 
         {tab === 'features' && isAdmin && (

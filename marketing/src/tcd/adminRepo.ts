@@ -1,15 +1,22 @@
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
+  query,
   setDoc,
   updateDoc,
   type Unsubscribe,
 } from 'firebase/firestore'
-import { auth, COL, db } from './firebase'
+import { httpsCallable } from 'firebase/functions'
+import { auth, COL, db, functions } from './firebase'
+import { ADMIN_EMAIL } from './admin'
 import type {
+  AdminAuditLogEntry,
   AdminFeatureConfig,
   AdminParentAccountRow,
   FeatureKey,
@@ -19,6 +26,29 @@ import type {
 function requireDb() {
   if (!db) throw new Error('Firebase is not configured for this build.')
   return db
+}
+
+function requireFunctions() {
+  if (!functions) throw new Error('Firebase Functions is not configured for this build.')
+  return functions
+}
+
+async function writeClientAuditLog(entry: {
+  action: string
+  targetUid: string
+  targetEmail?: string | null
+  detail?: string
+}): Promise<void> {
+  const database = requireDb()
+  await addDoc(collection(database, COL.adminAuditLogs), {
+    ...entry,
+    adminEmail: auth?.currentUser?.email ?? ADMIN_EMAIL,
+    atMs: Date.now(),
+  })
+}
+
+function callable<TReq, TRes>(name: string) {
+  return httpsCallable<TReq, TRes>(requireFunctions(), name)
 }
 
 const DEFAULT_FEATURES: Record<FeatureKey, boolean> = {
@@ -94,12 +124,20 @@ export function observeAdminAccounts(onData: (rows: AdminParentAccountRow[]) => 
 export async function blockAccount(uid: string, reason?: string): Promise<void> {
   const database = requireDb()
   const now = Date.now()
+  const snap = await getDoc(doc(database, COL.parentProfiles, uid))
+  const email = (snap.data()?.email as string | undefined) ?? ''
   await updateDoc(doc(database, COL.parentProfiles, uid), {
     status: 'blocked',
     adminBlocked: true,
     blockedAtMs: now,
     blockedReason: reason?.trim() || 'Blocked by project administrator',
     blockedBy: auth?.currentUser?.email ?? 'admin',
+  })
+  await writeClientAuditLog({
+    action: 'block_account',
+    targetUid: uid,
+    targetEmail: email,
+    detail: reason?.trim() || 'Blocked by project administrator',
   })
 }
 
@@ -108,12 +146,18 @@ export async function unblockAccount(uid: string): Promise<void> {
   const ref = doc(database, COL.parentProfiles, uid)
   const snap = await getDoc(ref)
   const prevStatus = snap.data()?.status as string | undefined
+  const email = (snap.data()?.email as string | undefined) ?? ''
   await updateDoc(ref, {
     status: prevStatus === 'blocked' ? 'active' : prevStatus ?? 'active',
     adminBlocked: false,
     blockedAtMs: null,
     blockedReason: null,
     blockedBy: null,
+  })
+  await writeClientAuditLog({
+    action: 'unblock_account',
+    targetUid: uid,
+    targetEmail: email,
   })
 }
 
@@ -158,6 +202,11 @@ export async function grantLiveViewCredits(
     },
     { merge: true },
   )
+  await writeClientAuditLog({
+    action: 'grant_credits',
+    targetUid: uid,
+    detail: JSON.stringify(opts),
+  })
 }
 
 export async function loadLiveViewQuota(uid: string): Promise<LiveViewQuotaAdmin | null> {
@@ -268,4 +317,122 @@ export async function runPlatformAutoRepair(): Promise<string[]> {
 
   if (fixes.length === 0) fixes.push('No platform-wide repairs needed.')
   return fixes
+}
+
+export function observeAdminAuditLogs(
+  onData: (rows: AdminAuditLogEntry[]) => void,
+  onError?: (err: Error) => void,
+): Unsubscribe {
+  const database = requireDb()
+  const q = query(collection(database, COL.adminAuditLogs), orderBy('atMs', 'desc'), limit(100))
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(
+        snap.docs.map((d) => {
+          const data = d.data()
+          return {
+            id: d.id,
+            action: String(data.action ?? ''),
+            adminEmail: String(data.adminEmail ?? ''),
+            targetUid: String(data.targetUid ?? ''),
+            targetEmail: (data.targetEmail as string | undefined) ?? null,
+            detail: (data.detail as string | undefined) ?? undefined,
+            atMs: Number(data.atMs ?? 0),
+          }
+        }),
+      )
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export async function adminWipeUser(uid: string, selfConfirm = false): Promise<{ newFamilyId: string }> {
+  const res = await callable<{ uid: string; selfConfirm?: boolean }, { newFamilyId: string }>('adminWipeUser')({
+    uid,
+    selfConfirm,
+  })
+  return res.data
+}
+
+export async function adminDeleteUser(uid: string, selfConfirm = false): Promise<void> {
+  await callable<{ uid: string; selfConfirm?: boolean }, { ok: boolean }>('adminDeleteUser')({
+    uid,
+    selfConfirm,
+  })
+}
+
+export async function adminRevokeSessions(uid: string): Promise<void> {
+  await callable<{ uid: string }, { ok: boolean }>('adminRevokeSessions')({ uid })
+}
+
+export async function adminAdjustTrial(
+  uid: string,
+  patch: { plan?: 'trial' | 'paid'; status?: 'active' | 'at_risk' | 'blocked'; extendDays?: number },
+): Promise<void> {
+  await callable('adminAdjustTrial')({ uid, ...patch })
+}
+
+export async function adminTriggerPurgeTrials(): Promise<{ warned: number; purged: number; scanned: number }> {
+  const res = await callable<object, { warned: number; purged: number; scanned: number }>('adminTriggerPurgeTrials')({})
+  return res.data
+}
+
+export async function adminRepairOrphans(): Promise<string[]> {
+  const res = await callable<object, { fixes: string[] }>('adminRepairOrphans')({})
+  return res.data.fixes
+}
+
+export async function adminSendTestFcm(familyId: string, deviceId: string): Promise<{ successCount: number }> {
+  const res = await callable<{ familyId: string; deviceId: string }, { successCount: number }>('adminSendTestFcm')({
+    familyId,
+    deviceId,
+  })
+  return res.data
+}
+
+export function exportAccountsCsv(accounts: AdminParentAccountRow[]): string {
+  const header = [
+    'uid',
+    'email',
+    'familyId',
+    'registeredAt',
+    'lastActiveAt',
+    'plan',
+    'status',
+    'adminBlocked',
+    'trialEndsAt',
+    'deviceCount',
+  ]
+  const rows = accounts.map((a) =>
+    [
+      a.uid,
+      a.email,
+      a.familyId ?? '',
+      a.registeredAt ?? '',
+      a.lastActiveAt ?? '',
+      a.plan ?? '',
+      a.status ?? '',
+      a.adminBlocked ? 'yes' : 'no',
+      a.trialEndsAt ?? '',
+      a.deviceCount ?? '',
+    ]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+      .join(','),
+  )
+  return [header.join(','), ...rows].join('\n')
+}
+
+export function downloadCsv(filename: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export function isSelfAdminAccount(email: string, adminEmail: string | null | undefined): boolean {
+  return email.trim().toLowerCase() === (adminEmail ?? ADMIN_EMAIL).trim().toLowerCase()
 }
