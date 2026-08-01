@@ -141,7 +141,8 @@ class SafetyRequestActivity : AppCompatActivity() {
             SafetyCommandType.RING_DEVICE,
             SafetyCommandType.SYNC_CALL_SMS,
             SafetyCommandType.LOCK_DEVICE,
-            SafetyCommandType.UNLOCK_DEVICE -> {
+            SafetyCommandType.UNLOCK_DEVICE,
+            SafetyCommandType.REQUEST_WHATSAPP_PROTECTION -> {
                 finish()
                 return
             }

@@ -105,6 +105,7 @@ object SareChildConstants {
     const val PREF_OFFLINE_SMS_FALLBACK_CONSENT = "offline_sms_fallback_consent"
     const val PREF_OFFLINE_AUTO_CALL_CONSENT = "offline_auto_call_consent"
     const val PREF_WHATSAPP_MONITOR_CONSENT = "whatsapp_monitor_consent"
+    const val PREF_LAST_WHATSAPP_EVENT_AT_MS = "last_whatsapp_event_at_ms"
     const val PREF_OFFLINE_CALL_ENABLED = "offline_call_enabled"
     const val PREF_OFFLINE_CALL_NUMBER = "offline_call_number"
     const val PREF_OFFLINE_CALL_MAX_ATTEMPTS = "offline_call_max_attempts"

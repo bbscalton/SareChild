@@ -57,7 +57,9 @@ enum class SafetyCommandType {
     RING_DEVICE,
     SYNC_CALL_SMS,
     LOCK_DEVICE,
-    UNLOCK_DEVICE
+    UNLOCK_DEVICE,
+    /** Parent asks child to enable WhatsApp protection (consent + OS permission setup). */
+    REQUEST_WHATSAPP_PROTECTION
 }
 
 enum class SafetyCommandStatus {

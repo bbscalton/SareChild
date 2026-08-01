@@ -4,7 +4,7 @@
     <string name="monitoring_channel_name">Child protection active</string>
     <string name="monitoring_notification_title">Protected by SareChild</string>
     <string name="monitoring_notification_text">Location and safety monitoring are on with parent approval.</string>
-    <string name="accessibility_message_monitor_description">Typing safety / message shield: lets SareChild read on-screen text (never password/PIN fields) in messaging apps — and, if a parent turns on 360 protection, other apps too — so it can flag danger words for a parent. Only active with your consent, always shows the \"Protected by SareChild\" notice, and never unlocks any app\'s encrypted chat history.</string>
+    <string name="accessibility_message_monitor_description">Message safety &amp; WhatsApp protection: lets SareChild read on-screen text in messaging apps (never password/PIN fields) so it can log WhatsApp notification previews and visible chat text for a parent — and, if Typing safety is also on, flag danger words. Only active with your consent, always shows the \"Protected by SareChild\" notice, and never unlocks any app\'s encrypted chat history or WhatsApp database.</string>
     <string name="chat_title">Family chat</string>
     <string name="chat_presence_placeholder">Checking who is nearby…</string>
     <string name="chat_empty_badge">You are never alone here</string>

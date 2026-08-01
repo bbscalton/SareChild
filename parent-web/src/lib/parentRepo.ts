@@ -228,7 +228,9 @@ function parseWhatsAppProtection(raw: unknown): WhatsAppProtectionStatus | null 
     enabled: Boolean(data.enabled),
     consent: Boolean(data.consent),
     notificationAccess: Boolean(data.notificationAccess),
+    accessibilityAccess: Boolean(data.accessibilityAccess),
     mediaPermission: Boolean(data.mediaPermission),
+    lastEventAtMs: Number(data.lastEventAtMs ?? 0),
     updatedAtMs: Number(data.updatedAtMs ?? 0),
   }
 }
@@ -268,6 +270,7 @@ export function observeDevices(
           offlineAutoCallConsent: Boolean(data.offlineAutoCallConsent),
           whatsappMonitorConsent: Boolean(data.whatsappMonitorConsent),
           whatsappMediaPermission: Boolean(data.whatsappMediaPermission),
+          lastWhatsAppEventAtMs: Number(data.lastWhatsAppEventAtMs ?? 0),
           whatsappProtection: parseWhatsAppProtection(data.whatsappProtection),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
@@ -447,6 +450,7 @@ export type SafetyCommandType =
   | 'SYNC_CALL_SMS'
   | 'LOCK_DEVICE'
   | 'UNLOCK_DEVICE'
+  | 'REQUEST_WHATSAPP_PROTECTION'
 
 export async function createSafetyCommand(
   familyId: string,

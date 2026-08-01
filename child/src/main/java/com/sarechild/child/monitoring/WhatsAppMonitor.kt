@@ -308,7 +308,7 @@ object WhatsAppMonitor {
 
     private suspend fun loadSafeContactIdentifiers(repo: ChildRepository): List<String> {
         val now = System.currentTimeMillis()
-        if (now - cachedSafeContactsAtMs < 60_000L && cachedSafeContacts.isNotEmpty()) return cachedSafeContacts
+        if (now - cachedSafeContactsAtMs < 60_000L) return cachedSafeContacts
         val identifiers = repo.loadSafeContacts("WHATSAPP")
             .map { normalizeIdentifier(it.identifier) }
             .filter { it.isNotBlank() }
@@ -342,7 +342,9 @@ object WhatsAppMonitor {
     fun protectionStatusMap(
         consent: Boolean,
         notificationAccess: Boolean,
-        mediaPermission: Boolean
+        accessibilityAccess: Boolean,
+        mediaPermission: Boolean,
+        lastEventAtMs: Long = 0L
     ): Map<String, Any?> {
         val now = System.currentTimeMillis()
         val enabled = consent && notificationAccess
@@ -350,7 +352,9 @@ object WhatsAppMonitor {
             "enabled" to enabled,
             "consent" to consent,
             "notificationAccess" to notificationAccess,
+            "accessibilityAccess" to accessibilityAccess,
             "mediaPermission" to mediaPermission,
+            "lastEventAtMs" to lastEventAtMs.takeIf { it > 0L },
             "updatedAtMs" to now
         )
     }

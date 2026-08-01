@@ -243,6 +243,15 @@ export function DashboardPage() {
     [whatsAppEvents],
   )
 
+  const whatsAppLastEventByDevice = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const ev of whatsAppEvents) {
+      const prev = map.get(ev.deviceId) ?? 0
+      if (ev.createdAtMs > prev) map.set(ev.deviceId, ev.createdAtMs)
+    }
+    return map
+  }, [whatsAppEvents])
+
   const whatsAppSetupStatus = useMemo(() => {
     if (devices.length === 0) return null
     const statuses = devices.map((d) => d.whatsappProtection)
@@ -254,7 +263,7 @@ export function DashboardPage() {
     if (missingConsent) {
       return {
         title: 'WhatsApp protection not enabled yet',
-        body: 'Ask your child to open SareChild → Review permissions, check “Enable WhatsApp protection”, and tap Start protection. Safe-list contacts still appear in the timeline once enabled.',
+        body: 'Tap "Request WhatsApp protection" below — your child will see a visible Accept screen with steps to enable notification access and accessibility.',
       }
     }
     const missingNotif = devices.some((d) => !(d.whatsappProtection?.notificationAccess ?? d.notificationAccess))
@@ -1388,7 +1397,7 @@ export function DashboardPage() {
                   to the device&apos;s WhatsApp media folder.
                 </p>
                 <p className="muted small">
-                  Safe-list contacts are still logged here (marked safe) but do not trigger alerts.
+                  Safe-list contacts are still logged (marked safe) but do not trigger alerts.
                   Unknown contacts are monitored and flagged for your review.
                 </p>
                 <div className="whatsapp-stats">
@@ -1429,6 +1438,61 @@ export function DashboardPage() {
                 <Empty title={whatsAppSetupStatus.title} body={whatsAppSetupStatus.body} />
               )}
 
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Device setup status</h3>
+                  <p className="muted small">
+                    Each child phone must consent and grant notification + accessibility access.
+                    Events appear within a minute of the next WhatsApp message.
+                  </p>
+                  <ul className="whatsapp-device-status">
+                    {devices.map((d) => {
+                      const wp = d.whatsappProtection
+                      const consent = wp?.consent ?? d.whatsappMonitorConsent
+                      const notif = wp?.notificationAccess ?? d.notificationAccess
+                      const accessibility = wp?.accessibilityAccess ?? false
+                      const media = wp?.mediaPermission ?? d.whatsappMediaPermission
+                      const lastEventMs = Math.max(
+                        wp?.lastEventAtMs ?? 0,
+                        d.lastWhatsAppEventAtMs,
+                        whatsAppLastEventByDevice.get(d.id) ?? 0,
+                      )
+                      const ready = consent && notif
+                      return (
+                        <li key={d.id} className="whatsapp-device-row">
+                          <div className="whatsapp-device-head">
+                            <strong>{d.childName}</strong>
+                            <span className={`pill ${ready ? 'online' : 'offline'}`}>
+                              {ready ? 'Monitoring active' : 'Setup incomplete'}
+                            </span>
+                          </div>
+                          <ul className="meta whatsapp-device-checks">
+                            <li>{consent ? '✓' : '✗'} Child consent</li>
+                            <li>{notif ? '✓' : '✗'} Notification listener</li>
+                            <li>{accessibility ? '✓' : '✗'} Accessibility (on-screen text)</li>
+                            <li>{media ? '✓' : '○'} Media permission (optional)</li>
+                            <li>
+                              Last event:{' '}
+                              {lastEventMs > 0
+                                ? new Date(lastEventMs).toLocaleString()
+                                : 'None yet — send a test WhatsApp message'}
+                            </li>
+                          </ul>
+                          <button
+                            className="btn primary compact"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void requestCheck(d.id, 'REQUEST_WHATSAPP_PROTECTION')}
+                          >
+                            Request WhatsApp protection
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
               <div className="card">
                 <h3>Timeline</h3>
                 <div className="filter-row">
@@ -1457,7 +1521,7 @@ export function DashboardPage() {
                 {filteredWhatsAppEvents.length === 0 ? (
                   <Empty
                     title="No WhatsApp activity yet"
-                    body="Events will appear here as soon as the child device reports WhatsApp notifications, on-screen messages, calls, or media — for contacts that are not on the safe list."
+                    body="Events appear here once the child device has consent, notification access, and (optionally) accessibility enabled. Send a test WhatsApp message to verify."
                   />
                 ) : (
                   <ul className="whatsapp-timeline">
@@ -1505,8 +1569,8 @@ export function DashboardPage() {
               <div className="card form-card">
                 <h3>Safe WhatsApp contacts</h3>
                 <p className="muted small">
-                  Activity from contacts listed here is exempt from recording and will not generate
-                  alerts. Anyone not listed is treated as unknown and fully monitored.
+                  Activity from contacts listed here is still logged (marked safe) and will not
+                  generate alerts. Anyone not listed is treated as unknown and fully monitored.
                 </p>
                 <label>
                   Display label

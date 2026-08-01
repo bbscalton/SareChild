@@ -116,6 +116,9 @@ class ChildRepository(
         get() = prefs.getBoolean(SareChildConstants.PREF_WHATSAPP_MONITOR_CONSENT, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_WHATSAPP_MONITOR_CONSENT, value).apply()
 
+    fun lastWhatsAppEventAtMs(): Long =
+        prefs.getLong(SareChildConstants.PREF_LAST_WHATSAPP_EVENT_AT_MS, 0L)
+
     var activeSession: String?
         get() = prefs.getString(SareChildConstants.PREF_ACTIVE_SESSION, null)
         set(value) = prefs.edit().putString(SareChildConstants.PREF_ACTIVE_SESSION, value).apply()
@@ -652,10 +655,24 @@ class ChildRepository(
         val fid = familyId ?: return
         val did = deviceId ?: return
         ensureSignedIn()
+        val now = System.currentTimeMillis()
         db.collection(SareChildConstants.COL_FAMILIES).document(fid)
             .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
             .add(event.copy(deviceId = did).toMap())
             .await()
+        prefs.edit().putLong(SareChildConstants.PREF_LAST_WHATSAPP_EVENT_AT_MS, now).apply()
+        runCatching {
+            db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+                .collection(SareChildConstants.COL_DEVICES).document(did)
+                .set(
+                    mapOf(
+                        "lastWhatsAppEventAtMs" to now,
+                        "whatsappProtection" to mapOf("lastEventAtMs" to now)
+                    ),
+                    SetOptions.merge()
+                )
+                .await()
+        }
     }
 
     fun listenPendingCommands(

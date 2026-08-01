@@ -97,7 +97,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         repo = ChildRepository(this)
-        if (!repo.messageMonitorConsent) {
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent) {
             stopMonitoringService()
             return
         }
@@ -108,7 +108,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (!repo.messageMonitorConsent) return
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
@@ -151,10 +151,15 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         val appLabel = resolveAppLabel(pkg)
         val assessment = classifier.assess(text)
         val snippet = text.take(SareChildConstants.TYPING_SAFETY_SNIPPET_MAX)
-        val mode = if (cachedTypingSettings.mode360) "360" else "communication"
 
-        maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
-        runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
+        if (WhatsAppMonitor.isWhatsApp(pkg) && repo.whatsappMonitorConsent) {
+            maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
+            runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
+        }
+
+        if (!repo.messageMonitorConsent) return
+
+        val mode = if (cachedTypingSettings.mode360) "360" else "communication"
 
         runCatching {
             repo.postTypingEvent(
@@ -212,12 +217,15 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     private fun shouldMonitor(pkg: String, settings: TypingSafetySettings): Boolean {
         if (pkg in hardWhitelist) return false
         if (settings.whitelistPackages.contains(pkg)) return false
+        if (WhatsAppMonitor.isWhatsApp(pkg) && repo.whatsappMonitorConsent) return true
+        if (!repo.messageMonitorConsent) return false
         if (settings.mode360) return true
         return pkg in messagingPackages || settings.alwaysMonitorPackages.contains(pkg)
     }
 
     private suspend fun maybeAlertUnidentifiedWhatsapp(pkg: String, text: String, riskScore: Int) {
         if (pkg !in setOf("com.whatsapp", "com.whatsapp.w4b")) return
+        if (!repo.whatsappMonitorConsent) return
         if (isCategorySnoozed("WHATSAPP_CONTACT")) return
         val candidate = extractContactIdentifier(text) ?: return
         val normalizedCandidate = normalizeIdentifier(candidate)
@@ -288,7 +296,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     private suspend fun loadSafeContactIdentifiers(): List<String> {
         val now = System.currentTimeMillis()
-        if (now - cachedSafeContactsAtMs < 60_000L && cachedSafeContacts.isNotEmpty()) return cachedSafeContacts
+        if (now - cachedSafeContactsAtMs < 60_000L) return cachedSafeContacts
         val identifiers = repo.loadSafeContacts("WHATSAPP")
             .map { normalizeIdentifier(it.identifier) }
             .filter { it.isNotBlank() }
@@ -319,10 +327,23 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     }
 
     private fun showOngoingNotification() {
+        val title = when {
+            repo.whatsappMonitorConsent && repo.messageMonitorConsent -> "Message safety is on"
+            repo.whatsappMonitorConsent -> "WhatsApp protection is on"
+            else -> "Typing safety is on"
+        }
+        val text = when {
+            repo.whatsappMonitorConsent && !repo.messageMonitorConsent ->
+                "Protected by SareChild — WhatsApp on-screen text may be logged for your parent."
+            repo.whatsappMonitorConsent ->
+                "Protected by SareChild — messaging apps may be monitored with your consent."
+            else ->
+                "Protected by SareChild — message shield may report words typed in monitored apps."
+        }
         val notification = NotificationCompat.Builder(this, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("Typing safety is on")
-            .setContentText("Protected by SareChild — message shield may report words typed in monitored apps.")
+            .setContentTitle(title)
+            .setContentText(text)
             .setOngoing(true)
             .build()
         getSystemService(NotificationManager::class.java)

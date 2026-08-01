@@ -162,11 +162,15 @@ class MonitoringForegroundService : Service() {
         val charging = isCharging()
         val notif = isNotificationAccessEnabled()
         val locPerm = hasLocationPermission()
+        val accessibility = isAccessibilityServiceEnabled()
         val waMediaPerm = WhatsAppMonitor.hasMediaPermission(this)
+        val lastEventAtMs = repo.lastWhatsAppEventAtMs()
         val waProtection = WhatsAppMonitor.protectionStatusMap(
             consent = repo.whatsappMonitorConsent,
             notificationAccess = notif,
-            mediaPermission = waMediaPerm
+            accessibilityAccess = accessibility,
+            mediaPermission = waMediaPerm,
+            lastEventAtMs = lastEventAtMs
         )
         ensureWhatsAppMediaObserver(notif, waMediaPerm)
 
@@ -345,6 +349,14 @@ class MonitoringForegroundService : Service() {
     private fun isNotificationAccessEnabled(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
         return flat?.contains(packageName) == true
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val flat = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return flat.contains(packageName)
     }
 
     private fun isNetworkAvailable(): Boolean {

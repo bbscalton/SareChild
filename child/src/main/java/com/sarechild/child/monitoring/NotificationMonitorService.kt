@@ -130,11 +130,25 @@ class NotificationMonitorService : NotificationListenerService() {
         if (info.isNotBlank()) return info
         @Suppress("DEPRECATION")
         val messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
-        if (messages != null) {
+        if (messages != null && messages.isNotEmpty()) {
+            val parts = mutableListOf<String>()
             for (raw in messages) {
                 val msg = raw as? Bundle ?: continue
+                val sender = msg.getCharSequence("sender")?.toString().orEmpty()
                 val text = msg.getCharSequence("text")?.toString().orEmpty()
-                if (text.isNotBlank()) return text
+                when {
+                    text.isNotBlank() && sender.isNotBlank() -> parts.add("$sender: $text")
+                    text.isNotBlank() -> parts.add(text)
+                }
+            }
+            if (parts.isNotEmpty()) return parts.last()
+        }
+        @Suppress("DEPRECATION")
+        val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        if (lines != null) {
+            for (line in lines.reversed()) {
+                val s = line?.toString().orEmpty()
+                if (s.isNotBlank()) return s
             }
         }
         return ""

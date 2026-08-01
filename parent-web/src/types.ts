@@ -15,7 +15,9 @@ export type WhatsAppProtectionStatus = {
   enabled: boolean
   consent: boolean
   notificationAccess: boolean
+  accessibilityAccess: boolean
   mediaPermission: boolean
+  lastEventAtMs: number
   updatedAtMs: number
 }
 
@@ -42,6 +44,7 @@ export type DeviceStatus = {
   offlineAutoCallConsent: boolean
   whatsappMonitorConsent: boolean
   whatsappMediaPermission: boolean
+  lastWhatsAppEventAtMs: number
   whatsappProtection: WhatsAppProtectionStatus | null
   chatOnline: boolean
   chatLastSeenMs: number

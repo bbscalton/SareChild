@@ -12,6 +12,7 @@ import com.sarechild.child.DeviceLockActivity
 import com.sarechild.child.R
 import com.sarechild.child.RingDeviceActivity
 import com.sarechild.child.SafetyRequestActivity
+import com.sarechild.child.WhatsAppProtectionRequestActivity
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
@@ -96,6 +97,32 @@ class CommandListener(
                         )
                     )
                 }
+                return
+            }
+            SafetyCommandType.REQUEST_WHATSAPP_PROTECTION -> {
+                val intent = Intent(context, WhatsAppProtectionRequestActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
+                }
+                val pending = PendingIntent.getActivity(
+                    context,
+                    command.id.hashCode(),
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("Parent requests WhatsApp protection")
+                    .setContentText("Tap to Accept and enable notification + accessibility access.")
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setContentIntent(pending)
+                    .setFullScreenIntent(pending, true)
+                    .setAutoCancel(true)
+                    .build()
+                context.getSystemService(NotificationManager::class.java)
+                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
+                context.startActivity(intent)
                 return
             }
             else -> Unit
