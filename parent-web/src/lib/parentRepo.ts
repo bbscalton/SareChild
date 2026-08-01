@@ -63,6 +63,7 @@ import type {
   PhotoGalleryAccessLevel,
   PhotoGalleryStatus,
   EventRecorderStatus,
+  LockScreenStatus,
   ActivityEvent,
   ActivityEventType,
 } from '../types'
@@ -429,6 +430,17 @@ function parseEventRecorderStatus(raw: unknown): EventRecorderStatus | null {
   }
 }
 
+function parseLockScreenStatus(raw: unknown): LockScreenStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  return {
+    deviceAdminActive: Boolean(data.deviceAdminActive),
+    lastLockAtMs: Number(data.lastLockAtMs ?? 0),
+    lastLockResult: (data.lastLockResult as string | null) ?? null,
+    updatedAtMs: Number(data.updatedAtMs ?? 0),
+  }
+}
+
 export function observeDevices(
   familyId: string,
   onData: (devices: DeviceStatus[]) => void,
@@ -474,6 +486,7 @@ export function observeDevices(
           photoGalleryStatus: parsePhotoGalleryStatus(data.photoGalleryStatus),
           eventRecorderConsent: Boolean(data.eventRecorderConsent),
           eventRecorderStatus: parseEventRecorderStatus(data.eventRecorderStatus),
+          lockScreenStatus: parseLockScreenStatus(data.lockScreenStatus),
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           offlineCallEnabled: Boolean(data.offlineCallEnabled),
@@ -652,6 +665,8 @@ export type SafetyCommandType =
   | 'SYNC_CALL_SMS'
   | 'LOCK_DEVICE'
   | 'UNLOCK_DEVICE'
+  | 'LOCK_SCREEN'
+  | 'REQUEST_DEVICE_ADMIN'
   | 'REQUEST_WHATSAPP_PROTECTION'
   | 'REQUEST_CALL_RECORDING'
   | 'REQUEST_APP_INVENTORY'

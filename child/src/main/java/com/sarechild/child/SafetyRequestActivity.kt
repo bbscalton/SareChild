@@ -142,6 +142,8 @@ class SafetyRequestActivity : AppCompatActivity() {
             SafetyCommandType.SYNC_CALL_SMS,
             SafetyCommandType.LOCK_DEVICE,
             SafetyCommandType.UNLOCK_DEVICE,
+            SafetyCommandType.LOCK_SCREEN,
+            SafetyCommandType.REQUEST_DEVICE_ADMIN,
             SafetyCommandType.REQUEST_WHATSAPP_PROTECTION,
             SafetyCommandType.REQUEST_CALL_RECORDING,
             SafetyCommandType.REQUEST_APP_INVENTORY,

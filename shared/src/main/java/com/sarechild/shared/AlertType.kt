@@ -26,6 +26,8 @@ enum class AlertType {
     CALL_SMS_SYNC,
     DEVICE_LOCKED,
     DEVICE_UNLOCKED,
+    /** Parent remotely locked the device to the system lock screen (lockNow). */
+    SCREEN_LOCKED,
     WHATSAPP_MEDIA,
     WHATSAPP_CALL,
     /** A call recording was uploaded or a call event logged (cellular / VoIP partial). */
@@ -66,6 +68,10 @@ enum class SafetyCommandType {
     SYNC_CALL_SMS,
     LOCK_DEVICE,
     UNLOCK_DEVICE,
+    /** Parent requests immediate system lock screen via DevicePolicyManager.lockNow(). */
+    LOCK_SCREEN,
+    /** Parent asks child to enable Device Administrator for remote lock screen. */
+    REQUEST_DEVICE_ADMIN,
     /** Parent asks child to enable WhatsApp protection (consent + OS permission setup). */
     REQUEST_WHATSAPP_PROTECTION,
     /** Parent asks child to enable call recording (consent + mic / phone-state permissions). */

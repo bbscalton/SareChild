@@ -266,6 +266,7 @@ class DashboardActivity : AppCompatActivity() {
                 Triple("apps", "Apps", "\uD83D\uDCF1"),
                 Triple("usage", "Usage & limits", "\u23F1\uFE0F"),
                 Triple("eventrecorder", "Event recorder", "\uD83D\uDCCB"),
+                Triple("lockscreen", "Lock screen", "\uD83D\uDD12"),
                 Triple("digests", "Weekly digests", "\uD83D\uDCF0"),
             )
         )
@@ -618,6 +619,7 @@ class DashboardActivity : AppCompatActivity() {
             "safety" -> showSafetyTab(container)
             "usage" -> showUsageTab(container)
             "eventrecorder" -> showEventRecorderTab(container)
+            "lockscreen" -> showLockScreenTab(container)
             "digests" -> showDigestsTab(container)
             "guardians" -> showGuardiansTab(container)
             "geofences" -> showGeofenceList(container)
@@ -640,6 +642,7 @@ class DashboardActivity : AppCompatActivity() {
         "safety" -> "Safety checks"
         "usage" -> "App usage & limits"
         "eventrecorder" -> "Event recorder"
+        "lockscreen" -> "Lock screen"
         "digests" -> "Weekly digests"
         "guardians" -> "Guardians & caregivers"
         "geofences" -> "Safe zones"
@@ -679,6 +682,31 @@ class DashboardActivity : AppCompatActivity() {
         root.addView(MaterialButton(this).apply {
             text = "Open Event recorder in web dashboard"
             setOnClickListener { openWebDashboard("eventrecorder") }
+        })
+    }
+
+    /** Remote system lock screen — full UI on parent web dashboard. */
+    private fun showLockScreenTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Lock screen"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "Remotely lock your child's phone to its normal system lock screen (PIN, pattern, or fingerprint). Requires Device Administrator on the child phone — enable it from the web dashboard first."
+            setPadding(0, dp(12), 0, dp(16))
+        })
+        root.addView(MaterialButton(this).apply {
+            text = "Open Lock screen in web dashboard"
+            setOnClickListener { openWebDashboard("lockscreen") }
         })
     }
 
@@ -1413,6 +1441,7 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.LOW_BATTERY -> R.drawable.ic_alert_battery
         AlertType.WENT_DARK -> R.drawable.ic_offline
         AlertType.TAMPER, AlertType.PERMISSION_REVOKED, AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED,
+        AlertType.SCREEN_LOCKED,
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE -> R.drawable.ic_alert_shield
         AlertType.LIVE_VIEW -> R.drawable.ic_alert_shield
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT,
@@ -1430,7 +1459,7 @@ class DashboardActivity : AppCompatActivity() {
         AlertType.WENT_DARK -> "Connection"
         AlertType.TAMPER, AlertType.PERMISSION_REVOKED -> "Device tampering"
         AlertType.SCREEN_SHARE, AlertType.CAMERA_CHECK, AlertType.MIC_CHECK, AlertType.RING_DEVICE,
-        AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED, AlertType.LIVE_VIEW -> "Safety check"
+        AlertType.DEVICE_LOCKED, AlertType.DEVICE_UNLOCKED, AlertType.SCREEN_LOCKED, AlertType.LIVE_VIEW -> "Safety check"
         AlertType.KEYWORD, AlertType.MESSAGE_PREVIEW, AlertType.UNIDENTIFIED_CONTACT -> "Message safety"
         AlertType.TYPING_SAFETY -> "Typing safety"
         AlertType.WHATSAPP_MEDIA, AlertType.WHATSAPP_CALL -> "WhatsApp"

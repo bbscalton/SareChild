@@ -190,6 +190,7 @@ class MonitoringForegroundService : Service() {
             accessibilityAccess = isAccessibilityServiceEnabled(),
             notificationAccess = notif
         ).orEmpty()
+        val lockScreenStatus = repo.lockScreenStatusMap(this)
         ensureWhatsAppMediaObserver(notif, waMediaPerm)
         ensurePhotoGallerySync()
         ensureCallRecordingMonitor()
@@ -265,7 +266,8 @@ class MonitoringForegroundService : Service() {
             whatsappProtection = waProtection,
             callRecordingStatus = callRecProtection,
             photoGalleryStatus = photoStatus,
-            eventRecorderStatus = eventRecStatus
+            eventRecorderStatus = eventRecStatus,
+            lockScreenStatus = lockScreenStatus
         )
         scheduleWatcher?.tick()
     }

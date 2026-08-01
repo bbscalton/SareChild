@@ -52,6 +52,13 @@ export type EventRecorderStatus = {
   updatedAtMs: number
 }
 
+export type LockScreenStatus = {
+  deviceAdminActive: boolean
+  lastLockAtMs: number
+  lastLockResult: string | null
+  updatedAtMs: number
+}
+
 export type ActivityEventType =
   | 'APP_FOREGROUND'
   | 'APP_BACKGROUND'
@@ -149,6 +156,7 @@ export type DeviceStatus = {
   photoGalleryStatus: PhotoGalleryStatus | null
   eventRecorderConsent: boolean
   eventRecorderStatus: EventRecorderStatus | null
+  lockScreenStatus: LockScreenStatus | null
   chatOnline: boolean
   chatLastSeenMs: number
   offlineCallEnabled: boolean

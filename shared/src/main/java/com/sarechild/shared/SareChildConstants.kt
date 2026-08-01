@@ -199,6 +199,8 @@ object SareChildConstants {
     const val EXTRA_SCHEDULE_ID = "schedule_id"
     const val ACTION_DEVICE_UNLOCK = "com.sarechild.child.ACTION_DEVICE_UNLOCK"
     const val PREF_DEVICE_LOCKED = "device_locked"
+    const val PREF_LAST_LOCK_AT_MS = "last_lock_at_ms"
+    const val PREF_LAST_LOCK_RESULT = "last_lock_result"
 
     /**
      * How long a child has to tap Allow/Not now on an in-app parent request

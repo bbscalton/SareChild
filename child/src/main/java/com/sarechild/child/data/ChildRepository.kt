@@ -10,6 +10,7 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.storage.FirebaseStorage
+import com.sarechild.child.DeviceAdminHelper
 import com.sarechild.shared.ActivityEvent
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
@@ -182,6 +183,14 @@ class ChildRepository(
         get() = prefs.getBoolean(SareChildConstants.PREF_DEVICE_LOCKED, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_DEVICE_LOCKED, value).apply()
 
+    var lastLockAtMs: Long
+        get() = prefs.getLong(SareChildConstants.PREF_LAST_LOCK_AT_MS, 0L)
+        set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_LOCK_AT_MS, value).apply()
+
+    var lastLockResult: String
+        get() = prefs.getString(SareChildConstants.PREF_LAST_LOCK_RESULT, "").orEmpty()
+        set(value) = prefs.edit().putString(SareChildConstants.PREF_LAST_LOCK_RESULT, value).apply()
+
     var lastAppInventorySyncMs: Long
         get() = prefs.getLong(SareChildConstants.PREF_LAST_APP_INVENTORY_SYNC_MS, 0L)
         set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_APP_INVENTORY_SYNC_MS, value).apply()
@@ -303,7 +312,8 @@ class ChildRepository(
         whatsappProtection: Map<String, Any?> = emptyMap(),
         callRecordingStatus: Map<String, Any?> = emptyMap(),
         photoGalleryStatus: Map<String, Any?> = emptyMap(),
-        eventRecorderStatus: Map<String, Any?> = emptyMap()
+        eventRecorderStatus: Map<String, Any?> = emptyMap(),
+        lockScreenStatus: Map<String, Any?> = emptyMap()
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -331,6 +341,9 @@ class ChildRepository(
         }
         if (eventRecorderStatus.isNotEmpty()) {
             data["eventRecorderStatus"] = eventRecorderStatus
+        }
+        if (lockScreenStatus.isNotEmpty()) {
+            data["lockScreenStatus"] = lockScreenStatus
         }
         data.putAll(consentMap())
         if (location != null) {
@@ -993,6 +1006,39 @@ class ChildRepository(
             .collection(SareChildConstants.COL_DEVICES).document(did)
             .set(mapOf("eventRecorderStatus" to status), SetOptions.merge())
             .await()
+    }
+
+    fun lockScreenStatusMap(context: Context): Map<String, Any?> {
+        val adminActive = DeviceAdminHelper.isAdminActive(context)
+        return mapOf(
+            "deviceAdminActive" to adminActive,
+            "lastLockAtMs" to lastLockAtMs,
+            "lastLockResult" to lastLockResult.ifBlank { null },
+            "updatedAtMs" to System.currentTimeMillis()
+        )
+    }
+
+    suspend fun updateLockScreenStatus(context: Context) {
+        updateLockScreenStatus(lockScreenStatusMap(context))
+    }
+
+    suspend fun updateLockScreenStatus(status: Map<String, Any?>) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .set(mapOf("lockScreenStatus" to status), SetOptions.merge())
+            .await()
+    }
+
+    suspend fun recordLockScreenResult(
+        context: Context,
+        success: Boolean,
+        message: String,
+    ) {
+        lastLockAtMs = System.currentTimeMillis()
+        lastLockResult = if (success) "success" else message
+        updateLockScreenStatus(lockScreenStatusMap(context))
     }
 
     private suspend fun uploadMediaToR2(

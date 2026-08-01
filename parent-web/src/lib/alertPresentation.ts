@@ -34,6 +34,7 @@ export function alertIcon(type: string): string {
     case 'PERMISSION_REVOKED':
     case 'DEVICE_LOCKED':
     case 'DEVICE_UNLOCKED':
+    case 'SCREEN_LOCKED':
     case 'SCREEN_SHARE':
     case 'CAMERA_CHECK':
     case 'MIC_CHECK':
@@ -79,6 +80,7 @@ export function alertCategoryLabel(type: string): string {
     case 'RING_DEVICE':
     case 'DEVICE_LOCKED':
     case 'DEVICE_UNLOCKED':
+    case 'SCREEN_LOCKED':
       return 'Safety check'
     case 'KEYWORD':
     case 'MESSAGE_PREVIEW':

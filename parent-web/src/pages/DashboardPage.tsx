@@ -54,6 +54,7 @@ type Section =
   | 'callrecording'
   | 'photos'
   | 'eventrecorder'
+  | 'lockscreen'
   | 'liveview'
   | 'typing'
   | 'usage'
@@ -107,6 +108,7 @@ export function DashboardPage() {
   const [selectedPhoto, setSelectedPhoto] = useState<DevicePhoto | null>(null)
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([])
   const [eventRecorderDeviceId, setEventRecorderDeviceId] = useState('')
+  const [lockScreenDeviceId, setLockScreenDeviceId] = useState('')
   const [eventTypeFilter, setEventTypeFilter] = useState<ActivityEventFilter>('all')
   const [eventAppFilter, setEventAppFilter] = useState('')
   const [eventDateFilter, setEventDateFilter] = useState('')
@@ -205,6 +207,7 @@ export function DashboardPage() {
     const params = new URLSearchParams(window.location.search)
     const deepLink = params.get('section')
     if (deepLink === 'eventrecorder') setSection('eventrecorder')
+    if (deepLink === 'lockscreen') setSection('lockscreen')
   }, [])
 
   useEffect(() => {
@@ -265,6 +268,7 @@ export function DashboardPage() {
     if (!scheduleDeviceId && devices.length > 0) setScheduleDeviceId(devices[0]!.id)
     if (!photoDeviceId && devices.length > 0) setPhotoDeviceId(devices[0]!.id)
     if (!eventRecorderDeviceId && devices.length > 0) setEventRecorderDeviceId(devices[0]!.id)
+    if (!lockScreenDeviceId && devices.length > 0) setLockScreenDeviceId(devices[0]!.id)
     if (devices.length > 0 && !offlineCallNumber) {
       setOfflineCallNumber(devices[0]!.offlineCallNumber || '')
       setOfflineCallAttempts(String(devices[0]!.offlineCallMaxAttempts || 2))
@@ -590,12 +594,29 @@ export function DashboardPage() {
     setStatusMsg(null)
     try {
       await repo.createSafetyCommand(familyId, deviceId, type, durationMinutes)
-      setStatusMsg('Request sent — the child must Accept on their phone (visible prompt + notification).')
+      const instant =
+        type === 'LOCK_SCREEN'
+          ? 'Lock command sent — the child phone should lock to its system lock screen within seconds.'
+          : type === 'REQUEST_DEVICE_ADMIN'
+            ? 'Request sent — the child must enable Device Administrator on their phone (Android system prompt).'
+            : 'Request sent — the child must Accept on their phone (visible prompt + notification).'
+      setStatusMsg(instant)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to send request')
     } finally {
       setBusy(false)
     }
+  }
+
+  const requestLockScreen = async (deviceId: string) => {
+    if (
+      !window.confirm(
+        "This will immediately lock the child's phone to its normal lock screen (PIN, pattern, or fingerprint). Continue?",
+      )
+    ) {
+      return
+    }
+    await requestCheck(deviceId, 'LOCK_SCREEN')
   }
 
   const cycleScreenShareDuration = () => {
@@ -1037,6 +1058,12 @@ export function DashboardPage() {
           icon: '\u{1F4CB}',
           badge: eventRecorderStats.eventCount24h > 0 ? eventRecorderStats.eventCount24h : undefined,
         },
+        {
+          id: 'lockscreen',
+          label: 'Lock screen',
+          sub: 'Remote system lock (Device Admin)',
+          icon: '\u{1F512}',
+        },
         { id: 'digests', label: 'Weekly digests', icon: '\u{1F4F0}' },
         { id: 'tcd', label: 'TCD ops', icon: '\u{1FA7A}' },
       ],
@@ -1055,6 +1082,7 @@ export function DashboardPage() {
     callrecording: 'Call recording',
     photos: 'Photo gallery',
     eventrecorder: 'Event recorder',
+    lockscreen: 'Lock screen',
     liveview: 'Live viewing',
     typing: 'Typing safety',
     usage: 'App usage & limits',
@@ -2387,6 +2415,117 @@ export function DashboardPage() {
                   </div>
                 )}
               </div>
+            </section>
+          )}
+
+          {section === 'lockscreen' && (
+            <section className="stack lockscreen-section">
+              <div className="card">
+                <h3>Remote lock screen</h3>
+                <p className="muted">
+                  Immediately lock your child&apos;s phone to its <strong>normal system lock screen</strong>{' '}
+                  — the PIN, pattern, or fingerprint they already use. This is different from the visible
+                  &quot;device locked&quot; safety screen under Safety checks, which stays on until you send
+                  Unlock device.
+                </p>
+              </div>
+
+              <div className="card lockscreen-help">
+                <h3>Requirements &amp; honesty</h3>
+                <ul className="meta eventrecorder-help-list">
+                  <li>
+                    <strong>Requires:</strong> Device Administrator enabled on the child phone — Android
+                    will show a system confirmation; SareChild cannot enable it silently.
+                  </li>
+                  <li>
+                    <strong>Does:</strong> calls <code>DevicePolicyManager.lockNow()</code> — same as
+                    pressing the power button once.
+                  </li>
+                  <li>
+                    <strong>Does not:</strong> change the child&apos;s lock PIN, bypass biometrics, or
+                    keep the phone locked after they unlock normally.
+                  </li>
+                  <li>
+                    <strong>If Device Admin is off:</strong> the lock command fails — use &quot;Request
+                    Device Admin&quot; so the child can enable it.
+                  </li>
+                </ul>
+              </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Device selector &amp; status</h3>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={lockScreenDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setLockScreenDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                  <ul className="eventrecorder-device-status">
+                    {devices.map((d) => {
+                      const ls = d.lockScreenStatus
+                      const adminActive = ls?.deviceAdminActive ?? false
+                      const lastMs = ls?.lastLockAtMs ?? 0
+                      const lastResult = ls?.lastLockResult ?? null
+                      const online = isDeviceOnline(d, Date.now())
+                      return (
+                        <li key={d.id} className="eventrecorder-device-row">
+                          <div className="eventrecorder-device-head">
+                            <strong>{d.childName}</strong>
+                            <span className={`pill ${adminActive ? 'online' : 'offline'}`}>
+                              {adminActive ? 'Device Admin on' : 'Setup needed'}
+                            </span>
+                            {!online && (
+                              <span className="pill offline" style={{ marginLeft: 8 }}>
+                                Offline
+                              </span>
+                            )}
+                          </div>
+                          <ul className="meta eventrecorder-device-checks">
+                            <li>{adminActive ? '✓' : '✗'} Device Administrator (required for remote lock)</li>
+                            <li>
+                              Last locked:{' '}
+                              {lastMs > 0 ? new Date(lastMs).toLocaleString() : 'Never'}
+                            </li>
+                            <li>
+                              Last result:{' '}
+                              {lastResult === 'success'
+                                ? 'Success'
+                                : lastResult
+                                  ? lastResult
+                                  : '—'}
+                            </li>
+                          </ul>
+                          <div className="row gap">
+                            <button
+                              className="btn primary compact"
+                              type="button"
+                              disabled={busy || !online}
+                              onClick={() => void requestLockScreen(d.id)}
+                            >
+                              Lock screen now
+                            </button>
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              disabled={busy || !online || adminActive}
+                              onClick={() => void requestCheck(d.id, 'REQUEST_DEVICE_ADMIN')}
+                            >
+                              Request Device Admin
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
             </section>
           )}
 
