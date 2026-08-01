@@ -1093,4 +1093,57 @@ class ChildRepository(
                 onGuardians(guardians)
             }
     }
+
+    suspend fun updateLiveSession(sessionId: String, patch: Map<String, Any?>) {
+        val fid = familyId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_LIVE_SESSIONS).document(sessionId)
+            .set(patch, SetOptions.merge())
+            .await()
+    }
+
+    suspend fun addLiveSessionIceCandidate(sessionId: String, side: String, candidate: Map<String, Any?>) {
+        val fid = familyId ?: return
+        val field = if (side == "child") "childCandidates" else "parentCandidates"
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_LIVE_SESSIONS).document(sessionId)
+            .update(field, FieldValue.arrayUnion(candidate))
+            .await()
+    }
+
+    fun listenLiveSession(sessionId: String, onData: (Map<String, Any?>) -> Unit): ListenerRegistration? {
+        val fid = familyId ?: return null
+        return db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_LIVE_SESSIONS).document(sessionId)
+            .addSnapshotListener { snap, _ ->
+                val data = snap?.data ?: return@addSnapshotListener
+                onData(data)
+            }
+    }
+
+    suspend fun createLiveRecording(
+        sessionId: String,
+        path: String,
+        url: String,
+        durationSec: Int,
+        sizeBytes: Long,
+    ) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_LIVE_RECORDINGS)
+            .add(
+                mapOf(
+                    "sessionId" to sessionId,
+                    "deviceId" to did,
+                    "status" to "ready",
+                    "mediaUrl" to url,
+                    "mediaPath" to path,
+                    "durationSec" to durationSec,
+                    "sizeBytes" to sizeBytes,
+                    "createdAtMs" to System.currentTimeMillis()
+                )
+            )
+            .await()
+    }
 }

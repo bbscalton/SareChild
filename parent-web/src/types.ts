@@ -453,3 +453,61 @@ export function mediaKind(url: string): 'image' | 'audio' | 'other' {
   if (AUDIO_EXT.test(url)) return 'audio'
   return 'other'
 }
+
+export type LiveViewQuota = {
+  creditsRemaining: number
+  dailyAllowance: number
+  resetAtMs: number
+}
+
+export type LiveSessionStatus =
+  | 'pending'
+  | 'accepted'
+  | 'connecting'
+  | 'active'
+  | 'ended'
+  | 'failed'
+  | 'declined'
+
+export type LiveSessionConfig = {
+  video: boolean
+  audio: boolean
+  screen: boolean
+  cameraFacing: 'front' | 'rear'
+  record: boolean
+}
+
+export type LiveSession = {
+  id: string
+  deviceId: string
+  parentUid: string
+  status: LiveSessionStatus
+  config: LiveSessionConfig
+  durationMinutes: number
+  creditsUsed: number
+  createdAtMs: number
+  acceptedAtMs: number | null
+  startedAtMs: number | null
+  endsAtMs: number | null
+  endedAtMs: number | null
+  endReason: string | null
+  error: string | null
+  offer: { type: string; sdp: string } | null
+  answer: { type: string; sdp: string } | null
+  parentCandidates: Array<Record<string, unknown>>
+  childCandidates: Array<Record<string, unknown>>
+}
+
+export type LiveRecordingStatus = 'uploading' | 'ready' | 'failed'
+
+export type LiveRecording = {
+  id: string
+  sessionId: string
+  deviceId: string
+  status: LiveRecordingStatus
+  mediaUrl: string | null
+  mediaPath: string | null
+  durationSec: number
+  sizeBytes: number
+  createdAtMs: number
+}

@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -64,7 +66,7 @@
         <activity android:name=".PermissionsActivity" android:exported="false" />
         <activity android:name=".HomeActivity" android:exported="false" />
         <activity
-            android:name=".SafetyRequestActivity"
+            android:name=".LiveViewRequestActivity"
             android:exported="false"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
@@ -121,6 +123,11 @@
             android:name=".monitoring.ScreenShareService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <service
+            android:name=".monitoring.LiveViewService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone|mediaProjection" />
 
         <service
             android:name=".monitoring.NotificationMonitorService"

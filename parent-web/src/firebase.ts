@@ -53,6 +53,9 @@ export const COL = {
   typingSafetySettings: 'typingSafetySettings',
   callRecordings: 'callRecordings',
   installedApps: 'installedApps',
+  liveSessions: 'liveSessions',
+  liveRecordings: 'liveRecordings',
+  liveViewQuota: 'liveViewQuota',
 } as const
 
 export const WENT_DARK_AFTER_MS = 5 * 60 * 1000

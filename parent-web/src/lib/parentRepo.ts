@@ -473,6 +473,8 @@ export type SafetyCommandType =
   | 'REQUEST_WHATSAPP_PROTECTION'
   | 'REQUEST_CALL_RECORDING'
   | 'REQUEST_APP_INVENTORY'
+  | 'START_LIVE_VIEW'
+  | 'STOP_LIVE_VIEW'
 
 export async function createSafetyCommand(
   familyId: string,
@@ -1777,4 +1779,291 @@ export async function acceptGuardianInvite(code: string): Promise<string> {
     claimedByUid: uid,
   })
   return familyId
+}
+
+// ---------- Live viewing (WebRTC + quota) ----------
+
+export const LIVE_VIEW_DAILY_CREDITS = 10
+export const LIVE_VIEW_MIN_MINUTES = 1
+export const LIVE_VIEW_MAX_MINUTES = 5
+
+function nextUtcMidnightMs(fromMs: number): number {
+  const d = new Date(fromMs)
+  d.setUTCHours(24, 0, 0, 0)
+  return d.getTime()
+}
+
+export async function getLiveViewQuota(uid: string): Promise<import('../types').LiveViewQuota> {
+  const ref = doc(db, COL.liveViewQuota, uid)
+  const snap = await getDoc(ref)
+  const now = Date.now()
+  if (!snap.exists()) {
+    const quota = {
+      creditsRemaining: LIVE_VIEW_DAILY_CREDITS,
+      dailyAllowance: LIVE_VIEW_DAILY_CREDITS,
+      resetAtMs: nextUtcMidnightMs(now),
+    }
+    await setDoc(ref, quota)
+    return quota
+  }
+  const data = snap.data()
+  let creditsRemaining = Number(data.creditsRemaining ?? LIVE_VIEW_DAILY_CREDITS)
+  let dailyAllowance = Number(data.dailyAllowance ?? LIVE_VIEW_DAILY_CREDITS)
+  let resetAtMs = Number(data.resetAtMs ?? nextUtcMidnightMs(now))
+  if (now >= resetAtMs) {
+    creditsRemaining = dailyAllowance
+    resetAtMs = nextUtcMidnightMs(now)
+    await setDoc(ref, { creditsRemaining, dailyAllowance, resetAtMs }, { merge: true })
+  }
+  return { creditsRemaining, dailyAllowance, resetAtMs }
+}
+
+export function observeLiveViewQuota(
+  uid: string,
+  onData: (quota: import('../types').LiveViewQuota) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, COL.liveViewQuota, uid),
+    async (snap) => {
+      const now = Date.now()
+      if (!snap.exists()) {
+        const quota = {
+          creditsRemaining: LIVE_VIEW_DAILY_CREDITS,
+          dailyAllowance: LIVE_VIEW_DAILY_CREDITS,
+          resetAtMs: nextUtcMidnightMs(now),
+        }
+        await setDoc(doc(db, COL.liveViewQuota, uid), quota)
+        onData(quota)
+        return
+      }
+      const data = snap.data()
+      let creditsRemaining = Number(data.creditsRemaining ?? LIVE_VIEW_DAILY_CREDITS)
+      const dailyAllowance = Number(data.dailyAllowance ?? LIVE_VIEW_DAILY_CREDITS)
+      let resetAtMs = Number(data.resetAtMs ?? nextUtcMidnightMs(now))
+      if (now >= resetAtMs) {
+        creditsRemaining = dailyAllowance
+        resetAtMs = nextUtcMidnightMs(now)
+        await setDoc(doc(db, COL.liveViewQuota, uid), { creditsRemaining, resetAtMs }, { merge: true })
+      }
+      onData({ creditsRemaining, dailyAllowance, resetAtMs })
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export type StartLiveViewParams = {
+  familyId: string
+  deviceId: string
+  parentUid: string
+  durationMinutes: number
+  config: import('../types').LiveSessionConfig
+}
+
+export async function startLiveViewSession(params: StartLiveViewParams): Promise<{
+  sessionId: string
+  commandId: string
+}> {
+  const duration = Math.min(
+    LIVE_VIEW_MAX_MINUTES,
+    Math.max(LIVE_VIEW_MIN_MINUTES, params.durationMinutes),
+  )
+  const quota = await getLiveViewQuota(params.parentUid)
+  if (quota.creditsRemaining < duration) {
+    throw new Error(
+      `Not enough daily credits (${quota.creditsRemaining} left, need ${duration}). Resets ${new Date(quota.resetAtMs).toLocaleString()}.`,
+    )
+  }
+
+  const sessionRef = doc(collection(db, COL.families, params.familyId, COL.liveSessions))
+  const commandRef = doc(collection(db, COL.families, params.familyId, COL.commands))
+  const now = Date.now()
+
+  await setDoc(sessionRef, {
+    deviceId: params.deviceId,
+    parentUid: params.parentUid,
+    status: 'pending',
+    config: params.config,
+    durationMinutes: duration,
+    creditsUsed: duration,
+    createdAtMs: now,
+    acceptedAtMs: null,
+    startedAtMs: null,
+    endsAtMs: null,
+    endedAtMs: null,
+    endReason: null,
+    error: null,
+    offer: null,
+    answer: null,
+    parentCandidates: [],
+    childCandidates: [],
+    commandId: commandRef.id,
+  })
+
+  await setDoc(commandRef, {
+    type: 'START_LIVE_VIEW',
+    status: 'PENDING',
+    deviceId: params.deviceId,
+    requestedAtMs: now,
+    acceptedAtMs: null,
+    completedAtMs: null,
+    resultPath: null,
+    resultUrl: null,
+    error: null,
+    durationMinutes: duration,
+    liveSessionId: sessionRef.id,
+    liveVideo: params.config.video,
+    liveAudio: params.config.audio,
+    liveScreen: params.config.screen,
+    liveRecord: params.config.record,
+    cameraFront: params.config.cameraFacing === 'front',
+  })
+
+  await setDoc(
+    doc(db, COL.liveViewQuota, params.parentUid),
+    { creditsRemaining: quota.creditsRemaining - duration },
+    { merge: true },
+  )
+
+  return { sessionId: sessionRef.id, commandId: commandRef.id }
+}
+
+export async function updateLiveSession(
+  familyId: string,
+  sessionId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await setDoc(doc(db, COL.families, familyId, COL.liveSessions, sessionId), patch, { merge: true })
+}
+
+export async function addLiveSessionIceCandidate(
+  familyId: string,
+  sessionId: string,
+  side: 'parent' | 'child',
+  candidate: Record<string, unknown>,
+): Promise<void> {
+  const field = side === 'parent' ? 'parentCandidates' : 'childCandidates'
+  await updateDoc(doc(db, COL.families, familyId, COL.liveSessions, sessionId), {
+    [field]: arrayUnion(candidate),
+  })
+}
+
+export function observeLiveSession(
+  familyId: string,
+  sessionId: string,
+  onData: (session: import('../types').LiveSession) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    doc(db, COL.families, familyId, COL.liveSessions, sessionId),
+    (snap) => {
+      if (!snap.exists()) return
+      const d = snap.data()
+      const cfg = (d.config as Record<string, unknown>) || {}
+      onData({
+        id: snap.id,
+        deviceId: (d.deviceId as string) || '',
+        parentUid: (d.parentUid as string) || '',
+        status: ((d.status as string) || 'pending') as import('../types').LiveSessionStatus,
+        config: {
+          video: Boolean(cfg.video),
+          audio: Boolean(cfg.audio),
+          screen: Boolean(cfg.screen),
+          cameraFacing: cfg.cameraFacing === 'front' ? 'front' : 'rear',
+          record: Boolean(cfg.record),
+        },
+        durationMinutes: Number(d.durationMinutes ?? 1),
+        creditsUsed: Number(d.creditsUsed ?? 0),
+        createdAtMs: Number(d.createdAtMs ?? 0),
+        acceptedAtMs: d.acceptedAtMs != null ? Number(d.acceptedAtMs) : null,
+        startedAtMs: d.startedAtMs != null ? Number(d.startedAtMs) : null,
+        endsAtMs: d.endsAtMs != null ? Number(d.endsAtMs) : null,
+        endedAtMs: d.endedAtMs != null ? Number(d.endedAtMs) : null,
+        endReason: (d.endReason as string) || null,
+        error: (d.error as string) || null,
+        offer: (d.offer as { type: string; sdp: string }) || null,
+        answer: (d.answer as { type: string; sdp: string }) || null,
+        parentCandidates: (d.parentCandidates as Array<Record<string, unknown>>) || [],
+        childCandidates: (d.childCandidates as Array<Record<string, unknown>>) || [],
+      })
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export function observeLiveRecordings(
+  familyId: string,
+  onData: (rows: import('../types').LiveRecording[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return onSnapshot(
+    query(
+      collection(db, COL.families, familyId, COL.liveRecordings),
+      orderBy('createdAtMs', 'desc'),
+      limit(200),
+    ),
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          sessionId: (data.sessionId as string) || '',
+          deviceId: (data.deviceId as string) || '',
+          status: ((data.status as string) || 'ready') as import('../types').LiveRecordingStatus,
+          mediaUrl: (data.mediaUrl as string) || null,
+          mediaPath: (data.mediaPath as string) || null,
+          durationSec: Number(data.durationSec ?? 0),
+          sizeBytes: Number(data.sizeBytes ?? 0),
+          createdAtMs: Number(data.createdAtMs ?? 0),
+        }
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+export async function deleteLiveRecording(familyId: string, recordingId: string): Promise<void> {
+  await deleteDoc(doc(db, COL.families, familyId, COL.liveRecordings, recordingId))
+}
+
+export async function createLiveRecording(
+  familyId: string,
+  row: Omit<import('../types').LiveRecording, 'id'>,
+): Promise<string> {
+  const ref = await addDoc(collection(db, COL.families, familyId, COL.liveRecordings), {
+    sessionId: row.sessionId,
+    deviceId: row.deviceId,
+    status: row.status,
+    mediaUrl: row.mediaUrl,
+    mediaPath: row.mediaPath,
+    durationSec: row.durationSec,
+    sizeBytes: row.sizeBytes,
+    createdAtMs: row.createdAtMs,
+  })
+  return ref.id
+}
+
+export async function stopLiveViewSession(familyId: string, deviceId: string): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'STOP_LIVE_VIEW')
+}
+
+export async function uploadLiveRecordingBlob(
+  familyId: string,
+  deviceId: string,
+  sessionId: string,
+  blob: Blob,
+): Promise<{ path: string; url: string }> {
+  const base = (import.meta.env.VITE_R2_MEDIA_PROXY_BASE_URL as string | undefined)?.trim()
+    || 'https://sarechild-media-proxy.neuereatec.workers.dev'
+  const path = `families/${familyId}/devices/${deviceId}/liveRecordings/${sessionId}_${Date.now()}.webm`
+  const encodedPath = path.split('/').map((p) => encodeURIComponent(p)).join('/')
+  const res = await fetch(`${base}/upload/${encodedPath}?contentType=${encodeURIComponent(blob.type || 'video/webm')}`, {
+    method: 'PUT',
+    body: blob,
+  })
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`)
+  const body = (await res.json()) as { url?: string }
+  const url = body.url || `${base}/${encodedPath}`
+  return { path, url }
 }

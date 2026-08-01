@@ -10,6 +10,8 @@ enum class AlertType {
     TAMPER,
     PERMISSION_REVOKED,
     SCREEN_SHARE,
+    /** WebRTC live viewing session started or ended. */
+    LIVE_VIEW,
     CAMERA_CHECK,
     MIC_CHECK,
     MESSAGE_PREVIEW,
@@ -53,6 +55,10 @@ enum class KeywordCategory {
 
 enum class SafetyCommandType {
     SCREEN_SHARE,
+    /** Parent requests a WebRTC live viewing session — child must consent first. */
+    START_LIVE_VIEW,
+    /** Parent or timer ends an active live viewing session. */
+    STOP_LIVE_VIEW,
     CAMERA_CHECK,
     MIC_CHECK,
     STOP_SCREEN_SHARE,

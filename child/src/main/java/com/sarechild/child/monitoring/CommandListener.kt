@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import com.google.firebase.firestore.ListenerRegistration
 import com.sarechild.child.CallRecordingRequestActivity
 import com.sarechild.child.DeviceLockActivity
+import com.sarechild.child.LiveViewRequestActivity
 import com.sarechild.child.R
 import com.sarechild.child.RingDeviceActivity
 import com.sarechild.child.SafetyRequestActivity
@@ -55,6 +56,14 @@ class CommandListener(
             SafetyCommandType.STOP_SCREEN_SHARE -> {
                 context.stopService(Intent(context, ScreenShareService::class.java))
                 scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.STOP_LIVE_VIEW -> {
+                context.stopService(Intent(context, LiveViewService::class.java))
+                scope.launch {
+                    repo.setActiveSessionRemote(null)
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                }
                 return
             }
             SafetyCommandType.RING_DEVICE -> {
@@ -157,6 +166,42 @@ class CommandListener(
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests call recording")
                     .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setContentIntent(pending)
+                    .setFullScreenIntent(pending, true)
+                    .setAutoCancel(true)
+                    .build()
+                context.getSystemService(NotificationManager::class.java)
+                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
+                context.startActivity(intent)
+                return
+            }
+            SafetyCommandType.START_LIVE_VIEW -> {
+                val sessionId = command.liveSessionId.orEmpty()
+                val intent = Intent(context, LiveViewRequestActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
+                    putExtra(SareChildConstants.EXTRA_LIVE_SESSION_ID, sessionId)
+                    command.durationMinutes?.let {
+                        putExtra(SareChildConstants.EXTRA_DURATION_MINUTES, it)
+                    }
+                    command.liveVideo?.let { putExtra(SareChildConstants.EXTRA_LIVE_VIDEO, it) }
+                    command.liveAudio?.let { putExtra(SareChildConstants.EXTRA_LIVE_AUDIO, it) }
+                    command.liveScreen?.let { putExtra(SareChildConstants.EXTRA_LIVE_SCREEN, it) }
+                    command.liveRecord?.let { putExtra(SareChildConstants.EXTRA_LIVE_RECORD, it) }
+                    command.cameraFront?.let { putExtra(SareChildConstants.EXTRA_CAMERA_FACING, it) }
+                }
+                val pending = PendingIntent.getActivity(
+                    context,
+                    command.id.hashCode(),
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("Parent requests live viewing")
+                    .setContentText("Tap to Allow or Not now. Timer auto-allows if you can't respond.")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)

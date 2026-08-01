@@ -44,6 +44,12 @@ object SareChildConstants {
     const val COL_CALL_RECORDINGS = "callRecordings"
     /** Per-device installed app inventory (child syncs via PackageManager). */
     const val COL_INSTALLED_APPS = "installedApps"
+    /** WebRTC live viewing signaling + session metadata (parent-web ↔ child). */
+    const val COL_LIVE_SESSIONS = "liveSessions"
+    /** Recorded live viewing sessions (R2 URL + metadata). */
+    const val COL_LIVE_RECORDINGS = "liveRecordings"
+    /** Top-level daily live-view credit quota per parent uid. */
+    const val COL_LIVE_VIEW_QUOTA = "liveViewQuota"
 
     const val KEYWORD_LIST_DEFAULT = "default"
 
@@ -173,4 +179,19 @@ object SareChildConstants {
      * system permission dialogs — only our own in-app Allow screens.
      */
     const val PARENT_REQUEST_AUTO_ALLOW_SECONDS = 30
+
+    /** Live viewing: 1 credit = 1 minute of streaming. Trial default allowance. */
+    const val LIVE_VIEW_DAILY_CREDITS = 10
+    const val LIVE_VIEW_MIN_MINUTES = 1
+    const val LIVE_VIEW_MAX_MINUTES = 5
+    const val LIVE_VIEW_DEFAULT_MINUTES = 1
+    const val STUN_SERVER = "stun:stun.l.google.com:19302"
+
+    const val EXTRA_LIVE_SESSION_ID = "live_session_id"
+    const val EXTRA_LIVE_VIDEO = "live_video"
+    const val EXTRA_LIVE_AUDIO = "live_audio"
+    const val EXTRA_LIVE_SCREEN = "live_screen"
+    const val EXTRA_LIVE_RECORD = "live_record"
+    const val LIVE_VIEW_NOTIFICATION_ID = 1011
+    const val NOTIFICATION_CHANNEL_LIVE_VIEW = "live_viewing"
 }

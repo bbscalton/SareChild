@@ -208,6 +208,19 @@ service cloud.firestore {
         allow write: if isFamilyGuardian(familyId);
       }
 
+      // WebRTC live viewing signaling (parent offer/answer + ICE) and session metadata.
+      match /liveSessions/{sessionId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow create: if isFamilyGuardian(familyId);
+        allow update: if isFamilyGuardian(familyId) || signedIn();
+      }
+
+      // Recorded live viewing sessions (R2 URL + metadata).
+      match /liveRecordings/{recordingId} {
+        allow read, delete: if isFamilyGuardian(familyId);
+        allow create: if isFamilyGuardian(familyId) || signedIn();
+      }
+
       // Owner manages any guardian entry; a user may also write their own
       // entry (used by signUp for the OWNER doc and acceptGuardianInvite for
       // a CAREGIVER doc).
@@ -236,6 +249,11 @@ service cloud.firestore {
     match /keywordLists/{id} {
       allow read: if signedIn();
       allow write: if false; // seed via Admin SDK / console
+    }
+
+    // Daily live-view minute credits (1 credit = 1 minute). Parent reads/writes own doc.
+    match /liveViewQuota/{uid} {
+      allow read, create, update: if signedIn() && request.auth.uid == uid;
     }
   }
 }

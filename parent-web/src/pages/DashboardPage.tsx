@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../AuthContext'
 import * as repo from '../lib/parentRepo'
 import { WENT_DARK_AFTER_MS } from '../firebase'
+import { LiveViewingSection } from '../components/LiveViewingSection'
 import type {
   AppBlockSchedule,
   AppLimit,
@@ -12,6 +13,8 @@ import type {
   GeofenceZone,
   GuardianInfo,
   LocationTrailSample,
+  LiveRecording,
+  LiveViewQuota,
   SafeContact,
   SafetyCommand,
   ScreenShareSchedule,
@@ -44,6 +47,7 @@ type Section =
   | 'safety'
   | 'whatsapp'
   | 'callrecording'
+  | 'liveview'
   | 'typing'
   | 'usage'
   | 'apps'
@@ -89,6 +93,8 @@ export function DashboardPage() {
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppTypeFilter, setWhatsAppTypeFilter] = useState<WhatsAppTableTypeFilter>('ALL')
   const [callRecordings, setCallRecordings] = useState<CallRecording[]>([])
+  const [liveRecordings, setLiveRecordings] = useState<LiveRecording[]>([])
+  const [liveViewQuota, setLiveViewQuota] = useState<LiveViewQuota | null>(null)
   const [callRecordingFilter, setCallRecordingFilter] = useState<CallRecordingFilter>('all')
   const [typingEvents, setTypingEvents] = useState<TypingSafetyEvent[]>([])
   const [typingFilter, setTypingFilter] = useState<TypingFilter>('all')
@@ -192,6 +198,7 @@ export function DashboardPage() {
       repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
       repo.observeWhatsAppEvents(familyId, setWhatsAppEvents, (e) => setError(e.message)),
       repo.observeCallRecordings(familyId, setCallRecordings, (e) => setError(e.message)),
+      repo.observeLiveRecordings(familyId, setLiveRecordings, (e) => setError(e.message)),
       repo.observeTypingSafetyEvents(familyId, setTypingEvents, (e) => setError(e.message)),
       repo.observeTypingSafetySettings(familyId, setTypingSettings, (e) => setError(e.message)),
       repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
@@ -200,6 +207,11 @@ export function DashboardPage() {
     ]
     return () => unsubs.forEach((u) => u())
   }, [familyId])
+
+  useEffect(() => {
+    if (!user?.uid) return
+    return repo.observeLiveViewQuota(user.uid, setLiveViewQuota, (e) => setError(e.message))
+  }, [user?.uid])
 
   useEffect(() => {
     if (!limitDeviceId && devices.length > 0) setLimitDeviceId(devices[0]!.id)
@@ -833,6 +845,12 @@ export function DashboardPage() {
           icon: '\u{1F4DE}',
           badge: callRecordingStats.total > 0 ? callRecordingStats.total : undefined,
         },
+        {
+          id: 'liveview',
+          label: 'Live viewing',
+          sub: 'Camera, audio & screen (WebRTC)',
+          icon: '\u{1F4F9}',
+        },
       ],
     },
     {
@@ -870,6 +888,7 @@ export function DashboardPage() {
     safety: 'Safety checks',
     whatsapp: 'WhatsApp protection',
     callrecording: 'Call recording',
+    liveview: 'Live viewing',
     typing: 'Typing safety',
     usage: 'App usage & limits',
     apps: 'Apps',
@@ -1787,6 +1806,18 @@ export function DashboardPage() {
                 )}
               </div>
             </section>
+          )}
+
+          {section === 'liveview' && familyId && user?.uid && (
+            <LiveViewingSection
+              familyId={familyId}
+              parentUid={user.uid}
+              devices={devices}
+              quota={liveViewQuota}
+              recordings={liveRecordings}
+              onError={setError}
+              onStatus={setStatusMsg}
+            />
           )}
 
           {section === 'typing' && (

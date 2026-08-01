@@ -53,4 +53,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
 }

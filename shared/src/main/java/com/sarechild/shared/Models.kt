@@ -180,7 +180,15 @@ data class SafetyCommand(
     val resultUrl: String? = null,
     val error: String? = null,
     /** Screen share session length (minutes). Default 10, max 60. */
-    val durationMinutes: Int? = null
+    val durationMinutes: Int? = null,
+    /** Live viewing: Firestore liveSessions doc id. */
+    val liveSessionId: String? = null,
+    val liveVideo: Boolean? = null,
+    val liveAudio: Boolean? = null,
+    val liveScreen: Boolean? = null,
+    val liveRecord: Boolean? = null,
+    /** true = front camera, false = rear. */
+    val cameraFront: Boolean? = null,
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "type" to type.name,
@@ -192,7 +200,13 @@ data class SafetyCommand(
         "resultPath" to resultPath,
         "resultUrl" to resultUrl,
         "error" to error,
-        "durationMinutes" to durationMinutes
+        "durationMinutes" to durationMinutes,
+        "liveSessionId" to liveSessionId,
+        "liveVideo" to liveVideo,
+        "liveAudio" to liveAudio,
+        "liveScreen" to liveScreen,
+        "liveRecord" to liveRecord,
+        "cameraFront" to cameraFront,
     )
 
     companion object {
@@ -214,7 +228,13 @@ data class SafetyCommand(
                 resultPath = data["resultPath"] as? String,
                 resultUrl = data["resultUrl"] as? String,
                 error = data["error"] as? String,
-                durationMinutes = (data["durationMinutes"] as? Number)?.toInt()
+                durationMinutes = (data["durationMinutes"] as? Number)?.toInt(),
+                liveSessionId = data["liveSessionId"] as? String,
+                liveVideo = data["liveVideo"] as? Boolean,
+                liveAudio = data["liveAudio"] as? Boolean,
+                liveScreen = data["liveScreen"] as? Boolean,
+                liveRecord = data["liveRecord"] as? Boolean,
+                cameraFront = data["cameraFront"] as? Boolean,
             )
         }
     }
