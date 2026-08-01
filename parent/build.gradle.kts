@@ -12,8 +12,8 @@ android {
         applicationId = "com.sarechild.parent"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val mapsApiKey = (rootProject.extra["MAPS_API_KEY"] as String?) ?: "YOUR_MAPS_API_KEY"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey

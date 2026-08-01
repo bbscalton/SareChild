@@ -100,7 +100,7 @@ class ParentRepository(
         if (!acceptLegal) error("You must accept the Terms of Service and Privacy Policy to register.")
         val result = auth.createUserWithEmailAndPassword(email, password).await()
         val uid = result.user?.uid ?: error("No user id")
-        bootstrapNewOwnerFamily(uid, email, withLegal = true)
+        bootstrapNewOwnerFamily(uid, email, withLegal = false)
     }
 
     private suspend fun verifyFamilyAccess(uid: String, familyId: String): Boolean {

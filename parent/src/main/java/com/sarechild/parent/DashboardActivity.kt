@@ -249,6 +249,7 @@ class DashboardActivity : AppCompatActivity() {
             "Communication",
             listOf(
                 Triple("callrecording", "Call recording", "\uD83D\uDCDE"),
+                Triple("liveview", "Live viewing", "\uD83D\uDCF9"),
             )
         )
         addGroup(
@@ -262,6 +263,7 @@ class DashboardActivity : AppCompatActivity() {
             listOf(
                 Triple("safety", "Safety checks", "\uD83D\uDEE1\uFE0F"),
                 Triple("geofences", "Safe zones", "\uD83D\uDCD0"),
+                Triple("apps", "Apps", "\uD83D\uDCF1"),
                 Triple("usage", "Usage & limits", "\u23F1\uFE0F"),
                 Triple("digests", "Weekly digests", "\uD83D\uDCF0"),
             )
@@ -606,7 +608,9 @@ class DashboardActivity : AppCompatActivity() {
             "map" -> showMapTab(container)
             "whatsapp" -> showWhatsAppTab(container)
             "callrecording" -> showCallRecordingTab(container)
+            "liveview" -> showLiveViewTab(container)
             "typing" -> showTypingTab(container)
+            "apps" -> showAppsTab(container)
             "safety" -> showSafetyTab(container)
             "usage" -> showUsageTab(container)
             "digests" -> showDigestsTab(container)
@@ -625,7 +629,9 @@ class DashboardActivity : AppCompatActivity() {
         "map" -> "Map & locations"
         "whatsapp" -> "WhatsApp protection"
         "callrecording" -> "Call recording"
+        "liveview" -> "Live viewing"
         "typing" -> "Typing safety"
+        "apps" -> "Apps"
         "safety" -> "Safety checks"
         "usage" -> "App usage & limits"
         "digests" -> "Weekly digests"
@@ -642,6 +648,64 @@ class DashboardActivity : AppCompatActivity() {
             .setShowTitle(true)
             .build()
             .launchUrl(this, Uri.parse(url))
+    }
+
+    /** WebRTC live camera/audio/screen viewing — available on the parent web dashboard. */
+    private fun showLiveViewTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Live viewing"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "Camera, microphone, and screen sharing use WebRTC on the parent web dashboard. Open it in your browser to start a live session with a paired child device."
+            setPadding(0, dp(8), 0, dp(16))
+        })
+        root.addView(MaterialButton(this).apply {
+            text = "Open live viewing in browser"
+            setOnClickListener { openWebDashboard() }
+        })
+    }
+
+    /** Installed-apps browser and block schedules — full UI on the parent web dashboard. */
+    private fun showAppsTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Apps"
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "Browse installed apps on each child device, set block schedules, and manage app limits. The full apps browser lives on the parent web dashboard; Usage & limits here covers daily time caps."
+            setPadding(0, dp(8), 0, dp(16))
+        })
+        root.addView(MaterialButton(this).apply {
+            text = "Open apps in web dashboard"
+            setOnClickListener { openWebDashboard() }
+        })
+        root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = "Usage & limits (native)"
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(8) }
+            setOnClickListener { selectSection("usage") }
+        })
     }
 
     /** Live map control center — native quick maps plus web dashboard for full experience. */
