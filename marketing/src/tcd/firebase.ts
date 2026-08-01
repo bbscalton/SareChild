@@ -55,7 +55,9 @@ export const WENT_DARK_AFTER_MS = 5 * 60 * 1000
 export const R2_BASE_URL = readEnv('VITE_R2_MEDIA_PROXY_BASE_URL') || 'https://sarechild-media-proxy.neuereatec.workers.dev'
 export const PLATFORM_HEALTH_URL =
   readEnv('VITE_PLATFORM_HEALTH_URL') || `${R2_BASE_URL.replace(/\/$/, '')}/platform-health`
-export const FUNCTIONS_HEALTH_URL = readEnv('VITE_FUNCTIONS_HEALTH_URL')
+export const FUNCTIONS_HEALTH_URL =
+  readEnv('VITE_FUNCTIONS_HEALTH_URL') ||
+  'https://us-central1-safechild-f34ac.cloudfunctions.net/platformHealth'
 export const FIREBASE_CONSOLE_URL =
   readEnv('VITE_FIREBASE_CONSOLE_URL') || 'https://console.firebase.google.com/project/safechild-f34ac'
 export const FIREBASE_AUTH_CONSOLE_URL = `${FIREBASE_CONSOLE_URL}/authentication/users`

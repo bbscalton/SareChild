@@ -214,31 +214,37 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
     const started = performance.now()
     const res = await fetch(PLATFORM_HEALTH_URL || FUNCTIONS_HEALTH_URL)
     const latencyMs = Math.round(performance.now() - started)
-    let detail = ''
+    let body: {
+      ok?: boolean
+      checks?: {
+        cloudflareWorker?: { status?: string; message?: string }
+        r2?: { status?: string; message?: string }
+        d1?: { status?: string; message?: string }
+        kv?: { status?: string; message?: string }
+        firebase?: { status?: string; message?: string }
+      }
+    } = {}
     try {
-      const body = (await res.json()) as {
-        checks?: {
-          firebase?: { message?: string }
-          r2?: { status?: string }
-          d1?: { status?: string }
-          kv?: { status?: string }
-        }
-      }
-      const r2Status = body.checks?.r2?.status
-      const d1Status = body.checks?.d1?.status
-      const kvStatus = body.checks?.kv?.status
-      if (r2Status || d1Status || kvStatus) {
-        detail = ` R2=${r2Status || 'n/a'} · D1=${d1Status || 'n/a'} · KV=${kvStatus || 'n/a'}`
-      }
+      body = (await res.json()) as typeof body
     } catch {
       // non-JSON is fine
     }
+    const workerStatus = body.checks?.cloudflareWorker?.status
+    const r2Status = body.checks?.r2?.status
+    const d1Status = body.checks?.d1?.status
+    const kvStatus = body.checks?.kv?.status
+    const detail = ` R2=${r2Status || 'n/a'} · D1=${d1Status || 'n/a'} · KV=${kvStatus || 'n/a'}`
+    const edgeHealthy =
+      res.ok ||
+      (workerStatus === 'ok' && r2Status === 'ok' && d1Status === 'ok' && kvStatus !== 'fail')
     checks.push({
       id: 'platform-health',
       label: 'Platform backend (Cloudflare edge)',
       group: 'platform',
-      status: res.ok ? 'ok' : 'fail',
-      message: res.ok ? `Edge platform healthy.${detail}` : `Platform health returned HTTP ${res.status}.${detail}`,
+      status: edgeHealthy ? (kvStatus === 'warn' ? 'warn' : 'ok') : 'fail',
+      message: edgeHealthy
+        ? `Edge platform healthy.${detail}`
+        : `Platform health returned HTTP ${res.status}.${detail}`,
       latencyMs,
     })
   } catch (e) {
@@ -260,7 +266,7 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
         label: 'Cloud Functions',
         group: 'platform',
         status: res.ok ? 'ok' : 'warn',
-        message: res.ok ? 'Functions health endpoint reachable.' : `Functions health HTTP ${res.status}.`,
+        message: res.ok ? 'Functions health endpoint reachable.' : `Functions health HTTP ${res.status} (optional Blaze endpoint).`,
         latencyMs: Math.round(performance.now() - started),
       })
     } catch (e) {
@@ -269,9 +275,17 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
         label: 'Cloud Functions',
         group: 'platform',
         status: 'warn',
-        message: e instanceof Error ? e.message : 'Functions health unreachable.',
+        message: e instanceof Error ? e.message : 'Functions health unreachable (optional).',
       })
     }
+  } else {
+    checks.push({
+      id: 'functions-health',
+      label: 'Cloud Functions',
+      group: 'platform',
+      status: 'ok',
+      message: 'Functions health probe not configured; Cloudflare edge is primary.',
+    })
   }
 
   try {
