@@ -54,7 +54,8 @@
             android:id="@+id/countdownSection"
             android:layout_width="176dp"
             android:layout_height="176dp"
-            android:layout_marginTop="26dp">
+            android:layout_marginTop="26dp"
+            android:visibility="gone">
 
             <com.sarechild.child.ui.CountdownRingView
                 android:id="@+id/ring"
@@ -167,7 +168,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:padding="16dp"
-                android:text="Your parent will see photo thumbnails from this phone's gallery. On Android 14+, choose Allow all photos for full access — Selected photos only shares those you pick. If you can't respond, we'll enable sharing when the timer ends."
+                android:text="Your parent will see photo thumbnails from this phone's gallery. On Android 14+, choose Allow all photos for full access — Selected photos only shares those you pick."
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
         </com.google.android.material.card.MaterialCardView>

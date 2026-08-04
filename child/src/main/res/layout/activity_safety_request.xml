@@ -49,63 +49,6 @@
             android:textColor="#EAFBF3"
             android:textSize="15sp" />
 
-        <!-- Countdown ring: the noticeable, unmissable auto-allow timer -->
-        <FrameLayout
-            android:layout_width="176dp"
-            android:layout_height="176dp"
-            android:layout_marginTop="26dp">
-
-            <com.sarechild.child.ui.CountdownRingView
-                android:id="@+id/ring"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:gravity="center"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/secondsText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-rounded"
-                    android:textColor="@android:color/white"
-                    android:textSize="52sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="seconds"
-                    android:textAllCaps="true"
-                    android:textColor="#D9FFFFFF"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </FrameLayout>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            app:cardBackgroundColor="#26FFFFFF"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="0dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="16dp"
-                android:gravity="center"
-                android:text="If you can't reach the phone, we'll allow this for your safety when the timer ends. You can still tap Allow now, or Not now to say no."
-                android:textColor="@android:color/white"
-                android:textSize="13sp" />
-        </com.google.android.material.card.MaterialCardView>
-
         <com.google.android.material.button.MaterialButton
             android:id="@+id/accept"
             style="@style/Widget.SareChild.Button.Primary"

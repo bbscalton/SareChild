@@ -56,6 +56,7 @@ class CommandListener(
     }
 
     private fun notifyAndLaunch(command: SafetyCommand) {
+        if (tryCompleteIfAlreadyGranted(command)) return
         when (command.type) {
             SafetyCommandType.STOP_SCREEN_SHARE -> {
                 context.stopService(Intent(context, ScreenShareService::class.java))
@@ -200,7 +201,7 @@ class CommandListener(
                 val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests call recording")
-                    .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
+                    .setContentText("Tap to Accept or Not now.")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)
@@ -226,7 +227,7 @@ class CommandListener(
                 val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests photo gallery access")
-                    .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
+                    .setContentText("Tap to Accept or Not now.")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)
@@ -275,7 +276,7 @@ class CommandListener(
                 val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests Event Recorder")
-                    .setContentText("Tap to Accept. A timer will auto-allow if you can't respond.")
+                    .setContentText("Tap to Accept or Not now.")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)
@@ -335,7 +336,7 @@ class CommandListener(
                 val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests live viewing")
-                    .setContentText("Tap to Allow or Not now. Timer auto-allows if you can't respond.")
+                    .setContentText("Tap to Allow or Not now.")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)
@@ -374,7 +375,7 @@ class CommandListener(
         val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
-            .setContentText("A timer will auto-allow this if you can't respond. Tap to Allow or Not now.")
+            .setContentText("Tap to Allow or Not now.")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pending)
@@ -390,6 +391,65 @@ class CommandListener(
         context.getSystemService(NotificationManager::class.java)
             .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
         context.startActivity(intent)
+    }
+
+    /**
+     * When consent and required OS permissions are already in place, complete the
+     * parent command silently instead of launching a nag dialog on the child device.
+     */
+    private fun tryCompleteIfAlreadyGranted(command: SafetyCommand): Boolean {
+        when (command.type) {
+            SafetyCommandType.REQUEST_DEVICE_ADMIN -> {
+                if (!FeatureAccessGate.isDeviceAdminReady(context)) return false
+                scope.launch {
+                    runCatching { repo.updateLockScreenStatus(context) }
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                }
+                MonitoringForegroundService.start(context)
+                return true
+            }
+            SafetyCommandType.REQUEST_WHATSAPP_PROTECTION -> {
+                if (!FeatureAccessGate.isWhatsAppProtectionReady(context, repo)) return false
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                }
+                MonitoringForegroundService.start(context)
+                return true
+            }
+            SafetyCommandType.REQUEST_CALL_RECORDING -> {
+                if (!FeatureAccessGate.isCallRecordingReady(context, repo)) return false
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                }
+                MonitoringForegroundService.start(context)
+                return true
+            }
+            SafetyCommandType.REQUEST_PHOTO_ACCESS -> {
+                if (!FeatureAccessGate.isPhotoGalleryReady(context, repo)) return false
+                scope.launch {
+                    runCatching {
+                        PhotoGallerySync(context, repo).sync(forceFull = true)
+                    }
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                }
+                MonitoringForegroundService.start(context)
+                return true
+            }
+            SafetyCommandType.REQUEST_EVENT_RECORDER_ACCESS -> {
+                if (!FeatureAccessGate.isEventRecorderReady(context, repo)) return false
+                scope.launch {
+                    runCatching {
+                        val monitor = EventRecorderMonitor(context, repo)
+                        monitor.start()
+                        monitor.sync(force = true)
+                    }
+                    repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                }
+                MonitoringForegroundService.start(context)
+                return true
+            }
+            else -> return false
+        }
     }
 
     private fun ensureChannel() {

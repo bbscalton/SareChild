@@ -13,8 +13,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityWhatsappProtectionRequestBinding
+import com.sarechild.child.monitoring.FeatureAccessGate
 import com.sarechild.child.monitoring.MonitoringForegroundService
-import com.sarechild.child.ui.AllowCountdownController
+import com.sarechild.child.monitoring.NotificationMonitorService
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
@@ -22,14 +23,12 @@ import kotlinx.coroutines.launch
 /**
  * Visible child Accept surface for a parent's "Request WhatsApp protection" command.
  * Sets consent, syncs Firestore, then deep-links to notification access, accessibility,
- * and media permissions. Uses the same countdown auto-allow pattern as [SafetyRequestActivity].
+ * and media permissions.
  */
 class WhatsAppProtectionRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivityWhatsappProtectionRequestBinding
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
-    private var countdown: AllowCountdownController? = null
-    private var autoAllowed = false
     private var accepted = false
 
     private val requestMedia = registerForActivityResult(
@@ -42,6 +41,11 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
         setContentView(binding.root)
         repo = ChildRepository(this)
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
+
+        if (FeatureAccessGate.isWhatsAppProtectionReady(this, repo)) {
+            silentlyCompleteAndFinish()
+            return
+        }
 
         binding.body.text =
             "Your parent asked to monitor WhatsApp messages, calls, and media from unknown contacts. " +
@@ -59,7 +63,11 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
         binding.accept.setOnClickListener { accept() }
         binding.decline.setOnClickListener { decline("Declined by child") }
 
-        startAutoAllowCountdown()
+        binding.countdownSection.visibility = View.GONE
+
+        if (FeatureAccessGate.hasWhatsAppConsent(repo)) {
+            showPermissionsOnly()
+        }
     }
 
     override fun onResume() {
@@ -67,25 +75,29 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
         if (accepted) refreshPermissionStatus()
     }
 
-    private fun startAutoAllowCountdown() {
-        binding.ring.startPulse()
-        countdown = AllowCountdownController(
-            context = this,
-            ring = binding.ring,
-            secondsLabel = binding.secondsText,
-            onAutoAllow = {
-                autoAllowed = true
-                accept()
+    private fun silentlyCompleteAndFinish() {
+        MonitoringForegroundService.start(this)
+        lifecycleScope.launch {
+            if (commandId.isNotBlank()) {
+                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
             }
-        ).also { it.start() }
+        }
+        finish()
+    }
+
+    private fun showPermissionsOnly() {
+        accepted = true
+        binding.consentCard.visibility = View.GONE
+        binding.accept.visibility = View.GONE
+        binding.decline.visibility = View.GONE
+        binding.permissionsCard.visibility = View.VISIBLE
+        MonitoringForegroundService.start(this)
+        refreshPermissionStatus()
     }
 
     private fun accept() {
         if (accepted) return
         accepted = true
-        countdown?.cancel()
-        binding.ring.stopPulse()
-        binding.countdownSection.visibility = View.GONE
         binding.consentCard.visibility = View.GONE
         binding.accept.visibility = View.GONE
         binding.decline.visibility = View.GONE
@@ -96,8 +108,7 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching { repo.syncConsentFlags() }
             if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED, autoAllowed = autoAllowed)
-                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
             }
         }
         MonitoringForegroundService.start(this)
@@ -105,8 +116,6 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
     }
 
     private fun decline(reason: String) {
-        countdown?.cancel()
-        binding.ring.stopPulse()
         lifecycleScope.launch {
             if (commandId.isNotBlank()) {
                 repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason)
@@ -129,7 +138,7 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
     }
 
     private fun refreshPermissionStatus() {
-        val notif = isNotificationAccessEnabled()
+        val notif = NotificationMonitorService.isEnabled(this)
         val accessibility = isAccessibilityServiceEnabled()
         val media = hasMediaPermission()
 
@@ -148,11 +157,12 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
         } else {
             "WhatsApp media: optional — for photos, videos, and voice notes"
         }
-    }
 
-    private fun isNotificationAccessEnabled(): Boolean {
-        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        return flat?.contains(packageName) == true
+        if (notif && repo.whatsappMonitorConsent && commandId.isNotBlank()) {
+            lifecycleScope.launch {
+                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+            }
+        }
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -175,9 +185,4 @@ class WhatsAppProtectionRequestActivity : AppCompatActivity() {
 
     private fun hasPerm(perm: String): Boolean =
         ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
-
-    override fun onDestroy() {
-        countdown?.cancel()
-        super.onDestroy()
-    }
 }

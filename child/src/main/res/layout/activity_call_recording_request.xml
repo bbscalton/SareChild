@@ -54,7 +54,8 @@
             android:id="@+id/countdownSection"
             android:layout_width="176dp"
             android:layout_height="176dp"
-            android:layout_marginTop="26dp">
+            android:layout_marginTop="26dp"
+            android:visibility="gone">
 
             <com.sarechild.child.ui.CountdownRingView
                 android:id="@+id/ring"
@@ -192,7 +193,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:padding="16dp"
-                android:text="Native Android call recording — not Cordova. Cellular calls: best-effort audio when the OS allows. WhatsApp/Telegram VoIP: mic-side only; full two-way VoIP recording is limited on modern Android. Call events are always logged. If you can't respond, recording enables when the timer ends."
+                android:text="Native Android call recording — not Cordova. Cellular calls: best-effort audio when the OS allows. WhatsApp/Telegram VoIP: mic-side only; full two-way VoIP recording is limited on modern Android. Call events are always logged."
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
         </com.google.android.material.card.MaterialCardView>

@@ -9,11 +9,11 @@ import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityEventRecorderRequestBinding
 import com.sarechild.child.monitoring.EventRecorderMonitor
+import com.sarechild.child.monitoring.FeatureAccessGate
 import com.sarechild.child.monitoring.MessageMonitorAccessibilityService
 import com.sarechild.child.monitoring.MonitoringForegroundService
 import com.sarechild.child.monitoring.NotificationMonitorService
 import com.sarechild.child.monitoring.UsageMonitorHelper
-import com.sarechild.child.ui.AllowCountdownController
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
@@ -25,8 +25,6 @@ class EventRecorderRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivityEventRecorderRequestBinding
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
-    private var countdown: AllowCountdownController? = null
-    private var autoAllowed = false
     private var accepted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,6 +33,11 @@ class EventRecorderRequestActivity : AppCompatActivity() {
         setContentView(binding.root)
         repo = ChildRepository(this)
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
+
+        if (FeatureAccessGate.isEventRecorderReady(this, repo)) {
+            silentlyCompleteAndFinish()
+            return
+        }
 
         binding.body.text =
             "Your parent asked to view an activity timeline from this phone — apps used, idle time, " +
@@ -48,7 +51,11 @@ class EventRecorderRequestActivity : AppCompatActivity() {
         binding.accept.setOnClickListener { accept() }
         binding.decline.setOnClickListener { decline("Declined by child") }
 
-        startAutoAllowCountdown()
+        binding.countdownSection.visibility = View.GONE
+
+        if (FeatureAccessGate.hasEventRecorderConsent(repo)) {
+            showPermissionsOnly()
+        }
     }
 
     override fun onResume() {
@@ -56,25 +63,34 @@ class EventRecorderRequestActivity : AppCompatActivity() {
         if (accepted) refreshPermissionStatus()
     }
 
-    private fun startAutoAllowCountdown() {
-        binding.ring.startPulse()
-        countdown = AllowCountdownController(
-            context = this,
-            ring = binding.ring,
-            secondsLabel = binding.secondsText,
-            onAutoAllow = {
-                autoAllowed = true
-                accept()
+    private fun silentlyCompleteAndFinish() {
+        MonitoringForegroundService.start(this)
+        lifecycleScope.launch {
+            runCatching {
+                val monitor = EventRecorderMonitor(this@EventRecorderRequestActivity, repo)
+                monitor.start()
+                monitor.sync(force = true)
             }
-        ).also { it.start() }
+            if (commandId.isNotBlank()) {
+                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+            }
+        }
+        finish()
+    }
+
+    private fun showPermissionsOnly() {
+        accepted = true
+        binding.consentCard.visibility = View.GONE
+        binding.accept.visibility = View.GONE
+        binding.decline.visibility = View.GONE
+        binding.permissionsCard.visibility = View.VISIBLE
+        MonitoringForegroundService.start(this)
+        refreshPermissionStatus()
     }
 
     private fun accept() {
         if (accepted) return
         accepted = true
-        countdown?.cancel()
-        binding.ring.stopPulse()
-        binding.countdownSection.visibility = View.GONE
         binding.consentCard.visibility = View.GONE
         binding.accept.visibility = View.GONE
         binding.decline.visibility = View.GONE
@@ -84,7 +100,7 @@ class EventRecorderRequestActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching { repo.syncConsentFlags() }
             if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED, autoAllowed = autoAllowed)
+                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
             }
         }
         MonitoringForegroundService.start(this)
@@ -92,8 +108,6 @@ class EventRecorderRequestActivity : AppCompatActivity() {
     }
 
     private fun decline(reason: String) {
-        countdown?.cancel()
-        binding.ring.stopPulse()
         lifecycleScope.launch {
             if (commandId.isNotBlank()) {
                 repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason)
@@ -147,10 +161,5 @@ class EventRecorderRequestActivity : AppCompatActivity() {
         startActivity(
             Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
-    }
-
-    override fun onDestroy() {
-        countdown?.cancel()
-        super.onDestroy()
     }
 }

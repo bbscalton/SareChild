@@ -12,23 +12,21 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityCallRecordingRequestBinding
+import com.sarechild.child.monitoring.FeatureAccessGate
 import com.sarechild.child.monitoring.MonitoringForegroundService
-import com.sarechild.child.ui.AllowCountdownController
+import com.sarechild.child.monitoring.NotificationMonitorService
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
 
 /**
  * Visible child Accept surface for a parent's "Request call recording" command.
- * Uses the same countdown auto-allow pattern as [SafetyRequestActivity].
  * Native Android — Cordova call-recorder plugins are not applicable.
  */
 class CallRecordingRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivityCallRecordingRequestBinding
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
-    private var countdown: AllowCountdownController? = null
-    private var autoAllowed = false
     private var accepted = false
 
     private val requestPerms = registerForActivityResult(
@@ -41,6 +39,11 @@ class CallRecordingRequestActivity : AppCompatActivity() {
         setContentView(binding.root)
         repo = ChildRepository(this)
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
+
+        if (FeatureAccessGate.isCallRecordingReady(this, repo)) {
+            silentlyCompleteAndFinish()
+            return
+        }
 
         binding.body.text =
             "Your parent asked to enable call recording for safety monitoring. " +
@@ -61,7 +64,11 @@ class CallRecordingRequestActivity : AppCompatActivity() {
         binding.accept.setOnClickListener { accept() }
         binding.decline.setOnClickListener { decline("Declined by child") }
 
-        startAutoAllowCountdown()
+        binding.countdownSection.visibility = View.GONE
+
+        if (FeatureAccessGate.hasCallRecordingConsent(repo)) {
+            showPermissionsOnly()
+        }
     }
 
     override fun onResume() {
@@ -69,25 +76,29 @@ class CallRecordingRequestActivity : AppCompatActivity() {
         if (accepted) refreshPermissionStatus()
     }
 
-    private fun startAutoAllowCountdown() {
-        binding.ring.startPulse()
-        countdown = AllowCountdownController(
-            context = this,
-            ring = binding.ring,
-            secondsLabel = binding.secondsText,
-            onAutoAllow = {
-                autoAllowed = true
-                accept()
+    private fun silentlyCompleteAndFinish() {
+        MonitoringForegroundService.start(this)
+        lifecycleScope.launch {
+            if (commandId.isNotBlank()) {
+                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
             }
-        ).also { it.start() }
+        }
+        finish()
+    }
+
+    private fun showPermissionsOnly() {
+        accepted = true
+        binding.consentCard.visibility = View.GONE
+        binding.accept.visibility = View.GONE
+        binding.decline.visibility = View.GONE
+        binding.permissionsCard.visibility = View.VISIBLE
+        MonitoringForegroundService.start(this)
+        refreshPermissionStatus()
     }
 
     private fun accept() {
         if (accepted) return
         accepted = true
-        countdown?.cancel()
-        binding.ring.stopPulse()
-        binding.countdownSection.visibility = View.GONE
         binding.consentCard.visibility = View.GONE
         binding.accept.visibility = View.GONE
         binding.decline.visibility = View.GONE
@@ -98,8 +109,7 @@ class CallRecordingRequestActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching { repo.syncConsentFlags() }
             if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED, autoAllowed = autoAllowed)
-                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
             }
         }
         MonitoringForegroundService.start(this)
@@ -107,8 +117,6 @@ class CallRecordingRequestActivity : AppCompatActivity() {
     }
 
     private fun decline(reason: String) {
-        countdown?.cancel()
-        binding.ring.stopPulse()
         lifecycleScope.launch {
             if (commandId.isNotBlank()) {
                 repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason)
@@ -120,7 +128,7 @@ class CallRecordingRequestActivity : AppCompatActivity() {
     private fun refreshPermissionStatus() {
         val mic = hasPerm(Manifest.permission.RECORD_AUDIO)
         val phone = hasPerm(Manifest.permission.READ_PHONE_STATE)
-        val notif = isNotificationAccessEnabled()
+        val notif = NotificationMonitorService.isEnabled(this)
 
         binding.statusMic.text = if (mic) {
             "Microphone: granted"
@@ -137,18 +145,14 @@ class CallRecordingRequestActivity : AppCompatActivity() {
         } else {
             "Notification access: required for WhatsApp/Telegram VoIP call detection"
         }
-    }
 
-    private fun isNotificationAccessEnabled(): Boolean {
-        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        return flat?.contains(packageName) == true
+        if (FeatureAccessGate.isCallRecordingReady(this, repo) && commandId.isNotBlank()) {
+            lifecycleScope.launch {
+                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+            }
+        }
     }
 
     private fun hasPerm(perm: String): Boolean =
         ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
-
-    override fun onDestroy() {
-        countdown?.cancel()
-        super.onDestroy()
-    }
 }

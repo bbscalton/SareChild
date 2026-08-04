@@ -1,19 +1,17 @@
 package com.sarechild.child
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityPhotoGalleryRequestBinding
+import com.sarechild.child.monitoring.FeatureAccessGate
 import com.sarechild.child.monitoring.MonitoringForegroundService
 import com.sarechild.child.monitoring.PhotoGallerySync
-import com.sarechild.child.ui.AllowCountdownController
 import com.sarechild.shared.PhotoGalleryAccessLevel
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
@@ -27,8 +25,6 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPhotoGalleryRequestBinding
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
-    private var countdown: AllowCountdownController? = null
-    private var autoAllowed = false
     private var accepted = false
 
     private val requestMedia = registerForActivityResult(
@@ -46,6 +42,11 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
         repo = ChildRepository(this)
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
 
+        if (FeatureAccessGate.isPhotoGalleryReady(this, repo)) {
+            silentlyCompleteAndFinish()
+            return
+        }
+
         binding.body.text =
             "Your parent asked to view photo thumbnails from this phone's gallery. " +
                 "You'll need to grant photo library access in the next step. " +
@@ -56,7 +57,11 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
         binding.accept.setOnClickListener { accept() }
         binding.decline.setOnClickListener { decline("Declined by child") }
 
-        startAutoAllowCountdown()
+        binding.countdownSection.visibility = View.GONE
+
+        if (FeatureAccessGate.hasPhotoGalleryConsent(repo)) {
+            showPermissionsOnly()
+        }
     }
 
     override fun onResume() {
@@ -64,25 +69,32 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
         if (accepted) refreshPermissionStatus()
     }
 
-    private fun startAutoAllowCountdown() {
-        binding.ring.startPulse()
-        countdown = AllowCountdownController(
-            context = this,
-            ring = binding.ring,
-            secondsLabel = binding.secondsText,
-            onAutoAllow = {
-                autoAllowed = true
-                accept()
+    private fun silentlyCompleteAndFinish() {
+        MonitoringForegroundService.start(this)
+        lifecycleScope.launch {
+            runCatching {
+                PhotoGallerySync(this@PhotoGalleryRequestActivity, repo).sync(forceFull = true)
             }
-        ).also { it.start() }
+            if (commandId.isNotBlank()) {
+                repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+            }
+        }
+        finish()
+    }
+
+    private fun showPermissionsOnly() {
+        accepted = true
+        binding.consentCard.visibility = View.GONE
+        binding.accept.visibility = View.GONE
+        binding.decline.visibility = View.GONE
+        binding.permissionsCard.visibility = View.VISIBLE
+        MonitoringForegroundService.start(this)
+        refreshPermissionStatus()
     }
 
     private fun accept() {
         if (accepted) return
         accepted = true
-        countdown?.cancel()
-        binding.ring.stopPulse()
-        binding.countdownSection.visibility = View.GONE
         binding.consentCard.visibility = View.GONE
         binding.accept.visibility = View.GONE
         binding.decline.visibility = View.GONE
@@ -92,7 +104,7 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching { repo.syncConsentFlags() }
             if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED, autoAllowed = autoAllowed)
+                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
             }
         }
         MonitoringForegroundService.start(this)
@@ -101,8 +113,6 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
     }
 
     private fun decline(reason: String) {
-        countdown?.cancel()
-        binding.ring.stopPulse()
         lifecycleScope.launch {
             if (commandId.isNotBlank()) {
                 repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason)
@@ -147,10 +157,5 @@ class PhotoGalleryRequestActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    override fun onDestroy() {
-        countdown?.cancel()
-        super.onDestroy()
     }
 }

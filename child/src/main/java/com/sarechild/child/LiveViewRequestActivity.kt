@@ -13,14 +13,13 @@ import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivitySafetyRequestBinding
 import com.sarechild.child.monitoring.LiveViewService
-import com.sarechild.child.ui.AllowCountdownController
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
 
 /**
  * Consent screen for parent-initiated WebRTC live viewing. Reuses the safety-request
- * layout with countdown auto-allow (30s) — child always sees what is being shared.
+ * layout — child always sees what is being shared. Accept / Not now only (no countdown).
  */
 class LiveViewRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySafetyRequestBinding
@@ -33,8 +32,6 @@ class LiveViewRequestActivity : AppCompatActivity() {
     private var enableScreen = false
     private var cameraFront = false
     private var recordEnabled = false
-    private var countdown: AllowCountdownController? = null
-    private var autoAllowed = false
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -92,34 +89,13 @@ class LiveViewRequestActivity : AppCompatActivity() {
             "If you Accept, your parent can watch $parts live for about $durationMinutes minute(s). " +
                 "A visible notification stays on while sharing."
 
-        binding.accept.setOnClickListener {
-            countdown?.cancel()
-            acceptRequest()
-        }
-        binding.decline.setOnClickListener {
-            countdown?.cancel()
-            decline("Declined by child")
-        }
-
-        countdown = AllowCountdownController(
-            context = this,
-            ring = binding.ring,
-            secondsLabel = binding.secondsText,
-            onAutoAllow = {
-                autoAllowed = true
-                acceptRequest()
-            }
-        )
-        countdown?.start()
+        binding.accept.setOnClickListener { acceptRequest() }
+        binding.decline.setOnClickListener { decline("Declined by child") }
     }
 
     private fun acceptRequest() {
         lifecycleScope.launch {
-            repo.updateCommand(
-                commandId,
-                SafetyCommandStatus.ACCEPTED,
-                autoAllowed = autoAllowed
-            )
+            repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
         }
         if (enableScreen) {
             if (!repo.screenShareConsent) {
@@ -181,14 +157,9 @@ class LiveViewRequestActivity : AppCompatActivity() {
 
     private fun decline(reason: String) {
         lifecycleScope.launch {
-            repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason, autoAllowed = false)
+            repo.updateCommand(commandId, SafetyCommandStatus.DECLINED, error = reason)
             repo.updateLiveSession(sessionId, mapOf("status" to "declined", "error" to reason))
         }
         finish()
-    }
-
-    override fun onDestroy() {
-        countdown?.cancel()
-        super.onDestroy()
     }
 }

@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivityDeviceAdminRequestBinding
+import com.sarechild.child.monitoring.FeatureAccessGate
 import com.sarechild.child.monitoring.MonitoringForegroundService
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
@@ -38,6 +39,11 @@ class DeviceAdminRequestActivity : AppCompatActivity() {
         repo = ChildRepository(this)
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
 
+        if (FeatureAccessGate.isDeviceAdminReady(this)) {
+            completeAccepted(finishAfter = true)
+            return
+        }
+
         binding.body.text =
             "Your parent asked to enable remote lock screen on this phone. " +
                 "You'll confirm Device Administrator in the next Android system screen."
@@ -48,16 +54,13 @@ class DeviceAdminRequestActivity : AppCompatActivity() {
         binding.btnDone.setOnClickListener { finish() }
 
         refreshAdminStatus()
-        if (DeviceAdminHelper.isAdminActive(this)) {
-            completeAccepted(showDoneOnly = true)
-        }
     }
 
     override fun onResume() {
         super.onResume()
         refreshAdminStatus()
         if (accepted && DeviceAdminHelper.isAdminActive(this)) {
-            completeAccepted()
+            completeAccepted(finishAfter = true)
         }
     }
 
@@ -86,7 +89,7 @@ class DeviceAdminRequestActivity : AppCompatActivity() {
         binding.btnEnableAdmin.visibility = if (active) View.GONE else View.VISIBLE
     }
 
-    private fun completeAccepted(showDoneOnly: Boolean = false) {
+    private fun completeAccepted(finishAfter: Boolean = false) {
         lifecycleScope.launch {
             runCatching { repo.updateLockScreenStatus(this@DeviceAdminRequestActivity) }
             if (commandId.isNotBlank()) {
@@ -94,12 +97,7 @@ class DeviceAdminRequestActivity : AppCompatActivity() {
             }
         }
         MonitoringForegroundService.start(this)
-        if (showDoneOnly) {
-            binding.consentCard.visibility = View.GONE
-            binding.accept.visibility = View.GONE
-            binding.decline.visibility = View.GONE
-            binding.btnDone.visibility = View.VISIBLE
-        } else {
+        if (finishAfter) {
             finish()
         }
     }

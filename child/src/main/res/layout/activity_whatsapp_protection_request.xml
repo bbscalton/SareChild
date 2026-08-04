@@ -54,7 +54,8 @@
             android:id="@+id/countdownSection"
             android:layout_width="176dp"
             android:layout_height="176dp"
-            android:layout_marginTop="26dp">
+            android:layout_marginTop="26dp"
+            android:visibility="gone">
 
             <com.sarechild.child.ui.CountdownRingView
                 android:id="@+id/ring"
@@ -192,7 +193,7 @@
                 android:layout_height="wrap_content"
                 android:padding="16dp"
                 android:gravity="center"
-                android:text="SareChild reads WhatsApp notification previews and on-screen chat text (never passwords). WhatsApp's encrypted database is never accessed. If you can't respond, we'll enable protection when the timer ends."
+                android:text="SareChild reads WhatsApp notification previews and on-screen chat text (never passwords). WhatsApp's encrypted database is never accessed."
                 android:textColor="@android:color/white"
                 android:textSize="13sp" />
         </com.google.android.material.card.MaterialCardView>
