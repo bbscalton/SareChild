@@ -22,6 +22,10 @@ export type WhatsAppProtectionStatus = {
   consent: boolean
   notificationAccess: boolean
   accessibilityAccess: boolean
+  /** True once the child has consented AND granted Accessibility — required for outgoing
+   *  (sent-by-child) message capture, independent of `enabled` (which only reflects the
+   *  notification-listener path used for incoming messages). */
+  outgoingCaptureReady: boolean
   mediaPermission: boolean
   lastEventAtMs: number
   updatedAtMs: number

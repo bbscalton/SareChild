@@ -380,6 +380,7 @@ function parseWhatsAppProtection(raw: unknown): WhatsAppProtectionStatus | null 
     consent: Boolean(data.consent),
     notificationAccess: Boolean(data.notificationAccess),
     accessibilityAccess: Boolean(data.accessibilityAccess),
+    outgoingCaptureReady: Boolean(data.outgoingCaptureReady),
     mediaPermission: Boolean(data.mediaPermission),
     lastEventAtMs: Number(data.lastEventAtMs ?? 0),
     updatedAtMs: Number(data.updatedAtMs ?? 0),

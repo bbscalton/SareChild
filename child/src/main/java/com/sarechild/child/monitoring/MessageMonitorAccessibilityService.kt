@@ -158,8 +158,12 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
             root.recycle()
             return
         }
+        var whatsAppAlignment: List<Pair<String, Boolean>> = emptyList()
         val text = if (WhatsAppMonitor.isWhatsApp(pkg)) {
-            collectWhatsAppText(root).trim()
+            val screenWidth = resources.displayMetrics.widthPixels
+            val capture = collectWhatsAppScreen(root, screenWidth)
+            whatsAppAlignment = capture.alignment
+            capture.text.trim()
         } else {
             collectText(root).trim()
         }
@@ -180,7 +184,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
         if (WhatsAppMonitor.isWhatsApp(pkg) && repo.whatsappMonitorConsent) {
             if (!WhatsAppMonitor.isChromeDump(text)) {
                 maybeAlertUnidentifiedWhatsapp(pkg, text, assessment.score)
-                runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text) }
+                runCatching { WhatsAppMonitor.recordOnScreenMessage(repo, pkg, text, whatsAppAlignment) }
             }
         }
 
@@ -285,22 +289,60 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    /** Preserves line breaks between nodes — WhatsApp chat/contact/status lines parse more reliably. */
-    private fun collectWhatsAppText(node: AccessibilityNodeInfo, depth: Int = 0): String {
-        if (depth > 12) return ""
-        if (node.isPassword) return ""
+    /** Text plus a per-line right/left alignment hint, used for [WhatsAppMonitor]'s geometry-based
+     *  IN/OUT detection — see [collectWhatsAppScreen]. */
+    private data class WhatsAppScreenCapture(val text: String, val alignment: List<Pair<String, Boolean>>)
+
+    /**
+     * Preserves line breaks between nodes — WhatsApp chat/contact/status lines parse more
+     * reliably. Also records each text-bearing node's horizontal screen position: WhatsApp (like
+     * essentially every chat UI) right-aligns bubbles the child sent and left-aligns bubbles they
+     * received, which is a far more version/locale-proof "outgoing" signal than matching status
+     * words such as "Delivered"/"Read" that may only ever exist as unlabeled tick icons.
+     */
+    private fun collectWhatsAppScreen(
+        node: AccessibilityNodeInfo,
+        screenWidth: Int,
+        depth: Int = 0
+    ): WhatsAppScreenCapture {
+        if (depth > 12) return WhatsAppScreenCapture("", emptyList())
+        if (node.isPassword) return WhatsAppScreenCapture("", emptyList())
         val parts = mutableListOf<String>()
-        node.text?.let { if (it.isNotBlank()) parts.add(it.toString().trim()) }
+        val alignment = mutableListOf<Pair<String, Boolean>>()
+
+        val nodeText = node.text?.toString()?.trim()
+        if (!nodeText.isNullOrBlank()) {
+            parts.add(nodeText)
+            rightAlignedOrNull(node, screenWidth)?.let { alignment.add(nodeText to it) }
+        }
         node.contentDescription?.let { cd ->
-            if (cd.isNotBlank() && cd != node.text?.toString()?.trim()) parts.add(cd.toString().trim())
+            val cdStr = cd.toString().trim()
+            if (cdStr.isNotBlank() && cdStr != nodeText) parts.add(cdStr)
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val childText = collectWhatsAppText(child, depth + 1)
-            if (childText.isNotBlank()) parts.add(childText)
+            val childCapture = collectWhatsAppScreen(child, screenWidth, depth + 1)
+            if (childCapture.text.isNotBlank()) parts.add(childCapture.text)
+            alignment.addAll(childCapture.alignment)
             child.recycle()
         }
-        return parts.joinToString("\n")
+        return WhatsAppScreenCapture(parts.joinToString("\n"), alignment)
+    }
+
+    /** True if confidently right-aligned, false if confidently left-aligned, null if ambiguous
+     *  (near screen center, zero-width, or width unknown) — ambiguous nodes are simply skipped
+     *  rather than risking a wrong IN/OUT call. */
+    private fun rightAlignedOrNull(node: AccessibilityNodeInfo, screenWidth: Int): Boolean? {
+        if (screenWidth <= 0) return null
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.width() <= 0 || bounds.height() <= 0) return null
+        val ratio = bounds.centerX().toDouble() / screenWidth
+        return when {
+            ratio >= 0.55 -> true
+            ratio <= 0.45 -> false
+            else -> null
+        }
     }
 
     /** Skips password/PIN/secure fields entirely — their text is never read, even transiently. */

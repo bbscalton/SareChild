@@ -1723,8 +1723,8 @@ export function DashboardPage() {
                           </div>
                           <ul className="meta whatsapp-device-checks">
                             <li>{consent ? '✓' : '✗'} Child consent</li>
-                            <li>{notif ? '✓' : '✗'} Notification listener</li>
-                            <li>{accessibility ? '✓' : '✗'} Accessibility (on-screen text)</li>
+                            <li>{notif ? '✓' : '✗'} Notification listener (incoming messages)</li>
+                            <li>{accessibility ? '✓' : '✗'} Accessibility (outgoing messages sent by your child)</li>
                             <li>{media ? '✓' : '○'} Media permission (optional)</li>
                             <li>
                               Last event:{' '}
@@ -1733,6 +1733,12 @@ export function DashboardPage() {
                                 : 'None yet — send a test WhatsApp message'}
                             </li>
                           </ul>
+                          {consent && notif && !accessibility && (
+                            <p className="muted small whatsapp-outgoing-warn">
+                              ⚠ Outgoing messages (what your child sends) won't appear until
+                              Accessibility is enabled on their phone — incoming-only otherwise.
+                            </p>
+                          )}
                           <button
                             className="btn primary compact"
                             type="button"

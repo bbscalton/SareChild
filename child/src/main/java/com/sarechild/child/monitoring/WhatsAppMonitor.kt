@@ -81,7 +81,10 @@ object WhatsAppMonitor {
     /** Delivery-status words WhatsApp exposes in the a11y tree on *sent* bubbles only. */
     private val OUTGOING_STATUS_WORDS = setOf("delivered", "read", "sent", "sending", "pending")
     private val OUTGOING_A11Y_PHRASES = listOf(
-        "you sent", "outgoing message", "message sent", "sent message", "message you sent"
+        "you sent", "outgoing message", "message sent", "sent message", "message you sent",
+        // "You said, <text>" is the standard Android messaging a11y announcement for a sender's
+        // own bubble (WhatsApp follows the same convention "<contact> said" for incoming).
+        "you said"
     )
     private val COMPOSE_PLACEHOLDERS = listOf(
         "type a message", "message", "add a caption"
@@ -184,8 +187,27 @@ object WhatsAppMonitor {
     }
 
     /**
+     * Primary IN/OUT signal: WhatsApp (like virtually every chat UI) right-aligns bubbles the
+     * child sent and left-aligns bubbles they received, regardless of app version/locale/wording.
+     * [alignmentHints] pairs each on-screen text run with whether its horizontal center sits in
+     * the confidently-right or confidently-left half of the screen (ambiguous/centered runs are
+     * omitted by the caller). Far more robust than matching exact status words, which WhatsApp's
+     * UI may render as icons with no parseable text at all.
+     */
+    private fun inferDirectionFromAlignment(
+        message: String,
+        alignmentHints: List<Pair<String, Boolean>>
+    ): String? {
+        if (message.length < 3 || alignmentHints.isEmpty()) return null
+        val match = alignmentHints.lastOrNull { it.first == message }
+            ?: alignmentHints.lastOrNull { it.first.trim() == message.trim() }
+        return match?.let { if (it.second) "OUT" else "IN" }
+    }
+
+    /**
      * Best-effort IN vs OUT from on-screen a11y text. Delivered/Read/checkmarks after the last
      * bubble strongly indicate an outgoing send; inbound notifications never carry those markers.
+     * Only consulted when [inferDirectionFromAlignment] has no confident bounds-based answer.
      */
     private fun inferDirection(raw: String, lines: List<String>, message: String, messageIdx: Int): String {
         val lowerRaw = raw.lowercase()
@@ -251,8 +273,15 @@ object WhatsAppMonitor {
         val direction: String = "IN"
     )
 
-    /** Extract contact + last message bubble from on-screen accessibility text. */
-    fun parseOnScreenText(raw: String): ParsedWhatsAppScreen? {
+    /**
+     * Extract contact + last message bubble from on-screen accessibility text.
+     * [alignmentHints] — optional (text, isRightAligned) pairs from the accessibility node tree,
+     * used as the primary direction signal; see [inferDirectionFromAlignment].
+     */
+    fun parseOnScreenText(
+        raw: String,
+        alignmentHints: List<Pair<String, Boolean>> = emptyList()
+    ): ParsedWhatsAppScreen? {
         val trimmed = raw.trim()
         if (trimmed.length < 3) return null
         if (isChromeDump(trimmed)) return null
@@ -284,7 +313,8 @@ object WhatsAppMonitor {
         if (message.length < 2) return null
         if (isChromeDump(message)) return null
 
-        val direction = inferDirection(trimmed, lines, message, messageIdx)
+        val direction = inferDirectionFromAlignment(message, alignmentHints)
+            ?: inferDirection(trimmed, lines, message, messageIdx)
         return ParsedWhatsAppScreen(
             contact = contact,
             message = message,
@@ -454,10 +484,15 @@ object WhatsAppMonitor {
      * only ever adds a MESSAGE-type timeline row (never an alert; the accessibility service
      * already raises its own unidentified-contact alert). Skipped entirely without consent.
      */
-    suspend fun recordOnScreenMessage(repo: ChildRepository, packageName: String, text: String) {
+    suspend fun recordOnScreenMessage(
+        repo: ChildRepository,
+        packageName: String,
+        text: String,
+        alignmentHints: List<Pair<String, Boolean>> = emptyList()
+    ) {
         if (!isWhatsApp(packageName)) return
         if (!repo.whatsappMonitorConsent) return
-        val parsed = parseOnScreenText(text) ?: return
+        val parsed = parseOnScreenText(text, alignmentHints) ?: return
         if (shouldSkipDuplicateEvent(parsed.contact, parsed.message, parsed.eventType, parsed.direction)) return
 
         val normalized = normalizeIdentifier(parsed.contact)
@@ -601,11 +636,16 @@ object WhatsAppMonitor {
     ): Map<String, Any?> {
         val now = System.currentTimeMillis()
         val enabled = consent && notificationAccess
+        // Incoming (notification listener) and outgoing (on-screen accessibility) are two
+        // independent capture paths — surface both so the parent dashboard can tell them apart
+        // instead of implying "enabled" covers outgoing too.
+        val outgoingCaptureReady = consent && accessibilityAccess
         return mapOf(
             "enabled" to enabled,
             "consent" to consent,
             "notificationAccess" to notificationAccess,
             "accessibilityAccess" to accessibilityAccess,
+            "outgoingCaptureReady" to outgoingCaptureReady,
             "mediaPermission" to mediaPermission,
             "lastEventAtMs" to lastEventAtMs.takeIf { it > 0L },
             "updatedAtMs" to now
