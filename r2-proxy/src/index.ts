@@ -7,6 +7,13 @@ type Env = {
   FIREBASE_AUTH_DOMAIN?: string;
   WENT_DARK_AFTER_MS?: string;
   MEDIA_PURGE_SECRET?: string;
+  // Server-side-only Google Maps Platform key, restricted (API restriction) to the Roads
+  // API — never shipped to the browser. Lets parent-web snap GPS trails to real streets
+  // without needing a browser-referrer-restricted key (Roads API has no CORS headers and
+  // Google does not support HTTP-referrer restriction for it), and without touching the
+  // Android-restricted "SareChild Parent Maps (Android)" key. Set via:
+  //   wrangler secret put GOOGLE_ROADS_SERVER_KEY
+  GOOGLE_ROADS_SERVER_KEY?: string;
 };
 
 type Status = "ok" | "warn" | "fail";
@@ -202,10 +209,103 @@ async function readFleetSnapshot(env: Env, familyId: string): Promise<FleetSnaps
   return row ?? null;
 }
 
+type RoadPoint = { lat: number; lng: number };
+type SnappedPoint = { lat: number; lng: number; originalIndex: number | null };
+
+const ROADS_API_MAX_POINTS = 100; // Roads API hard limit per snapToRoads request.
+
+/** Evenly downsamples to at most `max` points, always keeping the first and last. */
+function downsamplePoints(points: RoadPoint[], max: number): RoadPoint[] {
+  if (points.length <= max) return points;
+  const step = (points.length - 1) / (max - 1);
+  const out: RoadPoint[] = [];
+  for (let i = 0; i < max; i++) {
+    out.push(points[Math.round(i * step)]!);
+  }
+  return out;
+}
+
+/**
+ * Snaps a raw GPS path to real streets via the Roads API `snapToRoads` endpoint, using a
+ * server-side-only key (never exposed to the browser — Roads API also has no CORS headers,
+ * so browsers cannot call it directly regardless of key type). Input is downsampled to the
+ * API's 100-point cap first; `interpolate=true` still fills in road-following geometry
+ * between the kept points. Returns `originalIndex` (into the *downsampled* input) for every
+ * snapped point that corresponds 1:1 to an input point, `null` for Google's own interpolated
+ * in-between points — the caller uses this to re-attach/interpolate timestamps.
+ */
+async function snapToRoads(
+  env: Env,
+  rawPoints: RoadPoint[],
+): Promise<{ ok: true; input: RoadPoint[]; snapped: SnappedPoint[] } | { ok: false; error: string }> {
+  const key = env.GOOGLE_ROADS_SERVER_KEY?.trim();
+  if (!key) return { ok: false, error: "Roads API server key not configured on the Worker." };
+  if (rawPoints.length < 2) return { ok: false, error: "Need at least 2 points to snap." };
+
+  const input = downsamplePoints(rawPoints, ROADS_API_MAX_POINTS);
+  const path = input.map((p) => `${p.lat},${p.lng}`).join("|");
+  const apiUrl = `https://roads.googleapis.com/v1/snapToRoads?interpolate=true&key=${encodeURIComponent(key)}&path=${encodeURIComponent(path)}`;
+
+  try {
+    const res = await fetch(apiUrl, { method: "GET" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { ok: false, error: `Roads API HTTP ${res.status}: ${body.slice(0, 300)}` };
+    }
+    const data = (await res.json()) as {
+      snappedPoints?: Array<{
+        location: { latitude: number; longitude: number };
+        originalIndex?: number;
+      }>;
+      error?: { message?: string };
+    };
+    if (data.error) return { ok: false, error: data.error.message || "Roads API error" };
+    const snappedPoints = data.snappedPoints ?? [];
+    if (snappedPoints.length < 2) return { ok: false, error: "Roads API returned too few points." };
+    const snapped: SnappedPoint[] = snappedPoints.map((sp) => ({
+      lat: sp.location.latitude,
+      lng: sp.location.longitude,
+      originalIndex: typeof sp.originalIndex === "number" ? sp.originalIndex : null,
+    }));
+    return { ok: true, input, snapped };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Roads API request failed." };
+  }
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return json({ ok: true });
+
+    // Snap a raw GPS trail to real streets for the parent Live Map's history playback +
+    // live trail polyline (see parent-web/src/lib/geo.ts `snapToRoads()`, which caches
+    // results client-side so scrubbing/re-renders don't re-call this endpoint).
+    if (request.method === "POST" && url.pathname === "/roads/snap") {
+      let body: { points?: unknown };
+      try {
+        body = (await request.json()) as { points?: unknown };
+      } catch {
+        return json({ ok: false, error: "Invalid JSON body." }, 400);
+      }
+      const rawPoints = Array.isArray(body.points)
+        ? (body.points as unknown[])
+            .map((p) => {
+              if (!p || typeof p !== "object") return null;
+              const m = p as Record<string, unknown>;
+              const lat = Number(m.lat);
+              const lng = Number(m.lng);
+              return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+            })
+            .filter((p): p is RoadPoint => p !== null)
+        : [];
+      if (rawPoints.length < 2) {
+        return json({ ok: false, error: "Provide at least 2 { lat, lng } points." }, 400);
+      }
+      const result = await snapToRoads(env, rawPoints);
+      if (!result.ok) return json(result, result.error.includes("not configured") ? 501 : 502);
+      return json({ ok: true, input: result.input, snapped: result.snapped });
+    }
 
     if (request.method === "GET" && url.pathname === "/health") {
       return json({

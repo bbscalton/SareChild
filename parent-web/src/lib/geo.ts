@@ -136,6 +136,68 @@ export function formatDuration(ms: number): string {
   return `${hours}h ${minutes}m`
 }
 
+/** Initial compass bearing (degrees, 0-360) from point `a` to point `b` — used to orient the
+ *  live/playback marker's heading arrow when the device didn't report a GPS bearing fix. */
+export function computeBearing(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180
+  const toDeg = (rad: number) => (rad * 180) / Math.PI
+  const lat1 = toRad(a.lat)
+  const lat2 = toRad(b.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const y = Math.sin(dLng) * Math.cos(lat2)
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng)
+  return (toDeg(Math.atan2(y, x)) + 360) % 360
+}
+
+/**
+ * Re-attaches timestamps to a Roads-API-snapped path (see `lib/roadsApi.ts`). Snapped points
+ * with a known `originalIndex` take the exact timestamp of that input trail point; Google's own
+ * in-between interpolated points (added for `interpolate=true`, no `originalIndex`) get a
+ * timestamp linearly interpolated by cumulative along-path distance between the nearest
+ * preceding/following "anchor" points — so a playback marker moving along the snapped road
+ * geometry stays in sync with the real recorded times instead of drifting or jumping.
+ */
+export function attachTimestampsToSnappedPath(
+  input: TrailPoint[],
+  snapped: Array<{ lat: number; lng: number; originalIndex: number | null }>,
+): TrailPoint[] {
+  if (snapped.length === 0) return []
+  const cumDist: number[] = [0]
+  for (let i = 1; i < snapped.length; i++) {
+    cumDist.push(cumDist[i - 1]! + haversineMeters(snapped[i - 1]!, snapped[i]!))
+  }
+  const anchors: Array<{ i: number; atMs: number }> = []
+  snapped.forEach((sp, i) => {
+    const orig = sp.originalIndex != null ? input[sp.originalIndex] : undefined
+    if (orig) anchors.push({ i, atMs: orig.atMs })
+  })
+  if (anchors.length === 0) {
+    const fallbackAtMs = input[0]?.atMs ?? 0
+    return snapped.map((sp) => ({ lat: sp.lat, lng: sp.lng, atMs: fallbackAtMs }))
+  }
+
+  return snapped.map((sp, i) => {
+    let prev = anchors[0]!
+    let next = anchors[anchors.length - 1]!
+    for (const anchor of anchors) {
+      if (anchor.i <= i) prev = anchor
+      if (anchor.i >= i) {
+        next = anchor
+        break
+      }
+    }
+    let atMs: number
+    if (prev.i === next.i) {
+      atMs = prev.atMs
+    } else {
+      const span = cumDist[next.i]! - cumDist[prev.i]!
+      const frac = span > 0 ? (cumDist[i]! - cumDist[prev.i]!) / span : 0
+      atMs = prev.atMs + (next.atMs - prev.atMs) * frac
+    }
+    return { lat: sp.lat, lng: sp.lng, atMs }
+  })
+}
+
 /**
  * Interpolates a position along a time-sorted point list at time `atMs`,
  * for a smooth playback marker between two recorded samples instead of it

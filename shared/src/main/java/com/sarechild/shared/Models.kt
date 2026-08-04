@@ -4,13 +4,21 @@ data class LatLngPoint(
     val lat: Double = 0.0,
     val lng: Double = 0.0,
     val accuracyM: Float? = null,
-    val updatedAtMs: Long = System.currentTimeMillis()
+    val updatedAtMs: Long = System.currentTimeMillis(),
+    /** Compass heading in degrees (0-360, true north), from Location.getBearing() when the
+     *  device has a recent bearing fix (typically only while moving). Null if unavailable —
+     *  the parent map UI falls back to computing heading from consecutive trail points. */
+    val bearingDeg: Float? = null,
+    /** Ground speed in meters/second from Location.getSpeed(), when available. */
+    val speedMps: Float? = null
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "lat" to lat,
         "lng" to lng,
         "accuracyM" to accuracyM,
-        "updatedAtMs" to updatedAtMs
+        "updatedAtMs" to updatedAtMs,
+        "bearingDeg" to bearingDeg,
+        "speedMps" to speedMps
     )
 
     companion object {
@@ -22,7 +30,9 @@ data class LatLngPoint(
                 lat = lat,
                 lng = lng,
                 accuracyM = (map["accuracyM"] as? Number)?.toFloat(),
-                updatedAtMs = (map["updatedAtMs"] as? Number)?.toLong() ?: 0L
+                updatedAtMs = (map["updatedAtMs"] as? Number)?.toLong() ?: 0L,
+                bearingDeg = (map["bearingDeg"] as? Number)?.toFloat(),
+                speedMps = (map["speedMps"] as? Number)?.toFloat()
             )
         }
     }

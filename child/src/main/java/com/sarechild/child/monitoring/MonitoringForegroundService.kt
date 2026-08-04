@@ -65,7 +65,17 @@ class MonitoringForegroundService : Service() {
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val loc = result.lastLocation ?: return
-            lastLocation = LatLngPoint(loc.latitude, loc.longitude, loc.accuracy, System.currentTimeMillis())
+            lastLocation = LatLngPoint(
+                lat = loc.latitude,
+                lng = loc.longitude,
+                accuracyM = loc.accuracy,
+                updatedAtMs = System.currentTimeMillis(),
+                // hasBearing()/hasSpeed() are false on many fixes (e.g. stationary/Wi-Fi-only
+                // fixes) — only attach them when the platform actually reports a fix for this
+                // sample, so the parent map's heading arrow doesn't show a stale/fake 0°.
+                bearingDeg = if (loc.hasBearing()) loc.bearing else null,
+                speedMps = if (loc.hasSpeed()) loc.speed else null
+            )
         }
     }
 
@@ -127,8 +137,13 @@ class MonitoringForegroundService : Service() {
 
     private fun startLocationUpdates() {
         if (!hasLocationPermission()) return
+        // HIGH_ACCURACY (GPS-backed, not just network/Wi-Fi) so the parent map's road-snapped
+        // playback and live marker reflect the child's real position — network-only fixes can
+        // be 100s of meters off, which is what caused "path is off the street" complaints.
+        // Interval/minUpdateInterval are intentionally unchanged (see LOCATION_INTERVAL_MS doc)
+        // to avoid materially increasing wakeups/battery for a cadence parents rarely notice.
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+            Priority.PRIORITY_HIGH_ACCURACY,
             SareChildConstants.LOCATION_INTERVAL_MS
         ).setMinUpdateIntervalMillis(60_000L).build()
         try {

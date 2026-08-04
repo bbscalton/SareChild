@@ -3,6 +3,12 @@ export type LatLngPoint = {
   lng: number
   accuracyM?: number | null
   updatedAtMs?: number
+  /** Compass heading in degrees (0-360, true north) — present only when the child device had
+   *  a live bearing fix (typically while moving). Falls back to a computed heading from
+   *  consecutive trail points when absent (see lib/geo.ts `computeBearing`). */
+  bearingDeg?: number | null
+  /** Ground speed in meters/second, when reported by the device. */
+  speedMps?: number | null
 }
 
 export type BatterySample = {
@@ -523,6 +529,8 @@ export function parseLocation(raw: unknown): LatLngPoint | null {
     lng,
     accuracyM: map.accuracyM == null ? null : Number(map.accuracyM),
     updatedAtMs: map.updatedAtMs == null ? undefined : Number(map.updatedAtMs),
+    bearingDeg: map.bearingDeg == null ? null : Number(map.bearingDeg),
+    speedMps: map.speedMps == null ? null : Number(map.speedMps),
   }
 }
 

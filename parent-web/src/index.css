@@ -836,6 +836,60 @@ select {
   margin: 0;
 }
 
+.livemap-status-pill {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.8rem;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--primary-dark);
+  z-index: 5;
+}
+
+.livemap-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok, #0f6b4c);
+  flex: none;
+}
+
+.livemap-status-pill.is-live .livemap-status-dot {
+  background: #d43d3d;
+  animation: livemap-pulse 1.6s ease-out infinite;
+}
+
+.livemap-status-pill.is-stale .livemap-status-dot {
+  background: #9aa39d;
+  animation: none;
+}
+
+@keyframes livemap-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(212, 61, 61, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(212, 61, 61, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(212, 61, 61, 0); }
+}
+
+.livemap-follow-toggle {
+  position: absolute;
+  bottom: 3.6rem;
+  right: 1rem;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: var(--shadow);
+}
+
+.livemap-follow-toggle.active {
+  background: var(--primary-dark, #0f6b4c);
+  color: #fff;
+}
+
 .livemap-stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

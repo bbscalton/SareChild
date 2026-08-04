@@ -154,6 +154,12 @@ cd r2-proxy
 npx wrangler deploy
 ```
 
+**Roads API snap-to-roads proxy** — `POST /roads/snap` on the same Worker (`r2-proxy/src/index.ts`) proxies `roads.googleapis.com/v1/snapToRoads` for the parent-web Live Map (`parent-web/src/lib/roadsApi.ts`). This exists because Roads API has no CORS headers, so the browser can never call it directly — the Worker holds the actual (server-key, IP-restricted, no HTTP-referrer) Roads API key so the browser-restricted key in `VITE_GOOGLE_MAPS_API_KEY` never needs Roads API access. Set it once with:
+
+```bash
+npx wrangler secret put GOOGLE_ROADS_SERVER_KEY --name sarechild-media-proxy
+```
+
 Seed `keywordLists/default` from [`keywordLists.default.json`](keywordLists.default.json).
 
 ## Google Cloud / Maps Platform APIs
@@ -167,7 +173,7 @@ Project: `safechild-f34ac` · Billing: linked, Always-Free/free-tier friendly us
 | Maps SDK for Android (`maps-android-backend`) | Parent `DeviceMapActivity` map view | Unlimited free |
 | Geocoding API (`geocoding-backend`) | Reverse-geocode last known lat/lng → human address on the parent map | 10,000 req/mo free |
 | Places API — Nearby Search (`places-backend`) | "near <place>" context label on the parent map | 5,000 req/mo free |
-| Roads API (`roads.googleapis.com`) | Snap the raw GPS trail to actual roads for a cleaner, more accurate polyline | 5,000 req/mo free |
+| Roads API (`roads.googleapis.com`) | Snap the raw GPS trail to actual roads for a cleaner, more accurate polyline — called by parent **Android** `DeviceMapActivity` directly, and by parent-**web**'s Live Map via the Cloudflare Worker proxy (`/roads/snap`, since Roads API has no CORS support) | 5,000 req/mo free |
 | Static Maps API (`static-maps-backend`) | Small location thumbnail on parent-web device cards | 10,000 req/mo free |
 | Maps JavaScript API / Embed (`maps-backend`, `maps-embed-backend`) | Reserved for future parent-web embedded map | Unlimited free (Embed) |
 
@@ -179,6 +185,7 @@ Not enabled (documented as future candidates only, not wired — avoid unused pa
 |-----|-------------|------------|
 | SareChild Parent Maps (Android) | Android app `com.sarechild.parent` + debug SHA-1 | Maps SDK, Geocoding, Places, Roads, Static Maps |
 | SareChild Parent Web Maps (Browser) | HTTP referrer (GitHub Pages + localhost) | Maps JS, Geocoding, Places, Static Maps |
+| SareChild Roads Server Key | Unrestricted/IP-restricted server key, stored only as the `GOOGLE_ROADS_SERVER_KEY` Worker secret (never shipped to a browser or app) | Roads only |
 | Firebase auto Android/Browser keys | Firebase APIs only | unchanged — do not repurpose |
 
 The child app intentionally has **no** Maps API key — it only reports GPS coordinates; it never renders a map or calls Places/Geocoding.

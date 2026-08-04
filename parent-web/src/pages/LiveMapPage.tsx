@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as repo from '../lib/parentRepo'
 import { hasGoogleMapsKey, loadGoogleMaps, reverseGeocode } from '../lib/googleMaps'
+import { snapTrailToRoads } from '../lib/roadsApi'
 import {
+  attachTimestampsToSnappedPath,
+  computeBearing,
   computeRouteStats,
   detectStops,
   formatDistance,
   formatDuration,
+  haversineMeters,
   interpolatePosition,
   type Stop,
   type TrailPoint,
@@ -88,6 +92,43 @@ function pinIcon(color: string, glyph: string, big = false): google.maps.Icon {
     scaledSize: new google.maps.Size(size, size),
     anchor: new google.maps.Point(size / 2, size / 2),
   }
+}
+
+/**
+ * The child's current-position marker — a filled dot, or (when a heading is known, either from
+ * the device's GPS bearing or computed from recent movement) a rotated arrow, so a parent can
+ * tell at a glance which way the child is facing/moving instead of just a static pin.
+ */
+function headingMarkerIcon(color: string, headingDeg: number | null, big = false): google.maps.Icon {
+  const size = big ? 44 : 36
+  const r = size / 2 - 4
+  const arrow =
+    headingDeg == null
+      ? `<circle cx="${size / 2}" cy="${size / 2}" r="5" fill="#ffffff"/>`
+      : `<g transform="rotate(${headingDeg} ${size / 2} ${size / 2})">
+           <path d="M ${size / 2} ${size * 0.2} L ${size * 0.68} ${size * 0.64} L ${size / 2} ${size * 0.5} L ${size * 0.32} ${size * 0.64} Z" fill="#ffffff"/>
+         </g>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="${color}" stroke="#ffffff" stroke-width="3"/>
+    ${arrow}
+  </svg>`
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(size / 2, size / 2),
+  }
+}
+
+/** "Live now" / "3s ago" / "2m ago" — second-resolution freshness for the on-map live status
+ *  pill (relativeTime() from alertPresentation only has minute resolution, too coarse here). */
+function formatFreshness(atMs: number, nowMs: number): string {
+  if (!atMs) return 'unknown'
+  const diffSec = Math.max(0, Math.round((nowMs - atMs) / 1000))
+  if (diffSec < 5) return 'live now'
+  if (diffSec < 60) return `${diffSec}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  return relativeTime(atMs)
 }
 
 /** A muted, low-saturation map theme so teal/gold overlays stay legible instead of fighting Google's default bright basemap colors. */
@@ -180,6 +221,21 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     return repo.observeMapPlaces(familyId, setPlaces, (e) => setError(e.message))
   }, [familyId])
 
+  // Dedicated per-device live trail (in addition to the family-wide `locationTrail` prop, which
+  // caps at 300 samples *across every device* — too thin for this device's own trail once a
+  // family has more than one or two paired children). Fixes the "live view doesn't clearly show
+  // movement" report for multi-device families.
+  const [deviceLiveTrail, setDeviceLiveTrail] = useState<LocationTrailSample[]>([])
+  useEffect(() => {
+    if (!familyId || !selectedDeviceId) {
+      setDeviceLiveTrail([])
+      return
+    }
+    return repo.observeLocationTrailForDevice(familyId, selectedDeviceId, setDeviceLiveTrail, (e) =>
+      setError(e.message),
+    )
+  }, [familyId, selectedDeviceId])
+
   const loadRange = async (opts?: { range?: RangeOption; from?: string; to?: string }) => {
     if (!familyId) return
     const r = opts?.range ?? range
@@ -212,8 +268,16 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   }, [mode])
 
   const livePoints = useMemo<TrailPoint[]>(() => {
-    const pts = locationTrail
-      .filter((s) => s.deviceId === selectedDeviceId && s.location)
+    // Merge the family-wide trail (deduped by doc id) with the dedicated per-device listener —
+    // whichever surfaced a given sample first, the union is always at least as complete as
+    // either alone.
+    const byId = new Map<string, LocationTrailSample>()
+    locationTrail.forEach((s) => {
+      if (s.deviceId === selectedDeviceId) byId.set(s.id, s)
+    })
+    deviceLiveTrail.forEach((s) => byId.set(s.id, s))
+    const pts = Array.from(byId.values())
+      .filter((s) => s.location)
       .map((s) => ({ lat: s.location!.lat, lng: s.location!.lng, atMs: s.recordedAtMs }))
       .sort((a, b) => a.atMs - b.atMs)
     const last = selectedDevice?.lastLocation
@@ -225,7 +289,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       }
     }
     return pts
-  }, [locationTrail, selectedDeviceId, selectedDevice])
+  }, [locationTrail, deviceLiveTrail, selectedDeviceId, selectedDevice])
 
   const playbackPoints = useMemo<TrailPoint[]>(() => {
     return rangeTrail
@@ -237,6 +301,30 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   const devicePoints = mode === 'live' ? livePoints : playbackPoints
   const stops = useMemo(() => detectStops(devicePoints), [devicePoints])
   const routeStats = useMemo(() => computeRouteStats(devicePoints, stops), [devicePoints, stops])
+
+  // Road-accurate path: snaps the raw GPS trail to real streets via the Roads API (through the
+  // Cloudflare Worker proxy — see lib/roadsApi.ts) so the polyline/marker follow actual road
+  // geometry instead of cutting through blocks. Cleared only on device/mode/range switches (not
+  // on every incremental point) so the map doesn't flash back to the raw path while re-snapping
+  // for a newly-arrived live point; falls back to the raw `devicePoints` on any failure.
+  const [snappedPath, setSnappedPath] = useState<TrailPoint[] | null>(null)
+  useEffect(() => {
+    setSnappedPath(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDeviceId, mode, range])
+  useEffect(() => {
+    if (devicePoints.length < 2) return
+    let cancelled = false
+    void snapTrailToRoads(devicePoints).then((result) => {
+      if (cancelled || !result) return
+      setSnappedPath(attachTimestampsToSnappedPath(result.input, result.snapped))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [devicePoints])
+  const renderPath = snappedPath && snappedPath.length >= 2 ? snappedPath : devicePoints
+  const isRoadSnapped = renderPath === snappedPath
 
   const playbackBounds = useMemo(() => {
     if (playbackPoints.length === 0) return null
@@ -287,11 +375,32 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   const mapObjRef = useRef<google.maps.Map | null>(null)
   const staticOverlaysRef = useRef<Array<google.maps.Marker | google.maps.Circle>>([])
   const dynamicOverlaysRef = useRef<Array<google.maps.Marker | google.maps.Polyline>>([])
+  const currentMarkerRef = useRef<google.maps.Marker | null>(null)
+  const accuracyCircleRef = useRef<google.maps.Circle | null>(null)
+  const markerAnimRef = useRef<{
+    raf: number
+    from: { lat: number; lng: number }
+    to: { lat: number; lng: number }
+    startedAtMs: number
+  } | null>(null)
+  const markerRenderedPosRef = useRef<{ lat: number; lng: number } | null>(null)
+  const markerHeadingRef = useRef<number | null>(null)
+  const lastPanAtMsRef = useRef(0)
   const lastBoundsRef = useRef<google.maps.LatLngBounds | null>(null)
   const fitKeyRef = useRef<string>('')
   const [mapsReady, setMapsReady] = useState(false)
   const mapsAvailable = hasGoogleMapsKey()
   const [mapType, setMapType] = useState<MapTypeOption>(loadStoredMapType)
+  // Camera auto-follows the child's marker on live updates (and while scrubbing playback)
+  // until the parent manually drags/zooms the map — a "Follow" button re-enables it and
+  // snaps the camera back, rather than fighting the parent's own panning every update.
+  const [followMode, setFollowMode] = useState(true)
+  const [liveClockMs, setLiveClockMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (mode !== 'live') return
+    const id = window.setInterval(() => setLiveClockMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [mode])
 
   useEffect(() => {
     let cancelled = false
@@ -318,6 +427,15 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       styles: CALM_MAP_STYLE,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapsReady])
+
+  // A manual drag/scroll-zoom means the parent wants to look elsewhere — stop auto-following
+  // until they explicitly ask to resume (the "Follow" button).
+  useEffect(() => {
+    const map = mapObjRef.current
+    if (!map || !mapsReady) return
+    const listener = map.addListener('dragstart', () => setFollowMode(false))
+    return () => listener.remove()
   }, [mapsReady])
 
   // Keep the live map type in sync with the switcher (and persist the parent's choice).
@@ -450,31 +568,32 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       extend(placeDraft.lat, placeDraft.lng)
     }
 
-    devicePoints.forEach((p) => extend(p.lat, p.lng))
+    renderPath.forEach((p) => extend(p.lat, p.lng))
 
     if (any) {
       lastBoundsRef.current = bounds
-      const key = `${selectedDeviceId}|${mode}|${range}|${devicePoints.length > 0}`
+      const key = `${selectedDeviceId}|${mode}|${range}|${renderPath.length > 0}`
       if (fitKeyRef.current !== key) {
         fitKeyRef.current = key
         map.fitBounds(bounds, 72)
       }
     }
-    // devicePoints only used for bounds-extension here; playhead-driven redraws are handled separately.
+    // renderPath only used for bounds-extension here; playhead-driven redraws are handled separately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [places, geofences, stops, filteredAlerts, placeDraft, mapsReady, selectedDeviceId, mode, range])
 
-  // Dynamic overlays: the route polyline + current/interpolated position marker.
-  // Kept separate + cheap so playback scrubbing (which changes `playhead` many
-  // times a second) doesn't re-render the whole marker set every frame.
+  // Trail polylines: the full route (road-snapped when available) + a brighter "traveled so
+  // far" overlay during playback. Kept separate from the marker lifecycle below + cheap so
+  // playback scrubbing (which changes `playhead` many times a second) doesn't rebuild the whole
+  // overlay set every frame.
   useEffect(() => {
     const map = mapObjRef.current
     if (!map || !mapsReady) return
     dynamicOverlaysRef.current.forEach((o) => o.setMap(null))
     dynamicOverlaysRef.current = []
 
-    if (devicePoints.length >= 2) {
-      const full = devicePoints.map((p) => ({ lat: p.lat, lng: p.lng }))
+    if (renderPath.length >= 2) {
+      const full = renderPath.map((p) => ({ lat: p.lat, lng: p.lng }))
       const base = new google.maps.Polyline({
         path: full,
         map,
@@ -485,7 +604,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       })
       dynamicOverlaysRef.current.push(base)
       if (mode === 'playback') {
-        const traveled = devicePoints.filter((p) => p.atMs <= playhead).map((p) => ({ lat: p.lat, lng: p.lng }))
+        const traveled = renderPath.filter((p) => p.atMs <= playhead).map((p) => ({ lat: p.lat, lng: p.lng }))
         if (traveled.length >= 2) {
           const hi = new google.maps.Polyline({
             path: traveled,
@@ -499,24 +618,134 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
         }
       }
     }
+  }, [renderPath, mode, playhead, mapsReady])
 
-    const currentPos =
-      mode === 'playback'
-        ? interpolatePosition(devicePoints, playhead)
-        : devicePoints.length
-          ? devicePoints[devicePoints.length - 1]!
-          : (selectedDevice?.lastLocation ?? null)
-
-    if (currentPos) {
-      const marker = new google.maps.Marker({
-        position: { lat: currentPos.lat, lng: currentPos.lng },
-        map,
-        icon: pinIcon(mode === 'live' ? '#0f6b4c' : '#12241c', '🧭', true),
-        zIndex: 200,
-      })
-      dynamicOverlaysRef.current.push(marker)
+  // Current-position marker: created once and reused (never destroyed/recreated on every
+  // update) so it can be smoothly animated instead of visibly teleporting.
+  useEffect(() => {
+    const map = mapObjRef.current
+    if (!map || !mapsReady || currentMarkerRef.current) return
+    currentMarkerRef.current = new google.maps.Marker({
+      map,
+      zIndex: 200,
+      icon: headingMarkerIcon('#0f6b4c', null, true),
+    })
+    accuracyCircleRef.current = new google.maps.Circle({
+      map,
+      strokeColor: '#0f6b4c',
+      strokeOpacity: 0.3,
+      strokeWeight: 1,
+      fillColor: '#0f6b4c',
+      fillOpacity: 0.1,
+      clickable: false,
+      radius: 1,
+    })
+    accuracyCircleRef.current.setVisible(false)
+    return () => {
+      currentMarkerRef.current?.setMap(null)
+      currentMarkerRef.current = null
+      accuracyCircleRef.current?.setMap(null)
+      accuracyCircleRef.current = null
+      if (markerAnimRef.current) cancelAnimationFrame(markerAnimRef.current.raf)
+      markerAnimRef.current = null
+      markerRenderedPosRef.current = null
+      markerHeadingRef.current = null
     }
-  }, [devicePoints, mode, playhead, mapsReady, selectedDevice])
+  }, [mapsReady])
+
+  /** Moves the persistent marker/accuracy-circle to `target`, tweening smoothly in live mode
+   *  (where updates arrive in discrete, minutes-apart jumps) and jumping instantly in playback
+   *  (where `playhead` itself already advances continuously via requestAnimationFrame). Updates
+   *  the heading arrow from the actual displacement so it reflects the rendered (road-snapped)
+   *  path direction, and auto-follows the camera when `followMode` is on. */
+  const moveMarkerTo = (target: { lat: number; lng: number }, accuracyM: number | null | undefined, animate: boolean) => {
+    const marker = currentMarkerRef.current
+    if (!marker) return
+    const from = markerRenderedPosRef.current ?? target
+    const movedM = haversineMeters(from, target)
+    if (movedM > 3) {
+      markerHeadingRef.current = computeBearing(from, target)
+    }
+    const color = mode === 'live' ? '#0f6b4c' : '#12241c'
+    marker.setIcon(headingMarkerIcon(color, markerHeadingRef.current, true))
+
+    const circle = accuracyCircleRef.current
+    if (circle) {
+      if (accuracyM && accuracyM > 0 && accuracyM <= 500) {
+        circle.setRadius(accuracyM)
+        circle.setCenter(target)
+        circle.setVisible(true)
+      } else {
+        circle.setVisible(false)
+      }
+    }
+
+    if (markerAnimRef.current) cancelAnimationFrame(markerAnimRef.current.raf)
+    if (!animate || movedM < 1) {
+      marker.setPosition(target)
+      circle?.setCenter(target)
+      markerRenderedPosRef.current = target
+      markerAnimRef.current = null
+    } else {
+      const anim = { raf: 0, from, to: target, startedAtMs: performance.now() }
+      const durationMs = 1200
+      const step = () => {
+        const t = Math.min(1, (performance.now() - anim.startedAtMs) / durationMs)
+        const eased = 1 - (1 - t) * (1 - t) // ease-out
+        const lat = anim.from.lat + (anim.to.lat - anim.from.lat) * eased
+        const lng = anim.from.lng + (anim.to.lng - anim.from.lng) * eased
+        marker.setPosition({ lat, lng })
+        circle?.setCenter({ lat, lng })
+        markerRenderedPosRef.current = { lat, lng }
+        if (t < 1) {
+          anim.raf = requestAnimationFrame(step)
+        } else {
+          markerAnimRef.current = null
+        }
+      }
+      anim.raf = requestAnimationFrame(step)
+      markerAnimRef.current = anim
+    }
+
+    if (followMode) {
+      const map = mapObjRef.current
+      const now = performance.now()
+      // Throttle pans during playback (playhead ticks ~60x/sec) so the camera glides instead of
+      // fighting Google's own pan animation every frame; live updates are infrequent already.
+      if (map && (mode === 'live' || now - lastPanAtMsRef.current > 400)) {
+        lastPanAtMsRef.current = now
+        map.panTo(target)
+      }
+    }
+  }
+
+  // Live mode: move to the latest (possibly road-snapped) point, animated.
+  useEffect(() => {
+    if (!mapsReady || mode !== 'live') return
+    const last = renderPath.length ? renderPath[renderPath.length - 1]! : null
+    const target = last ?? selectedDevice?.lastLocation ?? null
+    if (!target) return
+    moveMarkerTo(target, selectedDevice?.lastLocation?.accuracyM, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapsReady, mode, renderPath, selectedDevice?.lastLocation, followMode])
+
+  // Playback mode: jump to the interpolated position along the (road-snapped) path at `playhead`.
+  useEffect(() => {
+    if (!mapsReady || mode !== 'playback') return
+    const pos = interpolatePosition(renderPath, playhead)
+    if (!pos) return
+    moveMarkerTo(pos, null, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapsReady, mode, renderPath, playhead, followMode])
+
+  // Reset the tween/heading state on device or mode switches so a stale heading/animation from
+  // the previous selection never bleeds into the next one.
+  useEffect(() => {
+    markerRenderedPosRef.current = null
+    markerHeadingRef.current = null
+    if (markerAnimRef.current) cancelAnimationFrame(markerAnimRef.current.raf)
+    markerAnimRef.current = null
+  }, [selectedDeviceId, mode])
 
   useEffect(
     () => () => {
@@ -527,8 +756,12 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   )
 
   const recenter = () => {
+    setFollowMode(true)
     if (lastBoundsRef.current && mapObjRef.current) mapObjRef.current.fitBounds(lastBoundsRef.current, 72)
   }
+
+  const liveFreshnessAtMs = selectedDevice?.lastLocation?.updatedAtMs || selectedDevice?.lastHeartbeatMs || 0
+  const liveIsStale = mode === 'live' && (!liveFreshnessAtMs || liveClockMs - liveFreshnessAtMs > WENT_DARK_AFTER_MS)
 
   const saveNewPlace = async () => {
     if (!placeDraft || !familyId || !placeDraft.name.trim()) return
@@ -764,9 +997,35 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className={`btn compact livemap-follow-toggle ${followMode ? 'active' : 'ghost'}`}
+          onClick={() => {
+            setFollowMode((f) => {
+              const next = !f
+              if (next && markerRenderedPosRef.current) {
+                mapObjRef.current?.panTo(markerRenderedPosRef.current)
+              }
+              return next
+            })
+          }}
+          disabled={!mapsReady}
+          title={followMode ? "Following the child's live position" : 'Camera panning is paused — click to follow again'}
+        >
+          {followMode ? '📍 Following' : '📍 Follow'}
+        </button>
         <button type="button" className="btn ghost compact livemap-recenter" onClick={recenter} disabled={!mapsReady}>
           🎯 Recenter
         </button>
+        {mode === 'live' && selectedDevice && (
+          <div className={`livemap-status-pill ${liveIsStale ? 'is-stale' : 'is-live'}`}>
+            <span className="livemap-status-dot" aria-hidden />
+            <span>
+              {liveIsStale ? 'Last known' : 'Live'} · updated {formatFreshness(liveFreshnessAtMs, liveClockMs)}
+              {isRoadSnapped ? ' · road-snapped' : ''}
+            </span>
+          </div>
+        )}
         {error && <div className="banner error-banner livemap-canvas-banner">{error}</div>}
       </div>
 

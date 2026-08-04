@@ -862,6 +862,55 @@ export function observeLocationTrail(
 }
 
 /**
+ * Live per-device location trail listener — used by the Live Map control center instead of
+ * (or alongside) the shared family-wide `observeLocationTrail` above. That shared listener caps
+ * at 300 samples *across every device in the family*, which starves a specific child's live
+ * trail once a family has more than one or two paired devices (the classic "live view doesn't
+ * clearly show movement" bug report: new points exist in Firestore, but this device's slice of
+ * the shared 300-row window is too thin/stale to render a smooth trail). Requires a composite
+ * index on (deviceId ASC, recordedAtMs DESC) — see firestore.indexes.json.
+ */
+export function observeLocationTrailForDevice(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: LocationTrailSample[]) => void,
+  onError?: (err: Error) => void,
+  maxSamples = 200,
+): () => void {
+  if (!deviceId) {
+    onData([])
+    return () => {}
+  }
+  const q = query(
+    collection(db, COL.families, familyId, COL.locationTrail),
+    where('deviceId', '==', deviceId),
+    orderBy('recordedAtMs', 'desc'),
+    limit(maxSamples),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs
+        .map((d) => {
+          const data = d.data()
+          return {
+            id: d.id,
+            deviceId: (data.deviceId as string) || deviceId,
+            location: parseLocation(data.location),
+            batteryPercent: Number(data.batteryPercent ?? -1),
+            charging: Boolean(data.charging),
+            hadNetwork: data.hadNetwork !== false,
+            recordedAtMs: Number(data.recordedAtMs ?? 0),
+          } satisfies LocationTrailSample
+        })
+        .sort((a, b) => a.recordedAtMs - b.recordedAtMs)
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+/**
  * One-shot fetch of location trail samples across the *whole family* (not
  * filtered by device — the live listener above already caps at the most
  * recent 300 samples across every device, which is too shallow a window for
