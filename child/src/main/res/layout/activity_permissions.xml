@@ -1,142 +1,216 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/scrollRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/cloud_bg">
+    android:background="@color/cloud_bg"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingStart="20dp"
+        android:paddingTop="24dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="36dp">
 
-        <TextView
+        <!-- Hero: overall protection status -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Enable protections"
-            android:textAppearance="@style/TextAppearance.SareChild.Display"
-            android:textSize="26sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="Grant each item so SareChild can protect this device with parent approval."
-            android:textColor="@color/ink_soft" />
-
-        <com.google.android.material.card.MaterialCardView
-            style="@style/Widget.SareChild.Card"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            app:contentPadding="18dp">
+            android:background="@drawable/bg_gradient_hero"
+            android:padding="22dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLocation"
-                    style="@style/Widget.SareChild.Button.Secondary"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="1 · Allow location" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnNotifications"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="2 · Allow alert notifications" />
+                    <FrameLayout
+                        android:layout_width="52dp"
+                        android:layout_height="52dp"
+                        android:background="@drawable/bg_icon_badge">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnNotifAccess"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="3 · Open notification access settings" />
+                        <ImageView
+                            android:id="@+id/heroIcon"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_shield_home"
+                            android:contentDescription="@null" />
+                    </FrameLayout>
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="Needed to scan message previews for risk words (WhatsApp, etc.)."
-                    android:textColor="@color/ink_faint"
-                    android:textSize="12sp" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnBattery"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="4 · Allow background activity" />
+                        <TextView
+                            android:id="@+id/heroStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-rounded"
+                            android:textColor="@android:color/white"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:text="Setup needed" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAccessibility"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="5 · Enable message-screen monitoring (optional)" />
+                        <TextView
+                            android:id="@+id/heroSubtitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textColor="#E4F1FF"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
 
-                <TextView
+                <ProgressBar
+                    android:id="@+id/heroProgress"
+                    style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="Only if you consented. Reads on-screen text in messaging apps — not encrypted chat history."
-                    android:textColor="@color/ink_faint"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnUsage"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="6 · Allow usage access (screen time)" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCallSms"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="7 · Allow call log &amp; SMS (summaries)" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnWhatsappMedia"
-                    style="@style/Widget.SareChild.Button.Secondary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:text="8 · Allow WhatsApp media access (photos/videos/voice notes)" />
-
-                <com.google.android.material.checkbox.MaterialCheckBox
-                    android:id="@+id/checkWhatsappConsent"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Enable WhatsApp protection (messages, calls, media for unknown contacts)" />
+                    android:layout_height="8dp"
+                    android:layout_marginTop="16dp"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progressTint="@android:color/white"
+                    android:progressBackgroundTint="#33FFFFFF" />
 
                 <TextView
+                    android:id="@+id/heroCount"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="Only if you consented above. Detects new WhatsApp photos/videos/voice notes for contacts not on the safe list — not WhatsApp documents (an Android limitation)."
-                    android:textColor="@color/ink_faint"
-                    android:textSize="12sp" />
+                    android:layout_marginTop="8dp"
+                    android:textColor="@android:color/white"
+                    android:textSize="12.5sp"
+                    android:textStyle="bold" />
             </LinearLayout>
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="Everything SareChild can do lives here. Turn items on below — each one either asks Android directly or takes you to the right system setting. No other screen in this app will ever ask you to Accept anything."
+            android:textColor="@color/ink_soft"
+            android:textSize="13sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAllowAll"
+            style="@style/Widget.SareChild.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Allow all remaining" />
+
+        <!-- Monitoring -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:text="Monitoring"
+            android:textAllCaps="true"
+            android:textAppearance="@style/TextAppearance.SareChild.SectionLabel" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:contentPadding="14dp">
+
+            <LinearLayout
+                android:id="@+id/sectionMonitoring"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Communication safety -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="Communication safety"
+            android:textAllCaps="true"
+            android:textAppearance="@style/TextAppearance.SareChild.SectionLabel" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:contentPadding="14dp">
+
+            <LinearLayout
+                android:id="@+id/sectionCommunication"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Live safety -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="Live safety"
+            android:textAllCaps="true"
+            android:textAppearance="@style/TextAppearance.SareChild.SectionLabel" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Screen share, camera, and mic checks are only ever started with a visible on-screen notification — never silently."
+            android:textColor="@color/ink_faint"
+            android:textSize="12sp" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:contentPadding="14dp">
+
+            <LinearLayout
+                android:id="@+id/sectionLive"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Device control -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="Device control"
+            android:textAllCaps="true"
+            android:textAppearance="@style/TextAppearance.SareChild.SectionLabel" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.SareChild.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:contentPadding="14dp">
+
+            <LinearLayout
+                android:id="@+id/sectionDevice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
         </com.google.android.material.card.MaterialCardView>
 
         <com.google.android.material.button.MaterialButton
@@ -144,7 +218,16 @@
             style="@style/Widget.SareChild.Button.Primary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="Start protection" />
+            android:layout_marginTop="28dp"
+            android:text="Continue to SareChild" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center"
+            android:text="You can come back here any time from the home screen to change or review anything."
+            android:textColor="@color/ink_faint"
+            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>

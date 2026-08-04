@@ -8,17 +8,13 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.google.firebase.firestore.ListenerRegistration
-import com.sarechild.child.CallRecordingRequestActivity
-import com.sarechild.child.DeviceAdminRequestActivity
 import com.sarechild.child.DeviceLockActivity
 import com.sarechild.child.LiveViewRequestActivity
+import com.sarechild.child.PermissionsActivity
 import com.sarechild.child.R
-import com.sarechild.child.EventRecorderRequestActivity
-import com.sarechild.child.PhotoGalleryRequestActivity
 import com.sarechild.child.RingDeviceActivity
-import com.sarechild.child.ScreenLockHelper
 import com.sarechild.child.SafetyRequestActivity
-import com.sarechild.child.WhatsAppProtectionRequestActivity
+import com.sarechild.child.ScreenLockHelper
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
@@ -32,6 +28,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Listens for parent-initiated commands and either:
+ *  1. Completes them silently when everything needed is already granted (the
+ *     common case once a family has finished Enable Protections once), or
+ *  2. For a live, in-the-moment session (screen share / camera / mic / live view),
+ *     hands off to a headless gate Activity that surfaces only the one real
+ *     Android system dialog required — never a custom Accept/Decline screen, or
+ *  3. For a feature that still needs child setup, marks the command FAILED with
+ *     a clear reason and brings the child to Enable Protections with that exact
+ *     row highlighted — again, no custom Accept UI, ever.
+ */
 class CommandListener(
     private val context: Context,
     private val repo: ChildRepository
@@ -134,111 +141,16 @@ class CommandListener(
                 ScreenLockHelper.execute(context, repo, command.id, scope)
                 return
             }
-            SafetyCommandType.REQUEST_DEVICE_ADMIN -> {
-                val intent = Intent(context, DeviceAdminRequestActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
-                }
-                val pending = PendingIntent.getActivity(
-                    context,
-                    command.id.hashCode(),
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
-                    .setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle("Parent requests Device Administrator")
-                    .setContentText("Tap to enable remote lock screen. Android will ask you to confirm.")
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(pending)
-                    .setFullScreenIntent(pending, true)
-                    .setAutoCancel(true)
-                    .build()
-                context.getSystemService(NotificationManager::class.java)
-                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
-                context.startActivity(intent)
-                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.RUNNING) }
-                return
-            }
-            SafetyCommandType.REQUEST_WHATSAPP_PROTECTION -> {
-                val intent = Intent(context, WhatsAppProtectionRequestActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
-                }
-                val pending = PendingIntent.getActivity(
-                    context,
-                    command.id.hashCode(),
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
-                    .setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle("Parent requests WhatsApp protection")
-                    .setContentText("Tap to Accept and enable notification + accessibility access.")
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(pending)
-                    .setFullScreenIntent(pending, true)
-                    .setAutoCancel(true)
-                    .build()
-                context.getSystemService(NotificationManager::class.java)
-                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
-                context.startActivity(intent)
-                return
-            }
-            SafetyCommandType.REQUEST_CALL_RECORDING -> {
-                val intent = Intent(context, CallRecordingRequestActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
-                }
-                val pending = PendingIntent.getActivity(
-                    context,
-                    command.id.hashCode(),
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
-                    .setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle("Parent requests call recording")
-                    .setContentText("Tap to Accept or Not now.")
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(pending)
-                    .setFullScreenIntent(pending, true)
-                    .setAutoCancel(true)
-                    .build()
-                context.getSystemService(NotificationManager::class.java)
-                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
-                context.startActivity(intent)
-                return
-            }
-            SafetyCommandType.REQUEST_PHOTO_ACCESS -> {
-                val intent = Intent(context, PhotoGalleryRequestActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
-                }
-                val pending = PendingIntent.getActivity(
-                    context,
-                    command.id.hashCode(),
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
-                    .setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle("Parent requests photo gallery access")
-                    .setContentText("Tap to Accept or Not now.")
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(pending)
-                    .setFullScreenIntent(pending, true)
-                    .setAutoCancel(true)
-                    .build()
-                context.getSystemService(NotificationManager::class.java)
-                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
-                context.startActivity(intent)
-                return
-            }
+            SafetyCommandType.REQUEST_DEVICE_ADMIN ->
+                return redirectToEnableProtections(command, "device_admin", "Device Administrator")
+            SafetyCommandType.REQUEST_WHATSAPP_PROTECTION ->
+                return redirectToEnableProtections(command, "whatsapp", "WhatsApp protection")
+            SafetyCommandType.REQUEST_CALL_RECORDING ->
+                return redirectToEnableProtections(command, "call_recording", "call recording")
+            SafetyCommandType.REQUEST_PHOTO_ACCESS ->
+                return redirectToEnableProtections(command, "photo_gallery", "photo gallery access")
+            SafetyCommandType.REQUEST_EVENT_RECORDER_ACCESS ->
+                return redirectToEnableProtections(command, "event_recorder", "the activity timeline")
             SafetyCommandType.REQUEST_PHOTO_SYNC -> {
                 scope.launch {
                     repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
@@ -260,32 +172,6 @@ class CommandListener(
                         )
                     }
                 }
-                return
-            }
-            SafetyCommandType.REQUEST_EVENT_RECORDER_ACCESS -> {
-                val intent = Intent(context, EventRecorderRequestActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
-                }
-                val pending = PendingIntent.getActivity(
-                    context,
-                    command.id.hashCode(),
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
-                    .setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle("Parent requests Event Recorder")
-                    .setContentText("Tap to Accept or Not now.")
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(pending)
-                    .setFullScreenIntent(pending, true)
-                    .setAutoCancel(true)
-                    .build()
-                context.getSystemService(NotificationManager::class.java)
-                    .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
-                context.startActivity(intent)
                 return
             }
             SafetyCommandType.REQUEST_EVENT_RECORDER_SYNC -> {
@@ -336,7 +222,7 @@ class CommandListener(
                 val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("Parent requests live viewing")
-                    .setContentText("Tap to Allow or Not now.")
+                    .setContentText("Connecting…")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentIntent(pending)
@@ -351,11 +237,14 @@ class CommandListener(
             else -> Unit
         }
 
+        // Only SCREEN_SHARE, CAMERA_CHECK, and MIC_CHECK reach here — every other
+        // SafetyCommandType is fully handled above. See SafetyRequestActivity: it is
+        // a headless gate, never a custom Accept/Decline screen.
         val title = when (command.type) {
             SafetyCommandType.SCREEN_SHARE -> "Parent requests screen sharing"
             SafetyCommandType.CAMERA_CHECK -> "Parent requests a camera check"
             SafetyCommandType.MIC_CHECK -> "Parent requests a voice check"
-            else -> "Parent safety request"
+            else -> return
         }
 
         val intent = Intent(context, SafetyRequestActivity::class.java).apply {
@@ -375,16 +264,17 @@ class CommandListener(
         val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
-            .setContentText("Tap to Allow or Not now.")
+            .setContentText("Connecting…")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pending)
-            // Reliably pops the Allow screen full-screen even over the lock screen or
+            // Reliably pops the gate screen full-screen even over the lock screen or
             // while the app is backgrounded — the "child can't reach the phone" /
-            // emergency case this whole countdown flow exists for. A plain
-            // startActivity() call from a service can be silently blocked by modern
-            // Android's background-activity-launch restrictions, so this is the
-            // OS-blessed fallback that still gets through.
+            // emergency case this exists for. A plain startActivity() call from a
+            // service can be silently blocked by modern Android's background-activity
+            // -launch restrictions, so this is the OS-blessed fallback that still gets
+            // through. The gate screen itself never asks the child to Accept anything —
+            // it only ever surfaces a real Android system dialog.
             .setFullScreenIntent(pending, true)
             .setAutoCancel(true)
             .build()
@@ -395,7 +285,7 @@ class CommandListener(
 
     /**
      * When consent and required OS permissions are already in place, complete the
-     * parent command silently instead of launching a nag dialog on the child device.
+     * parent command silently instead of launching anything on the child device.
      */
     private fun tryCompleteIfAlreadyGranted(command: SafetyCommand): Boolean {
         when (command.type) {
@@ -448,8 +338,51 @@ class CommandListener(
                 MonitoringForegroundService.start(context)
                 return true
             }
+            SafetyCommandType.SCREEN_SHARE -> {
+                if (!FeatureAccessGate.isScreenShareReady(repo)) return false
+                return false // still needs the per-session MediaProjection system dialog
+            }
+            SafetyCommandType.CAMERA_CHECK, SafetyCommandType.MIC_CHECK -> return false
             else -> return false
         }
+    }
+
+    /**
+     * A parent-requested feature isn't fully set up on this device yet. Never shows a
+     * custom Accept screen — marks the command FAILED with a clear reason (so the
+     * parent dashboard knows what happened) and brings the child straight to Enable
+     * Protections with the exact row highlighted.
+     */
+    private fun redirectToEnableProtections(command: SafetyCommand, itemId: String, humanLabel: String) {
+        scope.launch {
+            repo.updateCommand(
+                command.id,
+                SafetyCommandStatus.FAILED,
+                error = "Needs setup on this device's Enable Protections page"
+            )
+        }
+        val intent = Intent(context, PermissionsActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(SareChildConstants.EXTRA_HIGHLIGHT_ITEM_ID, itemId)
+            putExtra(SareChildConstants.EXTRA_COMMAND_ID, command.id)
+        }
+        val pending = PendingIntent.getActivity(
+            context,
+            command.id.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle("Finish setup for $humanLabel")
+            .setContentText("Tap to open Enable Protections on this phone.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build()
+        context.getSystemService(NotificationManager::class.java)
+            .notify(SareChildConstants.SAFETY_NOTIFICATION_ID + command.id.hashCode().and(0xff), notification)
+        context.startActivity(intent)
     }
 
     private fun ensureChannel() {

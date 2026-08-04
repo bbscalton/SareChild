@@ -944,7 +944,7 @@ class ChildRepository(
         if (resultUrl != null) data["resultUrl"] = resultUrl
         if (error != null) data["error"] = error
         // Lets the parent dashboard show "auto-allowed for safety" instead of implying
-        // the child actively tapped Allow — see AllowCountdownController.
+        // the child actively tapped Allow, for any legacy command rows that still set it.
         if (autoAllowed) data["autoAllowed"] = true
         db.collection(SareChildConstants.COL_FAMILIES).document(fid)
             .collection(SareChildConstants.COL_COMMANDS).document(commandId)

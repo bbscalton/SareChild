@@ -64,40 +64,32 @@
         </activity>
         <activity android:name=".PairingActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ConsentActivity" android:exported="false" />
-        <activity android:name=".PermissionsActivity" android:exported="false" />
+        <!-- Enable Protections: the single hub for every permission/consent enable in this
+             app. singleTask so a parent command that redirects here never stacks a second
+             instance on top of one already open (a past source of glitchy overlapping UI). -->
+        <activity
+            android:name=".PermissionsActivity"
+            android:exported="false"
+            android:launchMode="singleTask" />
         <activity android:name=".HomeActivity" android:exported="false" />
+        <!-- Headless gates: no Accept/Decline UI of their own — they only ever surface a
+             real Android system dialog (runtime permission sheet / MediaProjection capture
+             consent) or hand off to PermissionsActivity. singleTask avoids stacking multiple
+             instances if a parent fires several live-session commands in quick succession. -->
         <activity
             android:name=".LiveViewRequestActivity"
             android:exported="false"
+            android:launchMode="singleTask"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
         <activity
-            android:name=".WhatsAppProtectionRequestActivity"
+            android:name=".SafetyRequestActivity"
             android:exported="false"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true" />
-        <activity
-            android:name=".CallRecordingRequestActivity"
-            android:exported="false"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true" />
-        <activity
-            android:name=".PhotoGalleryRequestActivity"
-            android:exported="false"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true" />
-        <activity
-            android:name=".EventRecorderRequestActivity"
-            android:exported="false"
+            android:launchMode="singleTask"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
         <activity android:name=".CameraCheckActivity" android:exported="false" />
         <activity android:name=".MicCheckActivity" android:exported="false" />
-        <activity
-            android:name=".DeviceAdminRequestActivity"
-            android:exported="false"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true" />
         <activity
             android:name=".DeviceLockActivity"
             android:exported="false"

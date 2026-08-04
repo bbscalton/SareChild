@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -18,8 +17,10 @@ import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
 
 /**
- * Consent screen for parent-initiated WebRTC live viewing. Reuses the safety-request
- * layout — child always sees what is being shared. Accept / Not now only (no countdown).
+ * Headless gate for parent-initiated WebRTC live viewing (camera / mic / screen).
+ * No Accept/Decline UI — see PermissionsActivity doc. Consent must already be on
+ * from Enable Protections; this only ever surfaces the one unavoidable system
+ * dialog (runtime permission sheet, or MediaProjection capture confirmation).
  */
 class LiveViewRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySafetyRequestBinding
@@ -35,15 +36,11 @@ class LiveViewRequestActivity : AppCompatActivity() {
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) proceedAfterPermissions() else decline("Camera permission denied")
-    }
+    ) { granted -> if (granted) proceedAfterPermissions() else decline("Camera permission denied") }
 
     private val micPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) proceedAfterPermissions() else decline("Microphone permission denied")
-    }
+    ) { granted -> if (granted) proceedAfterPermissions() else decline("Microphone permission denied") }
 
     private val screenCapture = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -60,7 +57,16 @@ class LiveViewRequestActivity : AppCompatActivity() {
         binding = ActivitySafetyRequestBinding.inflate(layoutInflater)
         setContentView(binding.root)
         repo = ChildRepository(this)
+        handleIntent(intent)
+    }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent) {
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
         sessionId = intent.getStringExtra(SareChildConstants.EXTRA_LIVE_SESSION_ID).orEmpty()
         durationMinutes = intent.getIntExtra(
@@ -83,26 +89,20 @@ class LiveViewRequestActivity : AppCompatActivity() {
             if (enableScreen) add("screen")
             if (enableAudio) add("microphone")
         }.joinToString(", ")
+        binding.body.text = "Sharing $parts live for about $durationMinutes minute(s), visibly."
 
-        binding.title.text = "Live viewing with your parent?"
-        binding.body.text =
-            "If you Accept, your parent can watch $parts live for about $durationMinutes minute(s). " +
-                "A visible notification stays on while sharing."
-
-        binding.accept.setOnClickListener { acceptRequest() }
-        binding.decline.setOnClickListener { decline("Declined by child") }
-    }
-
-    private fun acceptRequest() {
-        lifecycleScope.launch {
-            repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
+        val missingItem = when {
+            enableScreen && !repo.screenShareConsent -> "screen"
+            enableVideo && !enableScreen && !repo.cameraCheckConsent -> "camera"
+            enableAudio && !repo.micCheckConsent -> "mic"
+            else -> null
         }
+        if (missingItem != null) {
+            redirectToEnableProtections(missingItem)
+            return
+        }
+
         if (enableScreen) {
-            if (!repo.screenShareConsent) {
-                Toast.makeText(this, "Screen share was not consented during setup", Toast.LENGTH_LONG).show()
-                decline("No screen share consent")
-                return
-            }
             val mpm = getSystemService(MediaProjectionManager::class.java)
             screenCapture.launch(mpm.createScreenCaptureIntent())
             return
@@ -111,32 +111,23 @@ class LiveViewRequestActivity : AppCompatActivity() {
     }
 
     private fun proceedAfterPermissions() {
-        if (enableVideo && !enableScreen) {
-            if (!repo.cameraCheckConsent) {
-                Toast.makeText(this, "Camera was not consented during setup", Toast.LENGTH_LONG).show()
-                decline("No camera consent")
-                return
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                cameraPermission.launch(Manifest.permission.CAMERA)
-                return
-            }
+        if (enableVideo && !enableScreen &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+        ) {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+            return
         }
-        if (enableAudio) {
-            if (!repo.micCheckConsent) {
-                Toast.makeText(this, "Microphone was not consented during setup", Toast.LENGTH_LONG).show()
-                decline("No microphone consent")
-                return
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                micPermission.launch(Manifest.permission.RECORD_AUDIO)
-                return
-            }
+        if (enableAudio &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
         }
         launchLiveService(RESULT_OK, null)
     }
 
     private fun launchLiveService(resultCode: Int, data: Intent?) {
+        lifecycleScope.launch { repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED) }
         val svc = Intent(this, LiveViewService::class.java).apply {
             putExtra(SareChildConstants.EXTRA_COMMAND_ID, commandId)
             putExtra(SareChildConstants.EXTRA_LIVE_SESSION_ID, sessionId)
@@ -152,6 +143,20 @@ class LiveViewRequestActivity : AppCompatActivity() {
             }
         }
         ContextCompat.startForegroundService(this, svc)
+        finish()
+    }
+
+    private fun redirectToEnableProtections(itemId: String) {
+        lifecycleScope.launch {
+            repo.updateCommand(commandId, SafetyCommandStatus.FAILED, error = "Needs setup on Enable Protections page")
+            repo.updateLiveSession(sessionId, mapOf("status" to "failed", "error" to "Needs child setup"))
+        }
+        startActivity(
+            Intent(this, PermissionsActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(SareChildConstants.EXTRA_HIGHLIGHT_ITEM_ID, itemId)
+            }
+        )
         finish()
     }
 

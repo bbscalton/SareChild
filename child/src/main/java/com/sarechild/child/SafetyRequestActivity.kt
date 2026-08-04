@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -19,28 +18,41 @@ import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
 
 /**
- * The single "please allow" surface shared by every parent-initiated command
- * that needs the child to actively consent in the moment (screen share,
- * camera check, mic check). Shows Accept / Not now — no auto-allow countdown.
+ * Headless gate for a live parent-initiated session (screen share / camera check /
+ * mic check). Shows NO Accept/Decline UI of its own — see class doc on
+ * PermissionsActivity for why. If the relevant consent was already switched on from
+ * Enable Protections, this jumps straight to the one system dialog Android requires
+ * (runtime permission sheet, or the unavoidable MediaProjection screen-capture
+ * confirmation) and starts the session. If consent is missing, it hands off to
+ * Enable Protections with that row highlighted instead of asking here.
  */
 class SafetyRequestActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySafetyRequestBinding
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
-    private var scheduleId: String? = null
     private lateinit var commandType: SafetyCommandType
     private var durationMinutes: Int = SareChildConstants.SCREEN_SHARE_DEFAULT_MINUTES
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startActivity(cameraIntent()) else decline("Camera permission denied")
+        if (granted) {
+            startActivity(cameraIntent())
+            finish()
+        } else {
+            decline("Camera permission denied")
+        }
     }
 
     private val micPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startActivity(micIntent()) else decline("Microphone permission denied")
+        if (granted) {
+            startActivity(micIntent())
+            finish()
+        } else {
+            decline("Microphone permission denied")
+        }
     }
 
     private val screenCapture = registerForActivityResult(
@@ -51,9 +63,7 @@ class SafetyRequestActivity : AppCompatActivity() {
             return@registerForActivityResult
         }
         lifecycleScope.launch {
-            if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.RUNNING)
-            }
+            if (commandId.isNotBlank()) repo.updateCommand(commandId, SafetyCommandStatus.RUNNING)
             repo.setActiveSessionRemote("screen")
         }
         val svc = Intent(this, ScreenShareService::class.java).apply {
@@ -71,99 +81,49 @@ class SafetyRequestActivity : AppCompatActivity() {
         binding = ActivitySafetyRequestBinding.inflate(layoutInflater)
         setContentView(binding.root)
         repo = ChildRepository(this)
+        handleIntent(intent)
+    }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent) {
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
-        scheduleId = intent.getStringExtra(SareChildConstants.EXTRA_SCHEDULE_ID)
         val typeName = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_TYPE).orEmpty()
-        commandType = runCatching { SafetyCommandType.valueOf(typeName) }.getOrElse {
+        val type = runCatching { SafetyCommandType.valueOf(typeName) }.getOrNull()
+        if (type == null || commandId.isBlank()) {
             finish()
             return
         }
+        commandType = type
         durationMinutes = intent.getIntExtra(
             SareChildConstants.EXTRA_DURATION_MINUTES,
             SareChildConstants.SCREEN_SHARE_DEFAULT_MINUTES
-        ).coerceIn(
-            SareChildConstants.SCREEN_SHARE_MIN_MINUTES,
-            SareChildConstants.SCREEN_SHARE_MAX_MINUTES
-        )
-
-        if (commandId.isBlank() && scheduleId.isNullOrBlank()) {
-            finish()
-            return
-        }
+        ).coerceIn(SareChildConstants.SCREEN_SHARE_MIN_MINUTES, SareChildConstants.SCREEN_SHARE_MAX_MINUTES)
 
         lifecycleScope.launch {
-            if (commandId.isNotBlank()) {
-                repo.getCommandDurationMinutes(commandId)?.let { durationMinutes = it }
-            }
+            repo.getCommandDurationMinutes(commandId)?.let { durationMinutes = it }
         }
 
         when (commandType) {
             SafetyCommandType.SCREEN_SHARE -> {
+                binding.body.text = "Sharing runs for about $durationMinutes minute(s), visibly."
                 if (!repo.screenShareConsent) {
-                    Toast.makeText(this, "Screen share was not consented during setup", Toast.LENGTH_LONG).show()
-                    decline("No screen share consent")
+                    redirectToEnableProtections("screen")
                     return
                 }
-                binding.title.text = if (scheduleId != null) {
-                    "Scheduled screen share with your parent?"
-                } else {
-                    "Share this screen with your parent?"
-                }
-                binding.body.text =
-                    "If you Accept, Android will ask for screen capture. Sharing runs for about $durationMinutes minutes with a visible notification."
+                val mpm = getSystemService(MediaProjectionManager::class.java)
+                screenCapture.launch(mpm.createScreenCaptureIntent())
             }
             SafetyCommandType.CAMERA_CHECK -> {
+                binding.body.text = "Opening the camera for a visible safety photo."
                 if (!repo.cameraCheckConsent) {
-                    decline("No camera check consent")
+                    redirectToEnableProtections("camera")
                     return
                 }
-                binding.title.text = "Take a safety photo for your parent?"
-                binding.body.text =
-                    "If you Accept, the camera opens. You will see what is captured. Nothing happens silently."
-            }
-            SafetyCommandType.MIC_CHECK -> {
-                if (!repo.micCheckConsent) {
-                    decline("No mic check consent")
-                    return
-                }
-                binding.title.text = "Record a short voice check?"
-                binding.body.text =
-                    "If you Accept, SareChild records about ${SareChildConstants.MIC_CHECK_SECONDS} seconds with a visible notification."
-            }
-            SafetyCommandType.STOP_SCREEN_SHARE,
-            SafetyCommandType.RING_DEVICE,
-            SafetyCommandType.SYNC_CALL_SMS,
-            SafetyCommandType.LOCK_DEVICE,
-            SafetyCommandType.UNLOCK_DEVICE,
-            SafetyCommandType.LOCK_SCREEN,
-            SafetyCommandType.REQUEST_DEVICE_ADMIN,
-            SafetyCommandType.REQUEST_WHATSAPP_PROTECTION,
-            SafetyCommandType.REQUEST_CALL_RECORDING,
-            SafetyCommandType.REQUEST_APP_INVENTORY,
-            SafetyCommandType.REQUEST_PHOTO_ACCESS,
-            SafetyCommandType.REQUEST_PHOTO_SYNC,
-            SafetyCommandType.REQUEST_EVENT_RECORDER_ACCESS,
-            SafetyCommandType.REQUEST_EVENT_RECORDER_SYNC,
-            SafetyCommandType.START_LIVE_VIEW,
-            SafetyCommandType.STOP_LIVE_VIEW -> {
-                finish()
-                return
-            }
-        }
-
-        binding.accept.setOnClickListener { accept() }
-        binding.decline.setOnClickListener { decline("Declined by child") }
-    }
-
-    private fun accept() {
-        lifecycleScope.launch {
-            if (commandId.isNotBlank()) {
-                repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED)
-            }
-        }
-        when (commandType) {
-            SafetyCommandType.CAMERA_CHECK -> {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                     == PackageManager.PERMISSION_GRANTED
                 ) {
@@ -174,6 +134,11 @@ class SafetyRequestActivity : AppCompatActivity() {
                 }
             }
             SafetyCommandType.MIC_CHECK -> {
+                binding.body.text = "Recording a short ${SareChildConstants.MIC_CHECK_SECONDS}s voice check, visibly."
+                if (!repo.micCheckConsent) {
+                    redirectToEnableProtections("mic")
+                    return
+                }
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                     == PackageManager.PERMISSION_GRANTED
                 ) {
@@ -183,12 +148,28 @@ class SafetyRequestActivity : AppCompatActivity() {
                     micPermission.launch(Manifest.permission.RECORD_AUDIO)
                 }
             }
-            SafetyCommandType.SCREEN_SHARE -> {
-                val mpm = getSystemService(MediaProjectionManager::class.java)
-                screenCapture.launch(mpm.createScreenCaptureIntent())
-            }
             else -> finish()
         }
+    }
+
+    /** Consent for this capability hasn't been switched on from Enable Protections yet —
+     *  send the child there (highlighted) instead of asking again here. */
+    private fun redirectToEnableProtections(itemId: String) {
+        lifecycleScope.launch {
+            repo.updateCommand(
+                commandId,
+                SafetyCommandStatus.FAILED,
+                error = "Needs setup on Enable Protections page"
+            )
+            repo.setActiveSessionRemote(null)
+        }
+        startActivity(
+            Intent(this, PermissionsActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(SareChildConstants.EXTRA_HIGHLIGHT_ITEM_ID, itemId)
+            }
+        )
+        finish()
     }
 
     private fun decline(reason: String) {

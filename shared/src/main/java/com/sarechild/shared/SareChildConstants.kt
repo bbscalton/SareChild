@@ -218,6 +218,10 @@ object SareChildConstants {
     const val LIVE_VIEW_DEFAULT_MINUTES = 1
     const val STUN_SERVER = "stun:stun.l.google.com:19302"
 
+    /** Deep-links the Enable Protections page (PermissionsActivity) to one specific row —
+     *  used instead of ever launching a separate per-feature Accept/Allow activity. */
+    const val EXTRA_HIGHLIGHT_ITEM_ID = "highlight_item_id"
+
     const val EXTRA_LIVE_SESSION_ID = "live_session_id"
     const val EXTRA_LIVE_VIDEO = "live_video"
     const val EXTRA_LIVE_AUDIO = "live_audio"

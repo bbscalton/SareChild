@@ -301,7 +301,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:layout_marginStart="10dp"
-                        android:text="Settings &amp; permissions"
+                        android:text="Enable Protections"
                         android:textColor="@color/ink_soft"
                         android:textSize="14sp"
                         android:textStyle="bold" />
