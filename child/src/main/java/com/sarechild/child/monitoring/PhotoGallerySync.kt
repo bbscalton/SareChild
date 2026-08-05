@@ -91,7 +91,6 @@ class PhotoGallerySync(
             val sort = "${MediaStore.Images.Media.DATE_MODIFIED} DESC"
 
             var processed = 0
-            var totalOnFullScan = 0
             var maxModifiedMs = repo.lastPhotoModifiedMs
             var lastError: String? = null
 
@@ -109,7 +108,6 @@ class PhotoGallerySync(
 
                 while (cursor.moveToNext()) {
                     if (idIdx < 0) continue
-                    if (forceFull) totalOnFullScan++
                     val mediaId = cursor.getLong(idIdx)
                     val modifiedSec = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
                     val modifiedMs = modifiedSec * 1000L
@@ -126,7 +124,10 @@ class PhotoGallerySync(
 
                     runCatching {
                         val thumbFile = createThumbnail(itemUri, SareChildConstants.PHOTO_THUMB_MAX_PX)
-                            ?: return@runCatching
+                        if (thumbFile == null) {
+                            lastError = "Could not create thumbnail for ${displayName.ifBlank { mediaId.toString() }}"
+                            return@runCatching
+                        }
                         val (thumbPath, thumbUrl) = repo.uploadMedia(thumbFile, "photos/thumbs", "image/jpeg")
                         thumbFile.delete()
 
@@ -155,8 +156,10 @@ class PhotoGallerySync(
                 repo.lastPhotoModifiedMs = maxModifiedMs
             }
             repo.lastPhotoSyncMs = System.currentTimeMillis()
+            // Count successfully upserted docs only — MediaStore row count inflated the parent
+            // badge when thumbnail/upload failed silently.
             val photoCount = when {
-                forceFull -> totalOnFullScan.also { repo.syncedPhotoCount = it }
+                forceFull -> processed.also { repo.syncedPhotoCount = it }
                 processed > 0 -> (repo.syncedPhotoCount + processed).also { repo.syncedPhotoCount = it }
                 else -> repo.syncedPhotoCount
             }

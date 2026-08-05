@@ -442,20 +442,25 @@ export function DashboardPage() {
 
   const filteredPhotos = useMemo(() => {
     if (!photoDateFilter.trim()) return devicePhotos
-    const dayStart = new Date(photoDateFilter).setHours(0, 0, 0, 0)
-    const dayEnd = dayStart + 24 * 60 * 60 * 1000
-    return devicePhotos.filter((p) => p.takenAtMs >= dayStart && p.takenAtMs < dayEnd)
+    const range = localDayRangeMs(photoDateFilter)
+    if (!range) return devicePhotos
+    return devicePhotos.filter((p) => p.takenAtMs >= range.start && p.takenAtMs < range.end)
   }, [devicePhotos, photoDateFilter])
 
   const photoStats = useMemo(() => {
     const selectedDevice = devices.find((d) => d.id === photoDeviceId)
     const status = selectedDevice?.photoGalleryStatus
+    const reportedCount = status?.photoCount ?? 0
     return {
-      count: status?.photoCount ?? filteredPhotos.length,
+      /** Docs actually loaded for the selected device (authoritative for the gallery). */
+      count: devicePhotos.length,
+      reportedCount,
+      filteredCount: filteredPhotos.length,
       lastSyncMs: status?.lastSyncAtMs ?? 0,
       accessLevel: status?.accessLevel ?? 'NONE',
+      lastError: status?.lastError ?? null,
     }
-  }, [devices, photoDeviceId, filteredPhotos.length])
+  }, [devices, photoDeviceId, devicePhotos.length, filteredPhotos.length])
 
   const eventRecorderStats = useMemo(() => {
     const todayStart = new Date()
@@ -2155,7 +2160,12 @@ export function DashboardPage() {
                 <div className="photos-stats">
                   <div className="photos-stat">
                     <span className="photos-stat-num">{photoStats.count}</span>
-                    <span className="photos-stat-label">Synced photos</span>
+                    <span className="photos-stat-label">
+                      In gallery
+                      {photoStats.reportedCount > 0 && photoStats.reportedCount !== photoStats.count
+                        ? ` (device reported ${photoStats.reportedCount})`
+                        : ''}
+                    </span>
                   </div>
                   <div className="photos-stat">
                     <span className="photos-stat-num small">
@@ -2170,6 +2180,16 @@ export function DashboardPage() {
                     <span className="photos-stat-label">Access level</span>
                   </div>
                 </div>
+                {photoStats.lastError ? (
+                  <p className="muted small photos-sync-error">Last sync error: {photoStats.lastError}</p>
+                ) : null}
+                {photoStats.reportedCount > 0 && photoStats.count === 0 ? (
+                  <p className="muted small">
+                    Device reported {photoStats.reportedCount} photos, but none are in Firestore yet. Tap{' '}
+                    <strong>Refresh gallery</strong> on the device below (requires an updated child app if uploads
+                    previously failed).
+                  </p>
+                ) : null}
               </div>
 
               {devices.length > 0 && (
@@ -2213,6 +2233,7 @@ export function DashboardPage() {
                               Last sync:{' '}
                               {lastMs > 0 ? new Date(lastMs).toLocaleString() : 'Never — request access on child phone'}
                             </li>
+                            {pg?.lastError ? <li className="photos-sync-error">Sync error: {pg.lastError}</li> : null}
                           </ul>
                           <div className="row gap">
                             <button
@@ -2243,25 +2264,46 @@ export function DashboardPage() {
                 <h3>Gallery</h3>
                 <div className="filter-row photos-filters">
                   <label className="photos-date-filter">
-                    <span className="muted small">Filter by date</span>
+                    <span className="muted small">Taken on (local date)</span>
                     <input
                       type="date"
                       value={photoDateFilter}
                       onChange={(e) => setPhotoDateFilter(e.target.value)}
                     />
                   </label>
-                  {photoDateFilter && (
-                    <button type="button" className="chip" onClick={() => setPhotoDateFilter('')}>
-                      Clear date
+                  {photoDateFilter ? (
+                    <button
+                      type="button"
+                      className="btn ghost compact photos-clear-date"
+                      onClick={() => setPhotoDateFilter('')}
+                    >
+                      Clear date filter
                     </button>
-                  )}
+                  ) : null}
+                  {photoDateFilter && devicePhotos.length > 0 ? (
+                    <span className="muted small photos-filter-count">
+                      Showing {filteredPhotos.length} of {devicePhotos.length}
+                    </span>
+                  ) : null}
                 </div>
 
                 {filteredPhotos.length === 0 ? (
-                  <Empty
-                    title="No photos yet"
-                    body="Ask your child to Accept photo gallery access on their phone and grant photo library permission. Thumbnails appear here after the first sync (usually within a minute)."
-                  />
+                  photoDateFilter && devicePhotos.length > 0 ? (
+                    <Empty
+                      title="No photos on this date"
+                      body={`None of the ${devicePhotos.length} synced photos were taken on ${formatLocalDateLabel(photoDateFilter)}. Clear the date filter to see the full gallery.`}
+                    />
+                  ) : photoStats.reportedCount > 0 && devicePhotos.length === 0 ? (
+                    <Empty
+                      title="Photos not loaded yet"
+                      body={`The child device reported ${photoStats.reportedCount} photos, but the gallery collection is empty. Tap Refresh gallery on the device card above. If that does not help, update the child app and request a full sync.`}
+                    />
+                  ) : (
+                    <Empty
+                      title="No photos yet"
+                      body="Ask your child to Accept photo gallery access on their phone and grant photo library permission. Thumbnails appear here after the first sync (usually within a minute)."
+                    />
+                  )
                 ) : (
                   <div className="gallery photos-gallery">
                     {filteredPhotos.map((photo) => {
@@ -2281,7 +2323,8 @@ export function DashboardPage() {
                             )}
                           </button>
                           <figcaption className="muted small">
-                            {photo.displayName || 'Photo'} · {new Date(photo.takenAtMs).toLocaleString()}
+                            {photo.displayName || 'Photo'} ·{' '}
+                            {photo.takenAtMs > 0 ? new Date(photo.takenAtMs).toLocaleString() : 'Unknown date'}
                           </figcaption>
                         </figure>
                       )
@@ -4561,4 +4604,24 @@ function Empty({ title, body }: { title: string; body: string }) {
       <p className="muted">{body}</p>
     </div>
   )
+}
+
+/** Parse an HTML date input value (`YYYY-MM-DD`) as a local calendar day — not UTC. */
+function localDayRangeMs(yyyyMmDd: string): { start: number; end: number } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(yyyyMmDd.trim())
+  if (!m) return null
+  const year = Number(m[1])
+  const monthIndex = Number(m[2]) - 1
+  const day = Number(m[3])
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || !Number.isFinite(day)) return null
+  const start = new Date(year, monthIndex, day).getTime()
+  const end = new Date(year, monthIndex, day + 1).getTime()
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  return { start, end }
+}
+
+function formatLocalDateLabel(yyyyMmDd: string): string {
+  const range = localDayRangeMs(yyyyMmDd)
+  if (!range) return yyyyMmDd
+  return new Date(range.start).toLocaleDateString()
 }

@@ -1599,6 +1599,20 @@ select {
   gap: 0.25rem;
 }
 
+.photos-clear-date {
+  align-self: end;
+}
+
+.photos-filter-count {
+  align-self: end;
+  padding-bottom: 0.35rem;
+}
+
+.photos-sync-error {
+  margin-top: 0.75rem;
+  color: #b42318;
+}
+
 .photos-gallery .photos-gallery-item img {
   height: 160px;
   cursor: zoom-in;
