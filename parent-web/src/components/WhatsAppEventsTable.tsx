@@ -11,7 +11,7 @@ import {
 
 type Props = {
   events: WhatsAppEvent[]
-  deviceNames: Record<string, string>
+  deviceName?: string
   typeFilter: WhatsAppDisplayType | 'ALL'
   onTypeFilterChange: (t: WhatsAppDisplayType | 'ALL') => void
   onDeleteSelected: (ids: string[]) => Promise<void>
@@ -39,7 +39,7 @@ const TYPE_BADGE_CLASS: Record<WhatsAppDisplayType, string> = {
 
 export function WhatsAppEventsTable({
   events,
-  deviceNames,
+  deviceName,
   typeFilter,
   onTypeFilterChange,
   onDeleteSelected,
@@ -69,10 +69,7 @@ export function WhatsAppEventsTable({
           message,
           dateMs: ev.createdAtMs,
           dateStr: formatWhatsAppDate(ev.createdAtMs),
-          device: deviceNames[ev.deviceId] || ev.deviceId,
-          searchBlob: [type, name, message, formatWhatsAppDate(ev.createdAtMs), ev.deviceId, deviceNames[ev.deviceId]]
-            .join(' ')
-            .toLowerCase(),
+          searchBlob: [type, name, message, formatWhatsAppDate(ev.createdAtMs)].join(' ').toLowerCase(),
         }
       })
       .filter((row) => {
@@ -84,7 +81,7 @@ export function WhatsAppEventsTable({
         return true
       })
       .sort((a, b) => (sortDir === 'desc' ? b.dateMs - a.dateMs : a.dateMs - b.dateMs))
-  }, [events, typeFilter, search, colFilters, sortDir, deviceNames])
+  }, [events, typeFilter, search, colFilters, sortDir])
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize))
   const safePage = Math.min(page, totalPages - 1)
@@ -122,8 +119,9 @@ export function WhatsAppEventsTable({
 
   function exportCsv() {
     const header = ['Type', 'Name', 'Message', 'Date', 'Device', 'Source']
+    const deviceLabel = deviceName || 'device'
     const lines = rows.map((r) =>
-      [r.typeLabel, r.name, r.message, r.dateStr, r.device, r.ev.source]
+      [r.typeLabel, r.name, r.message, r.dateStr, deviceLabel, r.ev.source]
         .map((c) => `"${String(c).replace(/"/g, '""')}"`)
         .join(','),
     )
@@ -131,7 +129,7 @@ export function WhatsAppEventsTable({
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `whatsapp-events-${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `whatsapp-events-${deviceLabel.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     URL.revokeObjectURL(url)
     setToolsOpen(false)
@@ -149,7 +147,7 @@ export function WhatsAppEventsTable({
   return (
     <div className="card wa-table-card">
       <div className="wa-table-header">
-        <h3>WHATSAPP</h3>
+        <h3>{deviceName ? `WHATSAPP · ${deviceName}` : 'WHATSAPP'}</h3>
         <div className="wa-table-toolbar">
           <div className="wa-tools-wrap">
             <button type="button" className="btn ghost compact" onClick={() => setToolsOpen((v) => !v)}>

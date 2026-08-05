@@ -1143,6 +1143,28 @@ export async function deleteWhatsAppEvents(familyId: string, ids: string[]): Pro
   )
 }
 
+function mapWhatsAppEventDoc(d: { id: string; data: () => Record<string, unknown> }): WhatsAppEvent {
+  const data = d.data()
+  const rawType = String(data.eventType ?? 'MESSAGE') as WhatsAppEventType
+  return {
+    id: d.id,
+    deviceId: (data.deviceId as string) || '',
+    eventType: WHATSAPP_EVENT_TYPES.includes(rawType) ? rawType : 'MESSAGE',
+    contactLabel: (data.contactLabel as string) || 'Unknown contact',
+    contactSafe: Boolean(data.contactSafe),
+    direction: (data.direction as string) || 'IN',
+    preview: (data.preview as string | null) ?? null,
+    mediaUrl: (data.mediaUrl as string | null) ?? null,
+    mediaType: (data.mediaType as string | null) ?? null,
+    durationSec: data.durationSec == null ? null : Number(data.durationSec),
+    riskScore: data.riskScore == null ? null : Number(data.riskScore),
+    riskFlag: Boolean(data.riskFlag),
+    source: (data.source as string) || 'notification',
+    createdAtMs: Number(data.createdAtMs ?? 0),
+  }
+}
+
+/** Family-wide snapshot (limit 100) — used for nav badge counts only. */
 export function observeWhatsAppEvents(
   familyId: string,
   onData: (rows: WhatsAppEvent[]) => void,
@@ -1151,33 +1173,31 @@ export function observeWhatsAppEvents(
   const q = query(
     collection(db, COL.families, familyId, COL.whatsappEvents),
     orderBy('createdAtMs', 'desc'),
+    limit(100),
+  )
+  return onSnapshot(
+    q,
+    (snap) => onData(snap.docs.map((d) => mapWhatsAppEventDoc(d))),
+    (err) => onError?.(err),
+  )
+}
+
+/** Device-scoped WhatsApp timeline — primary listener for the protection tab. */
+export function observeWhatsAppEventsForDevice(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: WhatsAppEvent[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.whatsappEvents),
+    where('deviceId', '==', deviceId),
+    orderBy('createdAtMs', 'desc'),
     limit(300),
   )
   return onSnapshot(
     q,
-    (snap) => {
-      const rows = snap.docs.map((d) => {
-        const data = d.data()
-        const rawType = String(data.eventType ?? 'MESSAGE') as WhatsAppEventType
-        return {
-          id: d.id,
-          deviceId: (data.deviceId as string) || '',
-          eventType: WHATSAPP_EVENT_TYPES.includes(rawType) ? rawType : 'MESSAGE',
-          contactLabel: (data.contactLabel as string) || 'Unknown contact',
-          contactSafe: Boolean(data.contactSafe),
-          direction: (data.direction as string) || 'IN',
-          preview: (data.preview as string | null) ?? null,
-          mediaUrl: (data.mediaUrl as string | null) ?? null,
-          mediaType: (data.mediaType as string | null) ?? null,
-          durationSec: data.durationSec == null ? null : Number(data.durationSec),
-          riskScore: data.riskScore == null ? null : Number(data.riskScore),
-          riskFlag: Boolean(data.riskFlag),
-          source: (data.source as string) || 'notification',
-          createdAtMs: Number(data.createdAtMs ?? 0),
-        } satisfies WhatsAppEvent
-      })
-      onData(rows)
-    },
+    (snap) => onData(snap.docs.map((d) => mapWhatsAppEventDoc(d))),
     (err) => onError?.(err),
   )
 }

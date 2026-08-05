@@ -83,6 +83,24 @@ type NavGroup = {
   items: NavItem[]
 }
 
+const WHATSAPP_DEVICE_STORAGE_PREFIX = 'sarechild:whatsappDeviceId:'
+
+function loadStoredWhatsAppDeviceId(familyId: string): string {
+  try {
+    return window.localStorage.getItem(`${WHATSAPP_DEVICE_STORAGE_PREFIX}${familyId}`) || ''
+  } catch {
+    return ''
+  }
+}
+
+function saveStoredWhatsAppDeviceId(familyId: string, deviceId: string) {
+  try {
+    window.localStorage.setItem(`${WHATSAPP_DEVICE_STORAGE_PREFIX}${familyId}`, deviceId)
+  } catch {
+    // localStorage may be unavailable — not critical.
+  }
+}
+
 export function DashboardPage() {
   const { user, familyId, trialInfo, signOut, refreshFamilyId } = useAuth()
   const [section, setSection] = useState<Section>('home')
@@ -99,7 +117,9 @@ export function DashboardPage() {
   const [digests, setDigests] = useState<WeeklyDigest[]>([])
   const [guardians, setGuardians] = useState<GuardianInfo[]>([])
   const [safeContacts, setSafeContacts] = useState<SafeContact[]>([])
+  const [whatsAppBadgeEvents, setWhatsAppBadgeEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
+  const [whatsAppDeviceId, setWhatsAppDeviceId] = useState('')
   const [whatsAppTypeFilter, setWhatsAppTypeFilter] = useState<WhatsAppTableTypeFilter>('ALL')
   const [callRecordings, setCallRecordings] = useState<CallRecording[]>([])
   const [devicePhotos, setDevicePhotos] = useState<DevicePhoto[]>([])
@@ -227,7 +247,7 @@ export function DashboardPage() {
       repo.observeGuardians(familyId, setGuardians, (e) => setError(e.message)),
       repo.observeSosContacts(familyId, setSosContacts, (e) => setError(e.message)),
       repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
-      repo.observeWhatsAppEvents(familyId, setWhatsAppEvents, (e) => setError(e.message)),
+      repo.observeWhatsAppEvents(familyId, setWhatsAppBadgeEvents, (e) => setError(e.message)),
       repo.observeCallRecordings(familyId, setCallRecordings, (e) => setError(e.message)),
       repo.observeLiveRecordings(familyId, setLiveRecordings, (e) => setError(e.message)),
       repo.observeTypingSafetyEvents(familyId, setTypingEvents, (e) => setError(e.message)),
@@ -263,6 +283,35 @@ export function DashboardPage() {
       (e) => setError(e.message),
     )
   }, [familyId, eventRecorderDeviceId])
+
+  useEffect(() => {
+    if (!familyId || !whatsAppDeviceId) {
+      setWhatsAppEvents([])
+      return
+    }
+    return repo.observeWhatsAppEventsForDevice(
+      familyId,
+      whatsAppDeviceId,
+      setWhatsAppEvents,
+      (e) => setError(e.message),
+    )
+  }, [familyId, whatsAppDeviceId])
+
+  useEffect(() => {
+    if (!familyId) return
+    const stored = loadStoredWhatsAppDeviceId(familyId)
+    if (stored && devices.some((d) => d.id === stored)) {
+      setWhatsAppDeviceId(stored)
+      return
+    }
+    if (devices.length > 0 && (!whatsAppDeviceId || !devices.some((d) => d.id === whatsAppDeviceId))) {
+      setWhatsAppDeviceId(devices[0]!.id)
+    }
+  }, [familyId, devices, whatsAppDeviceId])
+
+  useEffect(() => {
+    if (familyId && whatsAppDeviceId) saveStoredWhatsAppDeviceId(familyId, whatsAppDeviceId)
+  }, [familyId, whatsAppDeviceId])
 
   useEffect(() => {
     if (!limitDeviceId && devices.length > 0) setLimitDeviceId(devices[0]!.id)
@@ -314,42 +363,51 @@ export function DashboardPage() {
   }, [devices, alerts, commands, guardians, nowTick])
 
   const whatsAppUnknownCount = useMemo(
+    () => whatsAppBadgeEvents.filter((e) => !e.contactSafe).length,
+    [whatsAppBadgeEvents],
+  )
+
+  const selectedWhatsAppDevice = useMemo(
+    () => devices.find((d) => d.id === whatsAppDeviceId) ?? null,
+    [devices, whatsAppDeviceId],
+  )
+
+  const whatsAppDeviceUnknownCount = useMemo(
     () => whatsAppEvents.filter((e) => !e.contactSafe).length,
     [whatsAppEvents],
   )
 
   const whatsAppLastEventByDevice = useMemo(() => {
     const map = new Map<string, number>()
-    for (const ev of whatsAppEvents) {
+    for (const ev of whatsAppBadgeEvents) {
       const prev = map.get(ev.deviceId) ?? 0
       if (ev.createdAtMs > prev) map.set(ev.deviceId, ev.createdAtMs)
     }
     return map
-  }, [whatsAppEvents])
+  }, [whatsAppBadgeEvents])
 
   const whatsAppSetupStatus = useMemo(() => {
-    if (devices.length === 0) return null
-    const statuses = devices.map((d) => d.whatsappProtection)
-    const anyEnabled = statuses.some((s) => s?.enabled)
-    if (anyEnabled) return null
-    const missingConsent = devices.every(
-      (d) => !(d.whatsappProtection?.consent ?? d.whatsappMonitorConsent),
-    )
-    if (missingConsent) {
+    const d = selectedWhatsAppDevice
+    if (!d) return null
+    const wp = d.whatsappProtection
+    const consent = wp?.consent ?? d.whatsappMonitorConsent
+    const notif = wp?.notificationAccess ?? d.notificationAccess
+    const enabled = wp?.enabled
+    if (enabled) return null
+    if (!consent) {
       return {
         title: 'WhatsApp protection not enabled yet',
-        body: 'Tap "Request WhatsApp protection" below — your child will see a visible Accept screen with steps to enable notification access and accessibility.',
+        body: `Tap "Request WhatsApp protection" below — ${d.childName} will see a visible Accept screen with steps to enable notification access and accessibility.`,
       }
     }
-    const missingNotif = devices.some((d) => !(d.whatsappProtection?.notificationAccess ?? d.notificationAccess))
-    if (missingNotif) {
+    if (!notif) {
       return {
         title: 'Notification access needed',
-        body: 'WhatsApp protection is consented on the device but notification access is off. On the child phone: SareChild → Review permissions → Open notification access settings → enable SareChild.',
+        body: `WhatsApp protection is consented on ${d.childName}'s phone but notification access is off. On the child phone: SareChild → Review permissions → Open notification access settings → enable SareChild.`,
       }
     }
-    const missingMedia = devices.some((d) => !(d.whatsappProtection?.mediaPermission ?? d.whatsappMediaPermission))
-    if (missingMedia) {
+    const media = wp?.mediaPermission ?? d.whatsappMediaPermission
+    if (!media) {
       return {
         title: 'WhatsApp media permission missing',
         body: 'Messages and calls can still be captured from notifications. For photos, videos, and voice notes, grant WhatsApp media access on the child device (Review permissions → step 8).',
@@ -357,15 +415,9 @@ export function DashboardPage() {
     }
     return {
       title: 'Waiting for child heartbeat',
-      body: 'WhatsApp protection was just enabled — status updates on the next device heartbeat (within a few minutes). Send a test WhatsApp message to verify events appear.',
+      body: `WhatsApp protection was just enabled on ${d.childName}'s phone — status updates on the next device heartbeat (within a few minutes). Send a test WhatsApp message to verify events appear.`,
     }
-  }, [devices])
-
-  const whatsAppDeviceNames = useMemo(() => {
-    const map: Record<string, string> = {}
-    for (const d of devices) map[d.id] = d.childName
-    return map
-  }, [devices])
+  }, [selectedWhatsAppDevice])
 
   const callRecordingStats = useMemo(() => {
     const total = callRecordings.length
@@ -1661,9 +1713,34 @@ export function DashboardPage() {
 
           {section === 'whatsapp' && (
             <section className="stack">
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Select device</h3>
+                  <p className="muted small">
+                    WhatsApp events are isolated per paired device — choose which child phone to review.
+                  </p>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={whatsAppDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setWhatsAppDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="card whatsapp-hero">
                 <div className="whatsapp-hero-head">
-                  <h3>WhatsApp protection</h3>
+                  <h3>
+                    {selectedWhatsAppDevice
+                      ? `Messages from: ${selectedWhatsAppDevice.childName}`
+                      : 'WhatsApp protection'}
+                  </h3>
                   <span className="pill online">Live</span>
                 </div>
                 <p className="muted">
@@ -1673,8 +1750,8 @@ export function DashboardPage() {
                   to the device&apos;s WhatsApp media folder.
                 </p>
                 <p className="muted small">
-                  Safe-list contacts are still logged (marked safe) but do not trigger alerts.
-                  Unknown contacts are monitored and flagged for your review.
+                  Safe-list contacts apply to the whole family (not per device) — activity is still
+                  logged but does not trigger alerts. Unknown contacts are monitored and flagged.
                 </p>
                 <div className="whatsapp-stats">
                   <div className="whatsapp-stat">
@@ -1682,7 +1759,7 @@ export function DashboardPage() {
                     <span className="whatsapp-stat-label">Events (300 latest)</span>
                   </div>
                   <div className="whatsapp-stat">
-                    <span className="whatsapp-stat-num warn">{whatsAppUnknownCount}</span>
+                    <span className="whatsapp-stat-num warn">{whatsAppDeviceUnknownCount}</span>
                     <span className="whatsapp-stat-label">From unknown contacts</span>
                   </div>
                   <div className="whatsapp-stat">
@@ -1714,78 +1791,81 @@ export function DashboardPage() {
                 <Empty title={whatsAppSetupStatus.title} body={whatsAppSetupStatus.body} />
               )}
 
-              {devices.length > 0 && (
+              {selectedWhatsAppDevice && (
                 <div className="card">
-                  <h3>Device setup status</h3>
+                  <h3>Device setup — {selectedWhatsAppDevice.childName}</h3>
                   <p className="muted small">
-                    Each child phone must consent and grant notification + accessibility access.
+                    This phone must consent and grant notification + accessibility access.
                     Events appear within a minute of the next WhatsApp message.
                   </p>
-                  <ul className="whatsapp-device-status">
-                    {devices.map((d) => {
-                      const wp = d.whatsappProtection
-                      const consent = wp?.consent ?? d.whatsappMonitorConsent
-                      const notif = wp?.notificationAccess ?? d.notificationAccess
-                      const accessibility = wp?.accessibilityAccess ?? false
-                      const media = wp?.mediaPermission ?? d.whatsappMediaPermission
-                      const lastEventMs = Math.max(
-                        wp?.lastEventAtMs ?? 0,
-                        d.lastWhatsAppEventAtMs,
-                        whatsAppLastEventByDevice.get(d.id) ?? 0,
-                      )
-                      const ready = consent && notif
-                      return (
-                        <li key={d.id} className="whatsapp-device-row">
-                          <div className="whatsapp-device-head">
-                            <strong>{d.childName}</strong>
-                            <span className={`pill ${ready ? 'online' : 'offline'}`}>
-                              {ready ? 'Monitoring active' : 'Setup incomplete'}
-                            </span>
-                          </div>
-                          <ul className="meta whatsapp-device-checks">
-                            <li>{consent ? '✓' : '✗'} Child consent</li>
-                            <li>{notif ? '✓' : '✗'} Notification listener (incoming messages)</li>
-                            <li>{accessibility ? '✓' : '✗'} Accessibility (outgoing messages sent by your child)</li>
-                            <li>{media ? '✓' : '○'} Media permission (optional)</li>
-                            <li>
-                              Last event:{' '}
-                              {lastEventMs > 0
-                                ? new Date(lastEventMs).toLocaleString()
-                                : 'None yet — send a test WhatsApp message'}
-                            </li>
-                          </ul>
-                          {consent && notif && !accessibility && (
-                            <p className="muted small whatsapp-outgoing-warn">
-                              ⚠ Outgoing messages (what your child sends) won't appear until
-                              Accessibility is enabled on their phone — incoming-only otherwise.
-                            </p>
-                          )}
-                          <button
-                            className="btn primary compact"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void requestCheck(d.id, 'REQUEST_WHATSAPP_PROTECTION')}
-                          >
-                            Request WhatsApp protection
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
+                  {(() => {
+                    const d = selectedWhatsAppDevice
+                    const wp = d.whatsappProtection
+                    const consent = wp?.consent ?? d.whatsappMonitorConsent
+                    const notif = wp?.notificationAccess ?? d.notificationAccess
+                    const accessibility = wp?.accessibilityAccess ?? false
+                    const media = wp?.mediaPermission ?? d.whatsappMediaPermission
+                    const lastEventMs = Math.max(
+                      wp?.lastEventAtMs ?? 0,
+                      d.lastWhatsAppEventAtMs,
+                      whatsAppLastEventByDevice.get(d.id) ?? 0,
+                    )
+                    const ready = consent && notif
+                    return (
+                      <div className="whatsapp-device-row">
+                        <div className="whatsapp-device-head">
+                          <strong>{d.childName}</strong>
+                          <span className={`pill ${ready ? 'online' : 'offline'}`}>
+                            {ready ? 'Monitoring active' : 'Setup incomplete'}
+                          </span>
+                        </div>
+                        <ul className="meta whatsapp-device-checks">
+                          <li>{consent ? '✓' : '✗'} Child consent</li>
+                          <li>{notif ? '✓' : '✗'} Notification listener (incoming messages)</li>
+                          <li>{accessibility ? '✓' : '✗'} Accessibility (outgoing messages sent by your child)</li>
+                          <li>{media ? '✓' : '○'} Media permission (optional)</li>
+                          <li>
+                            Last event:{' '}
+                            {lastEventMs > 0
+                              ? new Date(lastEventMs).toLocaleString()
+                              : 'None yet — send a test WhatsApp message'}
+                          </li>
+                        </ul>
+                        {consent && notif && !accessibility && (
+                          <p className="muted small whatsapp-outgoing-warn">
+                            ⚠ Outgoing messages (what your child sends) won&apos;t appear until
+                            Accessibility is enabled on their phone — incoming-only otherwise.
+                          </p>
+                        )}
+                        <button
+                          className="btn primary compact"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void requestCheck(d.id, 'REQUEST_WHATSAPP_PROTECTION')}
+                        >
+                          Request WhatsApp protection
+                        </button>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
 
-              {whatsAppEvents.length === 0 ? (
+              {!selectedWhatsAppDevice ? (
+                <div className="card">
+                  <Empty title="Select a device" body="Choose a paired child phone above to view WhatsApp activity." />
+                </div>
+              ) : whatsAppEvents.length === 0 ? (
                 <div className="card">
                   <Empty
-                    title="No WhatsApp activity yet"
-                    body="Events appear here once the child device has consent, notification access, and (optionally) accessibility enabled. Send a test WhatsApp message to verify."
+                    title={`No WhatsApp activity from ${selectedWhatsAppDevice.childName} yet`}
+                    body="Events appear here once this device has consent, notification access, and (optionally) accessibility enabled. Send a test WhatsApp message on that phone to verify."
                   />
                 </div>
               ) : (
                 <WhatsAppEventsTable
                   events={whatsAppEvents}
-                  deviceNames={whatsAppDeviceNames}
+                  deviceName={selectedWhatsAppDevice.childName}
                   typeFilter={whatsAppTypeFilter}
                   onTypeFilterChange={setWhatsAppTypeFilter}
                   deleteEnabled={Boolean(familyId)}
@@ -1799,8 +1879,9 @@ export function DashboardPage() {
               <div className="card form-card">
                 <h3>Safe WhatsApp contacts</h3>
                 <p className="muted small">
-                  Activity from contacts listed here is still logged (marked safe) and will not
-                  generate alerts. Anyone not listed is treated as unknown and fully monitored.
+                  Family-wide safe list — applies to all paired devices. Activity from contacts listed
+                  here is still logged (marked safe) and will not generate alerts. Anyone not listed is
+                  treated as unknown and fully monitored.
                 </p>
                 <label>
                   Display label

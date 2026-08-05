@@ -94,6 +94,8 @@ class DashboardActivity : AppCompatActivity() {
     private var screenShareSchedules: List<ScreenShareSchedule> = emptyList()
     private var screenShareDurationMinutes = 10
     private var whatsAppEvents: List<WhatsAppEvent> = emptyList()
+    private var whatsAppDeviceId: String? = null
+    private var whatsAppEventsJob: Job? = null
     private var callRecordings: List<CallRecordingEvent> = emptyList()
     private var typingEvents: List<TypingSafetyEvent> = emptyList()
     private var whatsAppFilter: WhatsAppFilter = WhatsAppFilter.ALL
@@ -486,6 +488,11 @@ class DashboardActivity : AppCompatActivity() {
             launch {
                 repo.observeDevices(familyId).collectLatest {
                     devices = it
+                    val previousDeviceId = whatsAppDeviceId
+                    ensureWhatsAppDeviceSelected()
+                    if (whatsAppDeviceId != previousDeviceId || whatsAppEventsJob == null) {
+                        restartWhatsAppDeviceEventsObserver(familyId)
+                    }
                     if (currentSection == "home" || currentSection == "safety" || currentSection == "map") refreshSection()
                     // Targeted refresh (not refreshSection()) — the Pair tab has several text
                     // inputs (child name, geofence, SOS contact) that a full re-render would wipe.
@@ -571,12 +578,6 @@ class DashboardActivity : AppCompatActivity() {
                 }
             }
             launch {
-                repo.observeWhatsAppEvents(familyId).collectLatest {
-                    whatsAppEvents = it
-                    if (currentSection == "whatsapp") refreshSection()
-                }
-            }
-            launch {
                 repo.observeCallRecordings(familyId).collectLatest {
                     callRecordings = it
                     if (currentSection == "callrecording") refreshSection()
@@ -595,6 +596,44 @@ class DashboardActivity : AppCompatActivity() {
                     delay(30_000)
                     if (currentSection == "home" || currentSection == "safety" || currentSection == "map") refreshSection()
                 }
+            }
+        }
+    }
+
+    private fun ensureWhatsAppDeviceSelected() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val stored = prefs.getString(PREF_WHATSAPP_DEVICE_ID, null)
+        val next = when {
+            stored != null && devices.any { it.id == stored } -> stored
+            devices.isNotEmpty() -> devices.first().id
+            else -> null
+        }
+        if (next != whatsAppDeviceId) {
+            whatsAppDeviceId = next
+            next?.let { prefs.edit().putString(PREF_WHATSAPP_DEVICE_ID, it).apply() }
+        }
+    }
+
+    private fun selectWhatsAppDevice(deviceId: String) {
+        whatsAppDeviceId = deviceId
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putString(PREF_WHATSAPP_DEVICE_ID, deviceId)
+            .apply()
+        familyId?.let { restartWhatsAppDeviceEventsObserver(it) }
+        if (currentSection == "whatsapp") refreshSection()
+    }
+
+    private fun restartWhatsAppDeviceEventsObserver(familyId: String) {
+        whatsAppEventsJob?.cancel()
+        val deviceId = whatsAppDeviceId ?: run {
+            whatsAppEvents = emptyList()
+            return
+        }
+        whatsAppEventsJob = lifecycleScope.launch {
+            repo.observeWhatsAppEventsForDevice(familyId, deviceId).collectLatest {
+                whatsAppEvents = it
+                if (currentSection == "whatsapp") refreshSection()
             }
         }
     }
@@ -838,24 +877,58 @@ class DashboardActivity : AppCompatActivity() {
         scroll.addView(root)
         container.addView(scroll, matchFrameParams())
 
+        val selectedDevice = devices.firstOrNull { it.id == whatsAppDeviceId }
         val unknownCount = whatsAppEvents.count { !it.contactSafe }
+
         root.addView(TextView(this).apply {
             text = "WhatsApp protection"
             textSize = 22f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
+
+        if (devices.isNotEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "Select device"
+                textSize = 16f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, dp(12), 0, dp(6))
+            })
+            val deviceRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 0, 0, dp(8))
+            }
+            devices.forEach { device ->
+                deviceRow.addView(filterChip(device.childName, device.id == whatsAppDeviceId) {
+                    selectWhatsAppDevice(device.id)
+                })
+            }
+            root.addView(deviceRow)
+        }
+
         root.addView(TextView(this).apply {
-            text = "${whatsAppEvents.size} events · $unknownCount from unknown contacts"
+            text = if (selectedDevice != null) {
+                "Messages from: ${selectedDevice.childName}\n${whatsAppEvents.size} events · $unknownCount from unknown contacts"
+            } else {
+                "Select a paired device to view WhatsApp activity"
+            }
             setPadding(0, dp(8), 0, dp(12))
         })
 
-        devices.forEach { device ->
+        selectedDevice?.let { device ->
             root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                 text = "Request WhatsApp protection · ${device.childName}"
                 setOnClickListener {
                     sendQuickCommand(device, SafetyCommandType.REQUEST_WHATSAPP_PROTECTION)
                 }
             })
+        }
+
+        if (selectedDevice == null) {
+            root.addView(TextView(this).apply {
+                text = "Pair a child phone first, then choose which device to monitor."
+                setPadding(0, dp(12), 0, 0)
+            })
+            return
         }
 
         val filterRow = LinearLayout(this).apply {
@@ -884,18 +957,17 @@ class DashboardActivity : AppCompatActivity() {
 
         if (filtered.isEmpty()) {
             root.addView(TextView(this).apply {
-                text = "No WhatsApp activity yet. Enable protection on the child device and send a test message."
+                text = "No WhatsApp activity from ${selectedDevice.childName} yet. Enable protection on that device and send a test message."
                 setPadding(0, dp(12), 0, 0)
             })
             return
         }
 
         filtered.take(50).forEach { ev ->
-            val deviceName = devices.firstOrNull { it.id == ev.deviceId }?.childName ?: "Child"
             root.addView(TextView(this).apply {
                 text = buildString {
                     append("${ev.contactLabel} · ${ev.eventType.name} · ${ev.direction}")
-                    append("\n$deviceName · ${relativeTime(ev.createdAtMs)}")
+                    append("\n${relativeTime(ev.createdAtMs)}")
                     ev.preview?.let { append("\n\"$it\"") }
                     if (ev.riskFlag) append("\n⚠ Review recommended")
                 }
@@ -2805,5 +2877,10 @@ class DashboardActivity : AppCompatActivity() {
                 holder.binding.action.visibility = View.GONE
             }
         }
+    }
+
+    companion object {
+        private const val PREFS_NAME = "sarechild_parent"
+        private const val PREF_WHATSAPP_DEVICE_ID = "whatsapp_device_id"
     }
 }

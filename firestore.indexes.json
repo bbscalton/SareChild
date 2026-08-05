@@ -24,6 +24,14 @@
         { "fieldPath": "deviceId", "order": "ASCENDING" },
         { "fieldPath": "recordedAtMs", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "whatsappEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "deviceId", "order": "ASCENDING" },
+        { "fieldPath": "createdAtMs", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -1173,6 +1173,42 @@ class ParentRepository(
         val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
             .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
             .orderBy("createdAtMs", Query.Direction.DESCENDING)
+            .limit(100)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val rows = snap?.documents?.map { doc ->
+                    WhatsAppEvent(
+                        id = doc.id,
+                        deviceId = doc.getString("deviceId") ?: "",
+                        eventType = runCatching {
+                            WhatsAppEventType.valueOf(doc.getString("eventType") ?: "MESSAGE")
+                        }.getOrDefault(WhatsAppEventType.MESSAGE),
+                        contactLabel = doc.getString("contactLabel") ?: "Unknown contact",
+                        contactSafe = doc.getBoolean("contactSafe") ?: false,
+                        direction = doc.getString("direction") ?: "IN",
+                        preview = doc.getString("preview"),
+                        mediaUrl = doc.getString("mediaUrl"),
+                        mediaType = doc.getString("mediaType"),
+                        durationSec = doc.getLong("durationSec")?.toInt(),
+                        riskScore = doc.getLong("riskScore")?.toInt(),
+                        riskFlag = doc.getBoolean("riskFlag") ?: false,
+                        source = doc.getString("source") ?: "notification",
+                        createdAtMs = doc.getLong("createdAtMs") ?: 0L
+                    )
+                } ?: emptyList()
+                trySend(rows)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    fun observeWhatsAppEventsForDevice(familyId: String, deviceId: String): Flow<List<WhatsAppEvent>> = callbackFlow {
+        val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
+            .whereEqualTo("deviceId", deviceId)
+            .orderBy("createdAtMs", Query.Direction.DESCENDING)
             .limit(300)
             .addSnapshotListener { snap, err ->
                 if (err != null) {
