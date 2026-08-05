@@ -100,6 +100,11 @@ class DashboardActivity : AppCompatActivity() {
     private var typingFilter: TypingFilter = TypingFilter.ALL
     private var callRecordingFilter: CallRecordingFilter = CallRecordingFilter.ALL
 
+    /** Non-null while the Pair tab is visible — lets device updates refresh just this
+     *  list instead of the whole tab (which would wipe any in-progress form input). */
+    private var pairDeviceManageContainer: LinearLayout? = null
+    private var expandedRemoveDeviceId: String? = null
+
     private enum class WhatsAppFilter { ALL, UNKNOWN, CALLS, MEDIA }
     private enum class TypingFilter { ALL, FLAGGED, UNREVIEWED }
     private enum class CallRecordingFilter { ALL, CELLULAR, VOIP, MISSED }
@@ -482,6 +487,9 @@ class DashboardActivity : AppCompatActivity() {
                 repo.observeDevices(familyId).collectLatest {
                     devices = it
                     if (currentSection == "home" || currentSection == "safety" || currentSection == "map") refreshSection()
+                    // Targeted refresh (not refreshSection()) — the Pair tab has several text
+                    // inputs (child name, geofence, SOS contact) that a full re-render would wipe.
+                    pairDeviceManageContainer?.let { c -> renderDeviceManageList(c) }
                 }
             }
             launch {
@@ -605,6 +613,7 @@ class DashboardActivity : AppCompatActivity() {
         binding.toolbar.title = sectionTitle(key)
         val container = binding.content
         container.removeAllViews()
+        if (key != "pair") pairDeviceManageContainer = null
         when (key) {
             "home" -> showHomeTab(container)
             "alerts" -> showAlertsTab(container)
@@ -2510,6 +2519,9 @@ class DashboardActivity : AppCompatActivity() {
 
     private fun showPairTab(container: FrameLayout) {
         val pair = TabPairBinding.inflate(layoutInflater, container, true)
+        expandedRemoveDeviceId = null
+        pairDeviceManageContainer = pair.deviceManageContainer
+        renderDeviceManageList(pair.deviceManageContainer)
         pair.createCode.setOnClickListener {
             lifecycleScope.launch {
                 runCatching {
@@ -2559,6 +2571,144 @@ class DashboardActivity : AppCompatActivity() {
                     .onFailure { Toast.makeText(this@DashboardActivity, it.message, Toast.LENGTH_LONG).show() }
             }
         }
+    }
+
+    private val dangerColor: Int get() = ContextCompat.getColor(this, R.color.danger_red)
+
+    /** Lists paired devices with a "Remove device" action that expands an inline,
+     *  type-to-confirm panel — mirrors the parent-web Pair tab's device list. */
+    private fun renderDeviceManageList(container: LinearLayout) {
+        container.removeAllViews()
+        if (devices.isEmpty()) {
+            container.addView(
+                TextView(this).apply { text = "No devices paired yet." }
+            )
+            return
+        }
+        devices.forEach { device ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.topMargin = dp(10) }
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setStroke(dp(1), ContextCompat.getColor(this@DashboardActivity, R.color.sidebar_divider))
+                }
+            }
+
+            val main = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            main.addView(
+                TextView(this).apply {
+                    text = "${device.childName.ifBlank { "Child" }} · ${if (device.online) "Online" else "Offline"}"
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                }
+            )
+            val removeButton = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "Remove device"
+                setTextColor(dangerColor)
+                strokeColor = android.content.res.ColorStateList.valueOf(dangerColor)
+            }
+            main.addView(removeButton)
+            row.addView(main)
+
+            if (expandedRemoveDeviceId == device.id) {
+                row.addView(buildRemoveConfirmPanel(device))
+            }
+            removeButton.setOnClickListener {
+                expandedRemoveDeviceId = if (expandedRemoveDeviceId == device.id) null else device.id
+                pairDeviceManageContainer?.let { c -> renderDeviceManageList(c) }
+            }
+
+            container.addView(row)
+        }
+    }
+
+    private fun buildRemoveConfirmPanel(device: DeviceStatus): LinearLayout {
+        val requiredText = device.childName.ifBlank { "DELETE" }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(10) }
+        }
+        panel.addView(
+            TextView(this).apply {
+                text = "This permanently deletes ${device.childName.ifBlank { "this device" }}'s location " +
+                    "history, photos, WhatsApp events, call recordings, usage, alerts, and every other " +
+                    "record. It cannot be undone. The device will also be unpaired automatically."
+                setTextColor(dangerColor)
+            }
+        )
+        val input = addTextInput(panel, "Type \"$requiredText\" to confirm")
+        val errorText = TextView(this).apply {
+            setTextColor(dangerColor)
+            visibility = View.GONE
+        }
+        panel.addView(errorText)
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(8) }
+        }
+        val confirmButton = MaterialButton(this).apply {
+            text = "Permanently delete device"
+            setBackgroundColor(dangerColor)
+        }
+        val cancelButton = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = "Cancel"
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.marginStart = dp(8) }
+            setOnClickListener {
+                expandedRemoveDeviceId = null
+                pairDeviceManageContainer?.let { c -> renderDeviceManageList(c) }
+            }
+        }
+        confirmButton.setOnClickListener {
+            val typed = input.text?.toString().orEmpty().trim()
+            if (!typed.equals(requiredText, ignoreCase = true)) {
+                errorText.text = "Type \"$requiredText\" exactly to confirm."
+                errorText.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
+            val fid = familyId ?: return@setOnClickListener
+            confirmButton.isEnabled = false
+            cancelButton.isEnabled = false
+            lifecycleScope.launch {
+                repo.deletePairedDevice(fid, device.id)
+                    .onSuccess {
+                        expandedRemoveDeviceId = null
+                        Toast.makeText(
+                            this@DashboardActivity,
+                            "Removed ${device.childName.ifBlank { "device" }} and all of its data.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        pairDeviceManageContainer?.let { c -> renderDeviceManageList(c) }
+                    }
+                    .onFailure { e ->
+                        confirmButton.isEnabled = true
+                        cancelButton.isEnabled = true
+                        errorText.text = e.message ?: "Failed to remove device"
+                        errorText.visibility = View.VISIBLE
+                    }
+            }
+        }
+        actions.addView(confirmButton)
+        actions.addView(cancelButton)
+        panel.addView(actions)
+        return panel
     }
 
     data class CardRow(

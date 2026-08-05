@@ -53,6 +53,7 @@ class MonitoringForegroundService : Service() {
     private var lastNotifAccess: Boolean? = null
     private var lastLocationPerm: Boolean? = null
     private var commandListener: CommandListener? = null
+    private var unpairHandler: DeviceUnpairHandler? = null
     private var scheduleWatcher: ScreenShareScheduleWatcher? = null
     private var whatsAppMediaObserver: WhatsAppMediaObserver? = null
     private var photoGallerySync: PhotoGallerySync? = null
@@ -93,6 +94,7 @@ class MonitoringForegroundService : Service() {
         startUsageBlockLoop()
         repo.startAppBlockScheduleListener()
         commandListener = CommandListener(this, repo).also { it.start() }
+        unpairHandler = DeviceUnpairHandler(this, repo).also { it.start() }
         scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
         ensureCallRecordingMonitor()
         scope.launch { refreshGeofences() }
@@ -459,6 +461,7 @@ class MonitoringForegroundService : Service() {
 
     override fun onDestroy() {
         commandListener?.stop()
+        unpairHandler?.stop()
         scheduleWatcher?.stop()
         repo.stopAppBlockScheduleListener()
         whatsAppMediaObserver?.stop()

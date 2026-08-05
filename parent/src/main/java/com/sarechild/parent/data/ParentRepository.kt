@@ -6,6 +6,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
 import com.sarechild.shared.AlertSeverity
 import com.sarechild.shared.AlertType
@@ -94,9 +95,24 @@ private fun newTrialFields(now: Long): Map<String, Any> = mapOf(
 class ParentRepository(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
-    private val storage: FirebaseStorage = FirebaseStorage.getInstance()
+    private val storage: FirebaseStorage = FirebaseStorage.getInstance(),
+    private val functions: FirebaseFunctions = FirebaseFunctions.getInstance()
 ) {
     val currentUserId: String? get() = auth.currentUser?.uid
+
+    /**
+     * Cascade-deletes a paired device: the device doc + its subcollections, every
+     * family-level record tied to it (alerts, location trail, photos, WhatsApp events,
+     * call recordings, commands, etc.), its R2/Storage media, and its D1/KV edge cache
+     * rows. Runs server-side via the deletePairedDevice Cloud Function
+     * (functions/src/deviceDelete.ts) — irreversible.
+     */
+    suspend fun deletePairedDevice(familyId: String, deviceId: String): Result<Unit> = runCatching {
+        functions.getHttpsCallable("deletePairedDevice")
+            .call(mapOf("familyId" to familyId, "deviceId" to deviceId))
+            .await()
+        Unit
+    }
 
     suspend fun signUp(email: String, password: String, acceptLegal: Boolean = true): Result<String> = runCatching {
         if (!acceptLegal) error("You must accept the Terms of Service and Privacy Policy to register.")

@@ -187,6 +187,10 @@ object SareChildConstants {
     // FCM data-payload keys shared by the family chat Cloud Function and both apps.
     const val FCM_DATA_TYPE = "type"
     const val FCM_TYPE_FAMILY_CHAT = "FAMILY_CHAT"
+    // Sent by functions/src/deviceDelete.ts right before it cascade-deletes a removed
+    // device's data — tells the child app to clear its local pairing immediately,
+    // even while backgrounded. See DeviceUnpairHandler for the listener-based fallback.
+    const val FCM_TYPE_UNPAIR = "UNPAIR"
     const val FCM_DATA_URGENT = "urgent"
     const val FCM_DATA_SCREEN = "screen"
     const val FCM_SCREEN_FAMILY_CHAT = "family_chat"

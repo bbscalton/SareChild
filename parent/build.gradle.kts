@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.messaging)
     implementation(libs.firebase.storage)
+    implementation(libs.firebase.functions)
     implementation(libs.play.services.maps)
     implementation(libs.play.services.auth)
     implementation(libs.kotlinx.coroutines.android)

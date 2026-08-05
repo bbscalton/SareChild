@@ -17,6 +17,7 @@ export {
   adminRepairOrphans,
   adminSendTestFcm,
 } from "./admin";
+export { deletePairedDevice } from "./deviceDelete";
 
 if (!admin.apps.length) {
   admin.initializeApp();

@@ -53,7 +53,8 @@ export type AdminAuditAction =
   | "trigger_purge_retention"
   | "set_retention"
   | "repair_orphans"
-  | "send_test_fcm";
+  | "send_test_fcm"
+  | "delete_paired_device";
 
 export async function deleteCollectionRecursive(
   ref: FirebaseFirestore.CollectionReference,

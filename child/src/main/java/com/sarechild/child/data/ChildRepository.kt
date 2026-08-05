@@ -201,6 +201,38 @@ class ChildRepository(
 
     val isPaired: Boolean get() = !familyId.isNullOrBlank() && !deviceId.isNullOrBlank()
 
+    /**
+     * Clears local pairing/consent so [isPaired] goes false and MainActivity routes back
+     * to PairingActivity. Called by [com.sarechild.child.monitoring.DeviceUnpairHandler]
+     * when a parent removes this device from the parent app. Per-feature consent flags are
+     * left as-is — they're only read while paired and get a fresh review on re-pairing.
+     */
+    fun clearPairing() {
+        prefs.edit()
+            .remove(SareChildConstants.PREF_FAMILY_ID)
+            .remove(SareChildConstants.PREF_DEVICE_ID)
+            .remove(SareChildConstants.PREF_CONSENT_DONE)
+            .apply()
+    }
+
+    /**
+     * Direct listener on this device's own doc. Once a parent removes the device,
+     * families/{fid}/devices/{did} no longer exists, so isDeviceMember() in
+     * firestore.rules can't read it — the listener gets PERMISSION_DENIED (not just
+     * "does not exist"), which [DeviceUnpairHandler] treats as the removal signal.
+     */
+    fun listenDeviceDoc(
+        familyId: String,
+        deviceId: String,
+        onChange: (exists: Boolean, error: com.google.firebase.firestore.FirebaseFirestoreException?) -> Unit
+    ): ListenerRegistration {
+        return db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_DEVICES).document(deviceId)
+            .addSnapshotListener { snap, error ->
+                onChange(snap?.exists() == true, error)
+            }
+    }
+
     suspend fun ensureSignedIn() {
         if (auth.currentUser == null) {
             auth.signInAnonymously().await()

@@ -161,6 +161,17 @@ select {
   border: 1px solid rgba(15, 107, 76, 0.25);
 }
 .btn.compact { padding: 0.45rem 0.85rem; font-size: 0.88rem; width: fit-content; }
+.btn.danger { background: var(--danger); color: #fff; }
+.btn.ghost.danger { background: transparent; color: var(--danger); border-color: rgba(179, 38, 30, 0.35); }
+
+.device-manage-list { list-style: none; margin: 0.75rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.device-manage-row { border: 1px solid rgba(15, 107, 76, 0.12); border-radius: 14px; padding: 0.7rem 0.9rem; }
+.device-manage-row-main { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.device-manage-row-main > span:first-child { font-weight: 700; }
+.device-manage-row-main .btn { margin-left: auto; }
+.device-remove-confirm { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px dashed rgba(179, 38, 30, 0.3); display: flex; flex-direction: column; gap: 0.6rem; }
+.device-remove-confirm label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
+.device-remove-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 
 .error, .error-banner { color: var(--danger); }
 .banner {

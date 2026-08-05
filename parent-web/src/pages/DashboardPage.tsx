@@ -168,6 +168,11 @@ export function DashboardPage() {
   const [busy, setBusy] = useState(false)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
 
+  const [removeDeviceId, setRemoveDeviceId] = useState<string | null>(null)
+  const [removeConfirmText, setRemoveConfirmText] = useState('')
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
+
   const [limitDeviceId, setLimitDeviceId] = useState('')
   const [limitPackage, setLimitPackage] = useState('')
   const [limitLabel, setLimitLabel] = useState('')
@@ -546,6 +551,42 @@ export function DashboardPage() {
       setError(e instanceof Error ? e.message : 'Failed to create code')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const requiredRemoveConfirmText = (childNameForDevice: string) =>
+    childNameForDevice.trim() ? childNameForDevice.trim() : 'DELETE'
+
+  const openRemoveDevice = (deviceId: string) => {
+    setRemoveDeviceId(deviceId)
+    setRemoveConfirmText('')
+    setRemoveError(null)
+  }
+
+  const cancelRemoveDevice = () => {
+    setRemoveDeviceId(null)
+    setRemoveConfirmText('')
+    setRemoveError(null)
+  }
+
+  const confirmRemoveDevice = async (device: DeviceStatus) => {
+    if (!familyId) return
+    const required = requiredRemoveConfirmText(device.childName)
+    if (removeConfirmText.trim().toUpperCase() !== required.toUpperCase()) {
+      setRemoveError(`Type "${required}" exactly to confirm.`)
+      return
+    }
+    setRemoveBusy(true)
+    setRemoveError(null)
+    try {
+      await repo.deletePairedDevice(familyId, device.id)
+      setStatusMsg(`Removed ${device.childName || 'device'} and all of its data.`)
+      setRemoveDeviceId(null)
+      setRemoveConfirmText('')
+    } catch (e) {
+      setRemoveError(e instanceof Error ? e.message : 'Failed to remove device')
+    } finally {
+      setRemoveBusy(false)
     }
   }
 
@@ -3258,6 +3299,74 @@ export function DashboardPage() {
                     <p className="code">{pairingCode}</p>
                   </div>
                 )}
+              </div>
+
+              <div className="card">
+                <h3>Your paired devices</h3>
+                <p className="muted small">
+                  Removing a device permanently deletes its location history, photos, WhatsApp
+                  events, call recordings, activity timeline, and every other record tied to it.
+                  This cannot be undone.
+                </p>
+                {devices.length === 0 && <p className="muted">No devices paired yet.</p>}
+                <ul className="meta device-manage-list">
+                  {devices.map((device) => (
+                    <li key={device.id} className="device-manage-row">
+                      <div className="device-manage-row-main">
+                        <span>{device.childName || 'Child'}</span>
+                        <span className={`pill ${device.online ? 'online' : 'offline'}`}>
+                          {device.online ? 'Online' : 'Offline'}
+                        </span>
+                        {removeDeviceId !== device.id && (
+                          <button
+                            className="btn ghost compact danger"
+                            type="button"
+                            onClick={() => openRemoveDevice(device.id)}
+                          >
+                            Remove device
+                          </button>
+                        )}
+                      </div>
+                      {removeDeviceId === device.id && (
+                        <div className="device-remove-confirm">
+                          <p className="error">
+                            This permanently deletes <strong>{device.childName || 'this device'}</strong>
+                            &apos;s location history, photos, WhatsApp events, call recordings,
+                            usage, alerts, and every other record. It cannot be undone. The device
+                            will also be unpaired automatically.
+                          </p>
+                          <label>
+                            Type &quot;{requiredRemoveConfirmText(device.childName)}&quot; to confirm
+                            <input
+                              value={removeConfirmText}
+                              onChange={(e) => setRemoveConfirmText(e.target.value)}
+                              placeholder={requiredRemoveConfirmText(device.childName)}
+                            />
+                          </label>
+                          {removeError && <p className="error">{removeError}</p>}
+                          <div className="device-remove-actions">
+                            <button
+                              className="btn danger"
+                              type="button"
+                              disabled={removeBusy}
+                              onClick={() => void confirmRemoveDevice(device)}
+                            >
+                              {removeBusy ? 'Removing…' : 'Permanently delete device'}
+                            </button>
+                            <button
+                              className="btn ghost compact"
+                              type="button"
+                              disabled={removeBusy}
+                              onClick={cancelRemoveDevice}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
 
               <div className="card form-card">

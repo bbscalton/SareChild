@@ -10,6 +10,7 @@ import com.sarechild.child.FamilyChatActivity
 import com.sarechild.child.MainActivity
 import com.sarechild.child.R
 import com.sarechild.child.data.ChildRepository
+import com.sarechild.child.monitoring.DeviceUnpairHandler
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,12 @@ class ChildFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        if (data[SareChildConstants.FCM_DATA_TYPE] == SareChildConstants.FCM_TYPE_UNPAIR) {
+            // Silent action, not a user-visible notification — a parent just removed this
+            // device. See functions/src/deviceDelete.ts and DeviceUnpairHandler.
+            DeviceUnpairHandler.handleFcmUnpair(this, repo)
+            return
+        }
         val isFamilyChat = data[SareChildConstants.FCM_DATA_TYPE] == SareChildConstants.FCM_TYPE_FAMILY_CHAT
         val urgent = data[SareChildConstants.FCM_DATA_URGENT] == "true"
 

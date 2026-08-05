@@ -22,7 +22,8 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore'
-import { auth, COL, db, WENT_DARK_AFTER_MS } from '../firebase'
+import { httpsCallable } from 'firebase/functions'
+import { auth, COL, db, functions, WENT_DARK_AFTER_MS } from '../firebase'
 import { isProjectAdmin } from './admin'
 import { DEFAULT_KEYWORDS, generatePairingCode } from './helpers'
 import { TOS_VERSION } from './legal'
@@ -357,6 +358,26 @@ export async function recordParentCheckIn(uid: string): Promise<void> {
   ).catch(() => {
     // Best-effort — see recordLogin.
   })
+}
+
+/**
+ * Cascade-deletes a paired device: the device doc + its subcollections, every
+ * family-level record tied to it (alerts, location trail, photos, WhatsApp
+ * events, call recordings, commands, etc.), its R2/Storage media, and its
+ * D1/KV edge cache rows. Runs server-side via the deletePairedDevice Cloud
+ * Function (functions/src/deviceDelete.ts) — client-only Firestore delete
+ * can't reach subcollections or object storage. Irreversible.
+ */
+export async function deletePairedDevice(
+  familyId: string,
+  deviceId: string,
+): Promise<{ ok: boolean; deviceId: string; childName: string }> {
+  const call = httpsCallable<
+    { familyId: string; deviceId: string },
+    { ok: boolean; deviceId: string; childName: string }
+  >(functions, 'deletePairedDevice')
+  const result = await call({ familyId, deviceId })
+  return result.data
 }
 
 export async function createPairingCode(childName: string): Promise<string> {

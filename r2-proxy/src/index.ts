@@ -564,6 +564,84 @@ export default {
       return json({ ok: true, deleted: key });
     }
 
+    // Bulk-deletes every R2 object under a device's media prefix (used by
+    // functions/src/deviceDelete.ts when a parent removes a paired device).
+    // Restricted to the families/{fid}/devices/{did}/ shape so this endpoint can
+    // never be used to wipe an entire family or the whole bucket.
+    if (request.method === "DELETE" && url.pathname.startsWith("/prefix/")) {
+      const secret = env.MEDIA_PURGE_SECRET?.trim();
+      const auth = request.headers.get("authorization") ?? "";
+      if (!secret || auth !== `Bearer ${secret}`) {
+        return json({ error: "unauthorized" }, 401);
+      }
+      const prefix = decodeURIComponent(url.pathname.replace("/prefix/", ""));
+      if (!prefix || !/^families\/[^/]+\/devices\/[^/]+\/$/.test(prefix)) {
+        return json({ error: "invalid prefix" }, 400);
+      }
+      let deleted = 0;
+      let cursor: string | undefined;
+      do {
+        const listed = await env.MEDIA_BUCKET.list({ prefix, cursor, limit: 1000 });
+        if (listed.objects.length) {
+          await env.MEDIA_BUCKET.delete(listed.objects.map((o) => o.key));
+          deleted += listed.objects.length;
+        }
+        cursor = listed.truncated ? listed.cursor : undefined;
+      } while (cursor);
+      return json({ ok: true, prefix, deleted });
+    }
+
+    // Removes a device's D1 heartbeat row + refreshes the family's cached fleet
+    // snapshot after deletePairedDevice() deletes it from Firestore.
+    if (request.method === "POST" && url.pathname === "/edge/purge/device") {
+      const secret = env.MEDIA_PURGE_SECRET?.trim();
+      const auth = request.headers.get("authorization") ?? "";
+      if (!secret || auth !== `Bearer ${secret}`) {
+        return json({ error: "unauthorized" }, 401);
+      }
+      const body = (await request.json().catch(() => ({}))) as {
+        familyId?: string;
+        deviceId?: string;
+      };
+      const familyId = body.familyId?.trim();
+      const deviceId = body.deviceId?.trim();
+      if (!familyId || !deviceId) return json({ error: "familyId and deviceId required" }, 400);
+
+      await env.DB.prepare(
+        `DELETE FROM device_heartbeats WHERE family_id = ? AND device_id = ?`
+      )
+        .bind(familyId, deviceId)
+        .run();
+
+      const agg = await env.DB.prepare(
+        `SELECT COUNT(*) as registered,
+                SUM(CASE WHEN online = 1 THEN 1 ELSE 0 END) as online,
+                MAX(last_heartbeat_ms) as latestHb
+         FROM device_heartbeats WHERE family_id = ?`
+      )
+        .bind(familyId)
+        .first<{ registered: number; online: number; latestHb: number }>();
+
+      const registered = Number(agg?.registered ?? 0);
+      const onlineCount = Number(agg?.online ?? 0);
+      const now = Date.now();
+      await upsertFleetSnapshot(env, {
+        familyId,
+        registeredDevices: registered,
+        onlineDevices: onlineCount,
+        offlineDevices: Math.max(0, registered - onlineCount),
+        guardians: 0,
+        alertsLast24h: 0,
+        criticalAlertsLast24h: 0,
+        pendingCommands: 0,
+        latestHeartbeatMs: Number(agg?.latestHb ?? 0),
+        source: "edge-device-purge",
+        updatedAtMs: now,
+      });
+
+      return json({ ok: true, familyId, deviceId, updatedAtMs: now });
+    }
+
     return json({ error: "not found" }, 404);
   },
 } satisfies ExportedHandler<Env>;
