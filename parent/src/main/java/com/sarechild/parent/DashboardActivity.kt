@@ -247,6 +247,7 @@ class DashboardActivity : AppCompatActivity() {
             listOf(
                 Triple("pair", "Pair a device", "\uD83D\uDCF1"),
                 Triple("guardians", "Guardians", "\uD83D\uDC6A"),
+                Triple("voucher", "Voucher code", "\uD83C\uDFAB"),
             )
         )
         addGroup(
@@ -707,6 +708,7 @@ class DashboardActivity : AppCompatActivity() {
             "guardians" -> showGuardiansTab(container)
             "geofences" -> showGeofenceList(container)
             "pair" -> showPairTab(container)
+            "voucher" -> showVoucherTab(container)
             else -> showHomeTab(container)
         }
     }
@@ -730,6 +732,7 @@ class DashboardActivity : AppCompatActivity() {
         "guardians" -> "Guardians & caregivers"
         "geofences" -> "Safe zones"
         "pair" -> "Pair a device"
+        "voucher" -> "Voucher code"
         else -> "SareChild"
     }
 
@@ -2723,6 +2726,72 @@ class DashboardActivity : AppCompatActivity() {
                 )
             }
         )
+    }
+
+    private fun showVoucherTab(container: FrameLayout) {
+        val scroll = ScrollView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        scroll.addView(root)
+        container.addView(scroll, matchFrameParams())
+
+        root.addView(TextView(this).apply {
+            text = "Redeem voucher"
+            textSize = 20f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text =
+                "Enter a reseller voucher anytime. Each successful redeem adds that plan’s days onto your current paid window (they stack)."
+            setPadding(0, dp(8), 0, dp(12))
+        })
+
+        val statusLine = TextView(this).apply { setPadding(0, 0, 0, dp(12)) }
+        lifecycleScope.launch {
+            val trial = withContext(Dispatchers.IO) { runCatching { repo.getTrialInfo() }.getOrNull() }
+            statusLine.text = when {
+                trial?.hasPaidAccess == true ->
+                    "Paid until ${java.text.DateFormat.getDateTimeInstance().format(trial.paidUntilMs)}. Redeem another code to extend."
+                trial != null && trial.plan == "trial" && trial.trialEndsAt > 0 ->
+                    "On free trial (ends ${java.text.DateFormat.getDateInstance().format(trial.trialEndsAt)}). Redeeming starts paid days."
+                else -> "Redeem a voucher to activate or extend paid access."
+            }
+        }
+        root.addView(statusLine)
+
+        val codeInput = addTextInput(root, "Voucher code (SC-XXXX-XXXX-XXXX)")
+        val resultTv = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)) }
+        root.addView(resultTv)
+        root.addView(MaterialButton(this).apply {
+            text = "Redeem voucher"
+            setOnClickListener {
+                val code = codeInput.text?.toString().orEmpty()
+                if (code.isBlank()) {
+                    resultTv.text = "Enter a voucher code"
+                    return@setOnClickListener
+                }
+                isEnabled = false
+                resultTv.text = "Redeeming…"
+                lifecycleScope.launch {
+                    try {
+                        val (days, until) = withContext(Dispatchers.IO) { repo.redeemVoucher(code) }
+                        resultTv.setTextColor(ContextCompat.getColor(this@DashboardActivity, android.R.color.holo_green_dark))
+                        resultTv.text =
+                            "Added $days days. Paid until ${java.text.DateFormat.getDateTimeInstance().format(until)}. You can redeem another code below."
+                        codeInput.setText("")
+                        // Refresh status line
+                        showSection("voucher")
+                    } catch (e: Exception) {
+                        resultTv.setTextColor(0xFFB3261E.toInt())
+                        resultTv.text = e.message ?: "Redeem failed"
+                    } finally {
+                        isEnabled = true
+                    }
+                }
+            }
+        })
     }
 
     private fun showPairTab(container: FrameLayout) {

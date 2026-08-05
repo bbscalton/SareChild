@@ -49,6 +49,7 @@ type Section =
   | 'livemap'
   | 'map'
   | 'pair'
+  | 'voucher'
   | 'safety'
   | 'whatsapp'
   | 'callrecording'
@@ -225,12 +226,20 @@ export function DashboardPage() {
   const [adminAccounts, setAdminAccounts] = useState<AdminParentAccountRow[] | null>(null)
   const [adminAccountsError, setAdminAccountsError] = useState<string | null>(null)
   const [repairLog, setRepairLog] = useState<string[]>([])
+  const [voucherCode, setVoucherCode] = useState('')
+  const [voucherBusy, setVoucherBusy] = useState(false)
+  const [voucherMsg, setVoucherMsg] = useState<string | null>(null)
+  const [voucherErr, setVoucherErr] = useState<string | null>(null)
+  const [voucherHistory, setVoucherHistory] = useState<
+    Array<{ code: string; planDays: number; paidUntilMs: number; atMs: number }>
+  >([])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const deepLink = params.get('section')
     if (deepLink === 'eventrecorder') setSection('eventrecorder')
     if (deepLink === 'lockscreen') setSection('lockscreen')
+    if (deepLink === 'voucher') setSection('voucher')
   }, [])
 
   useEffect(() => {
@@ -1078,6 +1087,12 @@ export function DashboardPage() {
       items: [
         { id: 'pair', label: 'Pair a device', icon: '\u{1F4F1}' },
         { id: 'guardians', label: 'Guardians', icon: '\u{1F46A}' },
+        {
+          id: 'voucher',
+          label: 'Voucher code',
+          sub: 'Redeem or stack paid days',
+          icon: '\u{1F3AB}',
+        },
       ],
     },
     {
@@ -1156,6 +1171,7 @@ export function DashboardPage() {
     livemap: 'Live map control center',
     map: 'Map & locations',
     pair: 'Pair a device',
+    voucher: 'Voucher code',
     safety: 'Safety checks',
     whatsapp: 'WhatsApp protection',
     callrecording: 'Call recording',
@@ -3579,6 +3595,108 @@ export function DashboardPage() {
                           )}
                         </li>
                       ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+          )}
+
+          {section === 'voucher' && (
+            <section className="stack">
+              <div className="card form-card">
+                <h3>Redeem voucher</h3>
+                <p className="muted">
+                  Enter a code from your SareChild reseller anytime. Each successful redeem{' '}
+                  <strong>adds</strong> that plan&apos;s days onto your current paid window — so a
+                  30-day voucher plus another 30-day voucher becomes 60 days total (stacked from
+                  today or from your existing end date, whichever is later).
+                </p>
+                {trialInfo?.plan === 'paid' && (trialInfo.paidUntilMs ?? 0) > Date.now() ? (
+                  <p className="muted">
+                    Current paid access ends{' '}
+                    <strong>{new Date(trialInfo.paidUntilMs!).toLocaleString()}</strong> (
+                    {Math.max(
+                      0,
+                      Math.ceil((trialInfo.paidUntilMs! - Date.now()) / (24 * 60 * 60 * 1000)),
+                    )}{' '}
+                    day
+                    {Math.max(
+                      0,
+                      Math.ceil((trialInfo.paidUntilMs! - Date.now()) / (24 * 60 * 60 * 1000)),
+                    ) === 1
+                      ? ''
+                      : 's'}{' '}
+                    left). Redeem another code below to extend it.
+                  </p>
+                ) : (
+                  <p className="muted">
+                    You are on a free trial
+                    {trialInfo?.trialEndsAt
+                      ? ` (ends ${new Date(trialInfo.trialEndsAt).toLocaleDateString()})`
+                      : ''}
+                    . Redeeming a voucher switches you to a paid plan and starts/extends paid days.
+                  </p>
+                )}
+                <form
+                  className="voucher-redeem-form"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    if (!voucherCode.trim()) return
+                    setVoucherBusy(true)
+                    setVoucherErr(null)
+                    setVoucherMsg(null)
+                    const submitted = voucherCode.trim().toUpperCase()
+                    void repo
+                      .redeemVoucher(submitted)
+                      .then((res) => {
+                        setVoucherMsg(
+                          `Added ${res.planDays} days. Paid until ${new Date(res.paidUntilMs).toLocaleString()}.`,
+                        )
+                        setVoucherHistory((h) => [
+                          {
+                            code: submitted,
+                            planDays: res.planDays,
+                            paidUntilMs: res.paidUntilMs,
+                            atMs: Date.now(),
+                          },
+                          ...h,
+                        ])
+                        setVoucherCode('')
+                      })
+                      .catch((err) =>
+                        setVoucherErr(err instanceof Error ? err.message : 'Redeem failed'),
+                      )
+                      .finally(() => setVoucherBusy(false))
+                  }}
+                >
+                  <label>
+                    Voucher code
+                    <input
+                      value={voucherCode}
+                      onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
+                      placeholder="SC-XXXX-XXXX-XXXX"
+                      autoComplete="off"
+                      disabled={voucherBusy}
+                    />
+                  </label>
+                  {voucherErr && <p className="error">{voucherErr}</p>}
+                  {voucherMsg && <p className="muted">{voucherMsg}</p>}
+                  <button className="btn primary" type="submit" disabled={voucherBusy || !voucherCode.trim()}>
+                    {voucherBusy ? 'Redeeming…' : 'Redeem voucher'}
+                  </button>
+                </form>
+              </div>
+
+              {voucherHistory.length > 0 && (
+                <div className="card">
+                  <h3>Redeemed this session</h3>
+                  <ul className="meta">
+                    {voucherHistory.map((h) => (
+                      <li key={`${h.code}-${h.atMs}`}>
+                        <code>{h.code}</code> · +{h.planDays} days · until{' '}
+                        {new Date(h.paidUntilMs).toLocaleString()}
+                      </li>
+                    ))}
                   </ul>
                 </div>
               )}
