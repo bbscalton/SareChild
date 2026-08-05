@@ -313,8 +313,17 @@ export function WhatsAppEventsTable({
                     <span className={TYPE_BADGE_CLASS[row.type]}>{row.typeLabel}</span>
                   </td>
                   <td className="wa-col-name">
-                    <strong>{row.name}</strong>
-                    {!row.ev.contactSafe && <span className="pill offline compact">Unknown</span>}
+                    <span className="wa-name-cell">
+                      <strong>{row.name}</strong>
+                      {!row.ev.contactSafe && (
+                        <span
+                          className="pill offline compact"
+                          title="This contact/handle is not on your safe list"
+                        >
+                          Unknown contact
+                        </span>
+                      )}
+                    </span>
                   </td>
                   <td className="wa-col-message">
                     {row.message || <span className="muted">—</span>}

@@ -38,6 +38,13 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
+/** True when [label] is WhatsApp's own "You" sender label (own bubble in a group chat, or a
+ *  MessagingStyle notification's self-authored line) rather than a real contact — an
+ *  unambiguous outgoing signal, independent of whatever `direction` got stored. */
+function isSelfContact(label: string): boolean {
+  return norm(label).replace(/[^a-z]/g, '') === 'you'
+}
+
 export function isChromePreview(text: string): boolean {
   const lower = norm(text)
   if (!lower) return false
@@ -82,12 +89,26 @@ function mediaLabel(t: WhatsAppEventType): string {
   }
 }
 
+/**
+ * Message/call/media TYPE and "unknown contact" are different facts — an event from a contact
+ * who isn't on the safe list is still an incoming message, outgoing message, or call, and
+ * should be labeled as such. Use `!ev.contactSafe` (surfaced as a separate badge/filter, see
+ * `WhatsAppEventsTable`) for the unknown-*contact* concept instead.
+ *
+ * `eventType === 'UNKNOWN_CONTACT'` is a legacy value written by older child app builds that
+ * collapsed the real type into that enum on first sighting of a contact — recover the best
+ * type we can from direction/preview instead of showing a meaningless "Unknown" type forever.
+ */
 export function displayType(ev: WhatsAppEvent): WhatsAppDisplayType {
   if (ev.eventType === 'CALL') return 'CALL'
   if (MEDIA_TYPES.includes(ev.eventType)) return 'MEDIA'
-  if (ev.eventType === 'UNKNOWN_CONTACT') return 'UNKNOWN'
-  if (ev.direction === 'OUT') return 'OUTGOING'
-  return 'INCOMING'
+  if (isSelfContact(ev.contactLabel)) return 'OUTGOING'
+  if (ev.eventType === 'UNKNOWN_CONTACT') {
+    const preview = norm(ev.preview || '')
+    if (CALL_HINTS.some((h) => preview.includes(h))) return 'CALL'
+    return ev.direction === 'OUT' ? 'OUTGOING' : 'INCOMING'
+  }
+  return ev.direction === 'OUT' ? 'OUTGOING' : 'INCOMING'
 }
 
 export function displayTypeLabel(t: WhatsAppDisplayType): string {
@@ -152,7 +173,13 @@ export function parseEventDisplay(ev: WhatsAppEvent): { name: string; message: s
   return { name: label, message: '' }
 }
 
+/**
+ * The "Unknown" chip means unknown *contacts* (not on the parent's safe list) — matching what
+ * the parent actually wants to review — not an "untyped" event, which should now never occur
+ * for new events (see `displayType`).
+ */
 export function eventMatchesTypeFilter(ev: WhatsAppEvent, filter: WhatsAppDisplayType | 'ALL'): boolean {
   if (filter === 'ALL') return true
+  if (filter === 'UNKNOWN') return !ev.contactSafe
   return displayType(ev) === filter
 }

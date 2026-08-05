@@ -313,8 +313,12 @@ object WhatsAppMonitor {
         if (message.length < 2) return null
         if (isChromeDump(message)) return null
 
-        val direction = inferDirectionFromAlignment(message, alignmentHints)
-            ?: inferDirection(trimmed, lines, message, messageIdx)
+        val direction = if (isSelfContact(contact)) {
+            "OUT"
+        } else {
+            inferDirectionFromAlignment(message, alignmentHints)
+                ?: inferDirection(trimmed, lines, message, messageIdx)
+        }
         return ParsedWhatsAppScreen(
             contact = contact,
             message = message,
@@ -354,6 +358,14 @@ object WhatsAppMonitor {
         val fallback = value.trim().lowercase().filter { it.isLetterOrDigit() }
         return fallback.ifBlank { "unknown" }
     }
+
+    /**
+     * True when [contact] is WhatsApp's own "You" sender label rather than a real contact/handle
+     * (e.g. the sender name WhatsApp shows above the child's own bubble in a group chat, or a
+     * MessagingStyle notification's self-authored line). This is an unambiguous outgoing signal —
+     * always trust it over alignment/status-word heuristics, which can miss some layouts.
+     */
+    fun isSelfContact(contact: String): Boolean = normalizeIdentifier(contact) == "you"
 
     private fun digitsOnly(value: String): String = value.filter { it.isDigit() }
 
@@ -448,16 +460,19 @@ object WhatsAppMonitor {
 
         val safe = isKnownSafe(repo, normalized)
         val firstSighting = !safe && isFirstSighting(context, "$packageName|$normalized")
-        val effectiveType = if (firstSighting) WhatsAppEventType.UNKNOWN_CONTACT else contentType
         val isMediaType = contentType in MEDIA_TYPES
         val riskFlag = !safe && isMediaType
 
+        // Message/call/media TYPE and "unknown contact" are independent facts — never collapse
+        // the real content type into a synthetic UNKNOWN_CONTACT type just because this is the
+        // first time we've seen this contact/handle. "Unknown contact" is fully captured by
+        // contactSafe=false (+ riskFlag for media) on the very same event.
         repo.postWhatsAppEvent(
             WhatsAppEvent(
-                eventType = effectiveType,
+                eventType = contentType,
                 contactLabel = contactRaw,
                 contactSafe = safe,
-                direction = "IN",
+                direction = if (isSelfContact(contactRaw)) "OUT" else "IN",
                 preview = previewBody,
                 riskScore = riskScore.takeIf { it > 0 },
                 riskFlag = riskFlag,

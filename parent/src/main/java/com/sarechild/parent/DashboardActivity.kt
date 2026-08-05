@@ -870,6 +870,35 @@ class DashboardActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Human-friendly message/call/media TYPE for a WhatsApp event — independent of whether the
+     * contact is on the safe list (see the separate "Unknown contact" tag appended by the
+     * caller). `UNKNOWN_CONTACT` is a legacy value written by older child app builds that
+     * collapsed the real type on first sighting of a contact; recover the best type we can
+     * instead of showing that raw enum name to a parent.
+     */
+    private fun whatsAppTypeLabel(ev: WhatsAppEvent): String {
+        val isSelf = ev.contactLabel.trim().equals("you", ignoreCase = true)
+        return when {
+            ev.eventType == WhatsAppEventType.CALL -> "Call"
+            ev.eventType in listOf(
+                WhatsAppEventType.IMAGE, WhatsAppEventType.VOICE_NOTE,
+                WhatsAppEventType.VIDEO, WhatsAppEventType.DOCUMENT
+            ) -> ev.eventType.name.lowercase().replace('_', ' ')
+            isSelf -> "Outgoing"
+            ev.eventType == WhatsAppEventType.UNKNOWN_CONTACT -> {
+                val preview = ev.preview.orEmpty().lowercase()
+                when {
+                    listOf("voice call", "video call", "calling", "call ended").any { preview.contains(it) } -> "Call"
+                    ev.direction == "OUT" -> "Outgoing"
+                    else -> "Incoming"
+                }
+            }
+            ev.direction == "OUT" -> "Outgoing"
+            else -> "Incoming"
+        }
+    }
+
     private fun showWhatsAppTab(container: FrameLayout) {
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply {
@@ -977,7 +1006,8 @@ class DashboardActivity : AppCompatActivity() {
         filtered.take(50).forEach { ev ->
             root.addView(TextView(this).apply {
                 text = buildString {
-                    append("${ev.contactLabel} · ${ev.eventType.name} · ${ev.direction}")
+                    append("${ev.contactLabel} · ${whatsAppTypeLabel(ev)}")
+                    if (!ev.contactSafe) append(" · Unknown contact")
                     append("\n${relativeTime(ev.createdAtMs)}")
                     ev.preview?.let { append("\n\"$it\"") }
                     if (ev.riskFlag) append("\n⚠ Review recommended")

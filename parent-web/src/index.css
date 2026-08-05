@@ -1310,6 +1310,13 @@ select {
 .wa-col-message { min-width: 200px; max-width: 420px; word-break: break-word; }
 .wa-col-date { white-space: nowrap; }
 
+.wa-name-cell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .wa-sort-btn {
   border: none;
   background: none;
