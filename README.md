@@ -141,11 +141,30 @@ cd parent-web && npm install && npm run build && cd .. && firebase deploy --only
 **Public APK downloads** are served from the same Worker at `GET /downloads/parent.apk` and `GET /downloads/child.apk`, backed by R2 objects at `downloads/parent.apk` / `downloads/child.apk` in the `luscsl-uploads` bucket. Upload/update a build with:
 
 ```bash
+# Debug builds (historical default for direct sideload):
+./gradlew :parent:assembleDebug :child:assembleDebug
+npx wrangler r2 object put luscsl-uploads/downloads/parent.apk --file parent/build/outputs/apk/debug/parent-debug.apk --remote
+npx wrangler r2 object put luscsl-uploads/downloads/child.apk --file child/build/outputs/apk/debug/child-debug.apk --remote
+
+# Release builds (when a release keystore is configured):
 npx wrangler r2 object put luscsl-uploads/downloads/parent.apk --file parent/build/outputs/apk/release/parent-release.apk --remote
 npx wrangler r2 object put luscsl-uploads/downloads/child.apk --file child/build/outputs/apk/release/child-release.apk --remote
 ```
 
 The marketing site's download buttons (`marketing/src/config.ts`) point at those two Worker URLs; flip `APKS_ARE_RELEASE_SIGNED` there once you're uploading release-signed (not debug) builds.
+
+**Media purge secret (required for remove-device R2 cleanup)** — `deletePairedDevice` skips R2/edge cache deletion unless both sides share the same bearer token:
+
+```bash
+# 1) Worker (sarechild-media-proxy)
+cd r2-proxy
+npx wrangler secret put MEDIA_PURGE_SECRET --name sarechild-media-proxy
+
+# 2) Cloud Functions — copy functions/.env.example → functions/.env, paste the same value as R2_MEDIA_PURGE_SECRET, then:
+cd ../functions && firebase deploy --only functions
+```
+
+Smoke-test (safe — uses a non-existent prefix): `DELETE /prefix/families/test/devices/none/` with `Authorization: Bearer <secret>` should return `{ ok: true, deleted: 0 }`; without auth → 401.
 
 Deploy/update the proxy Worker:
 
