@@ -1151,13 +1151,33 @@ class DashboardActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(6))
         })
         root.addView(TextView(this).apply {
-            text = "A warm check-in goes a long way. Share encouragement, photos, or a quick voice note with your child and every guardian."
+            text = "Every paired device has its own private conversation — a warm check-in goes a long way."
             setPadding(0, 0, 0, dp(12))
         })
-        root.addView(MaterialButton(this@DashboardActivity).apply {
-            text = "Open family chat"
-            setOnClickListener { startActivity(Intent(this@DashboardActivity, FamilyChatActivity::class.java)) }
-        })
+        if (devices.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "Pair a device to start chatting."
+                setPadding(0, 0, 0, dp(8))
+                setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+            })
+        } else {
+            devices.forEach { device ->
+                root.addView(
+                    MaterialButton(this@DashboardActivity).apply {
+                        text = "Open chat with ${device.childName}"
+                        setOnClickListener {
+                            startActivity(
+                                Intent(this@DashboardActivity, FamilyChatActivity::class.java)
+                                    .putExtra(SareChildConstants.EXTRA_CHAT_DEVICE_ID, device.id)
+                            )
+                        }
+                    },
+                    LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        topMargin = dp(6)
+                    }
+                )
+            }
+        }
     }
 
     /** One-glance parent home: a rich card per child with a map pin, address, and quick actions. */
@@ -1349,7 +1369,10 @@ class DashboardActivity : AppCompatActivity() {
             }
 
             b.actionChat.setOnClickListener {
-                startActivity(Intent(this@DashboardActivity, FamilyChatActivity::class.java))
+                startActivity(
+                    Intent(this@DashboardActivity, FamilyChatActivity::class.java)
+                        .putExtra(SareChildConstants.EXTRA_CHAT_DEVICE_ID, d.id)
+                )
             }
             val locked = isDeviceLocked(d.id)
             b.actionLock.text = if (locked) "Unlock" else "Lock"
@@ -2325,6 +2348,45 @@ class DashboardActivity : AppCompatActivity() {
                         setPadding(0, dp(6), 0, dp(2))
                     }
                 )
+            }
+        }
+
+        if (guardians.isNotEmpty() && devices.isNotEmpty()) {
+            root.addView(sectionHeader("Chat access"))
+            root.addView(
+                TextView(this).apply {
+                    text = "Choose which device conversations each guardian can see. You (the parent) always see every conversation."
+                    setPadding(0, 0, 0, dp(8))
+                    setTextColor(ContextCompat.getColor(this@DashboardActivity, R.color.text_secondary))
+                }
+            )
+            guardians.forEach { g ->
+                root.addView(
+                    TextView(this).apply {
+                        text = g.email.ifBlank { g.uid }
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setPadding(0, dp(10), 0, dp(2))
+                    }
+                )
+                devices.forEach { device ->
+                    val assigned = device.assignedGuardianUids.contains(g.uid)
+                    root.addView(
+                        android.widget.CheckBox(this).apply {
+                            text = device.childName
+                            isChecked = assigned
+                            setOnCheckedChangeListener { _, checked ->
+                                val fid = familyId ?: return@setOnCheckedChangeListener
+                                lifecycleScope.launch {
+                                    runCatching {
+                                        repo.setGuardianAssignedToDevice(fid, device.id, g.uid, checked)
+                                    }.onFailure {
+                                        Toast.makeText(this@DashboardActivity, it.message, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
             }
         }
 

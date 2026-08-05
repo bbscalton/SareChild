@@ -161,10 +161,26 @@ export function AdminFeaturesPanel({
               }
             />
           </label>
+          <label>
+            Default chat video length (seconds)
+            <input
+              type="number"
+              min={30}
+              max={600}
+              value={config.defaultMaxChatVideoSeconds}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  defaultMaxChatVideoSeconds: Math.min(600, Math.max(30, Number(e.target.value) || 180)),
+                })
+              }
+            />
+          </label>
         </div>
         <p className="muted small">
-          Families without <code>retentionDays</code> inherit this default (2). Per-account overrides on Accounts →
-          Retention.
+          Families without <code>retentionDays</code> inherit this default (2). Families without{' '}
+          <code>maxChatVideoSeconds</code> inherit the chat video default (180s / 3 min) — child devices offer 1/2/3
+          minute options clamped to whichever is lower. Per-account overrides on Accounts → Retention / Chat video.
         </p>
         {config.updatedAtMs > 0 && (
           <p className="muted small">Last updated {new Date(config.updatedAtMs).toLocaleString()} by {config.updatedBy ?? 'admin'}</p>

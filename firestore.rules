@@ -50,6 +50,24 @@ service cloud.firestore {
           == request.auth.uid;
     }
 
+    // Per-device chat scoping: guardians must NOT see every device's conversation —
+    // only the ones the parent has explicitly assigned them to via
+    // devices/{deviceId}.assignedGuardianUids. The family owner always sees every thread.
+    function deviceDoc(familyId, deviceId) {
+      return get(/databases/$(database)/documents/families/$(familyId)/devices/$(deviceId)).data;
+    }
+
+    function isAssignedGuardian(familyId, deviceId) {
+      return isFamilyGuardian(familyId)
+        && request.auth.uid in deviceDoc(familyId, deviceId).get('assignedGuardianUids', []);
+    }
+
+    function canAccessDeviceChat(familyId, deviceId) {
+      return isFamilyOwner(familyId)
+        || isDeviceMember(familyId, deviceId)
+        || isAssignedGuardian(familyId, deviceId);
+    }
+
     match /parentProfiles/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
       allow create: if signedIn()
@@ -97,6 +115,14 @@ service cloud.firestore {
           allow read: if isFamilyGuardian(familyId);
           allow create, update: if isDeviceMember(familyId, deviceId);
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        }
+
+        // Per-device family chat thread — see canAccessDeviceChat() above. Only the
+        // owner, this device's own child, or a guardian this device was assigned to
+        // may read/send here (a caregiver guardian with no assignment gets nothing).
+        match /chatMessages/{messageId} {
+          allow read: if canAccessDeviceChat(familyId, deviceId);
+          allow create: if canAccessDeviceChat(familyId, deviceId);
         }
       }
 

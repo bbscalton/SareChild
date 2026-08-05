@@ -93,7 +93,14 @@ data class DeviceStatus(
     val offlineCallMaxAttempts: Int = 0,
     val activeSession: String? = null,
     val latestFrameUrl: String? = null,
-    val todayScreenMinutes: Int = 0
+    val todayScreenMinutes: Int = 0,
+    /** Guardian uids the parent has explicitly assigned to this device's chat thread.
+     *  Empty means only the family owner (parent) can see/use this thread — a guardian
+     *  needs to be added here before they can read or send in it. */
+    val assignedGuardianUids: List<String> = emptyList(),
+    /** uid -> last-read timestamp (ms) for this device's chat thread, used to compute
+     *  per-participant unread badges (parent, each assigned guardian, and the child). */
+    val chatReads: Map<String, Long> = emptyMap()
 )
 
 data class FamilyAlert(
@@ -695,6 +702,14 @@ data class WeeklyDigest(
     val createdAtMs: Long = System.currentTimeMillis()
 )
 
+/**
+ * One message in a device's per-device family chat thread
+ * (`families/{familyId}/devices/{deviceId}/chatMessages/{msgId}`). Every paired device has
+ * its own isolated thread — [deviceId] is always that thread's device, never used to imply
+ * a shared/family-wide conversation. Guardians only see this thread if their uid is in that
+ * device's `assignedGuardianUids` (see [DeviceStatus.assignedGuardianUids]); the family owner
+ * (parent) always sees every device's thread.
+ */
 data class FamilyChatMessage(
     val id: String = "",
     val senderUid: String = "",
@@ -703,7 +718,10 @@ data class FamilyChatMessage(
     val deviceId: String? = null,
     val text: String? = null,
     val mediaUrl: String? = null,
-    val mediaType: String? = null, // image | audio
+    val mediaPath: String? = null,
+    val mediaType: String? = null, // image | audio | video
+    /** Playback length for audio/video notes, in milliseconds. */
+    val durationMs: Long? = null,
     val createdAtMs: Long = System.currentTimeMillis()
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
@@ -713,7 +731,9 @@ data class FamilyChatMessage(
         "deviceId" to deviceId,
         "text" to text,
         "mediaUrl" to mediaUrl,
+        "mediaPath" to mediaPath,
         "mediaType" to mediaType,
+        "durationMs" to durationMs,
         "createdAtMs" to createdAtMs
     )
 }

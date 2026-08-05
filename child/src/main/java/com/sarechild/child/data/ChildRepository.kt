@@ -1184,10 +1184,17 @@ class ChildRepository(
         }.getOrDefault(cached)
     }
 
+    /** This device's own chat thread — families/{fid}/devices/{did}/chatMessages. A child
+     *  device only ever has one thread (its own), so no deviceId parameter is needed here. */
+    private fun deviceChatCollection(fid: String, did: String) =
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_CHAT_MESSAGES)
+
     fun listenFamilyChat(onMessages: (List<FamilyChatMessage>) -> Unit): ListenerRegistration? {
         val fid = familyId ?: return null
-        return db.collection(SareChildConstants.COL_FAMILIES).document(fid)
-            .collection(SareChildConstants.COL_FAMILY_CHAT)
+        val did = deviceId ?: return null
+        return deviceChatCollection(fid, did)
             .orderBy("createdAtMs", Query.Direction.ASCENDING)
             .limit(300)
             .addSnapshotListener { snap, _ ->
@@ -1197,10 +1204,12 @@ class ChildRepository(
                         senderUid = doc.getString("senderUid") ?: "",
                         senderName = doc.getString("senderName") ?: "Family",
                         senderRole = doc.getString("senderRole") ?: "GUARDIAN",
-                        deviceId = doc.getString("deviceId"),
+                        deviceId = doc.getString("deviceId") ?: did,
                         text = doc.getString("text"),
                         mediaUrl = doc.getString("mediaUrl"),
+                        mediaPath = doc.getString("mediaPath"),
                         mediaType = doc.getString("mediaType"),
+                        durationMs = doc.getLong("durationMs"),
                         createdAtMs = doc.getLong("createdAtMs") ?: 0L
                     )
                 } ?: emptyList()
@@ -1211,7 +1220,9 @@ class ChildRepository(
     suspend fun sendFamilyChatMessage(
         text: String? = null,
         mediaUrl: String? = null,
-        mediaType: String? = null
+        mediaPath: String? = null,
+        mediaType: String? = null,
+        durationMs: Long? = null
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -1223,12 +1234,36 @@ class ChildRepository(
             deviceId = did,
             text = text?.trim()?.ifBlank { null },
             mediaUrl = mediaUrl,
-            mediaType = mediaType
+            mediaPath = mediaPath,
+            mediaType = mediaType,
+            durationMs = durationMs
         )
-        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
-            .collection(SareChildConstants.COL_FAMILY_CHAT)
-            .add(msg.toMap())
-            .await()
+        deviceChatCollection(fid, did).add(msg.toMap()).await()
+        markChatRead()
+    }
+
+    /** Records that the child has seen this thread up to now — drives the parent/guardian
+     *  unread badge math (see DeviceStatus.chatReads). */
+    suspend fun markChatRead() {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val uid = auth.currentUser?.uid ?: return
+        runCatching {
+            db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+                .collection(SareChildConstants.COL_DEVICES).document(did)
+                .update("${SareChildConstants.FIELD_CHAT_READS}.$uid", System.currentTimeMillis())
+                .await()
+        }
+    }
+
+    /** Family-level (TCD-configurable) cap on chat video note length, seconds. Falls back to
+     *  the product default (180s / 3 min) if the family doc has no override. */
+    suspend fun getMaxChatVideoSeconds(): Int {
+        val fid = familyId ?: return SareChildConstants.CHAT_VIDEO_SECONDS_DEFAULT_MAX
+        return runCatching {
+            val doc = db.collection(SareChildConstants.COL_FAMILIES).document(fid).get().await()
+            (doc.getLong(SareChildConstants.FIELD_MAX_CHAT_VIDEO_SECONDS))?.toInt()
+        }.getOrNull() ?: SareChildConstants.CHAT_VIDEO_SECONDS_DEFAULT_MAX
     }
 
     suspend fun setChildChatPresence(online: Boolean) {

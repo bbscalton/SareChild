@@ -167,6 +167,8 @@ function AccountDrawer({
     row.status === 'at_risk' ? 'at_risk' : row.status === 'blocked' ? 'blocked' : 'active',
   )
   const [retentionDays, setRetentionDays] = useState('2')
+  const [chatVideoSecondsCurrent, setChatVideoSecondsCurrent] = useState<number | null>(null)
+  const [chatVideoSeconds, setChatVideoSeconds] = useState('180')
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -187,6 +189,8 @@ function AccountDrawer({
     setRetentionCurrent(null)
     setOverrides(null)
     setRetentionDays('2')
+    setChatVideoSecondsCurrent(null)
+    setChatVideoSeconds('180')
 
     void (async () => {
       try {
@@ -198,10 +202,15 @@ function AccountDrawer({
         setQuota(q)
         setOverrides(ov)
         if (row.familyId) {
-          const days = await adminRepo.loadFamilyRetentionDays(row.familyId)
+          const [days, chatSecs] = await Promise.all([
+            adminRepo.loadFamilyRetentionDays(row.familyId),
+            adminRepo.loadFamilyMaxChatVideoSeconds(row.familyId),
+          ])
           if (!cancelled) {
             setRetentionCurrent(days)
             setRetentionDays(String(days))
+            setChatVideoSecondsCurrent(chatSecs)
+            setChatVideoSeconds(String(chatSecs))
           }
         }
       } catch (e) {
@@ -311,6 +320,29 @@ function AccountDrawer({
     }
   }
 
+  const runAdjustChatVideoLimit = async () => {
+    const seconds = Number(chatVideoSeconds)
+    if (!row.familyId) {
+      onError('Account has no familyId.')
+      return
+    }
+    if (!Number.isFinite(seconds) || seconds < 30 || seconds > 600) {
+      onError('Chat video length must be between 30 and 600 seconds.')
+      return
+    }
+    onBusy(true)
+    onError(null)
+    try {
+      const result = await adminRepo.adminSetChatVideoLimit(row.uid, seconds)
+      onStatus(`Chat video length set to ${result.maxChatVideoSeconds}s for family ${result.familyId.slice(0, 10)}…`)
+      setChatVideoSecondsCurrent(result.maxChatVideoSeconds)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Chat video length update failed')
+    } finally {
+      onBusy(false)
+    }
+  }
+
   const runRevoke = async () => {
     if (!window.confirm(`Force sign-out ${row.email || row.uid}? Revokes refresh tokens and clears FCM.`)) return
     onBusy(true)
@@ -389,6 +421,18 @@ function AccountDrawer({
               <span className="tcd-acct-detail-label">Retention</span>
               <span className="tcd-acct-detail-value">
                 {detailLoading ? '…' : retentionCurrent != null ? `${retentionCurrent} days` : row.familyId ? '—' : 'No family'}
+              </span>
+            </div>
+            <div className="tcd-acct-detail-chip">
+              <span className="tcd-acct-detail-label">Chat video cap</span>
+              <span className="tcd-acct-detail-value">
+                {detailLoading
+                  ? '…'
+                  : chatVideoSecondsCurrent != null
+                    ? `${chatVideoSecondsCurrent}s`
+                    : row.familyId
+                      ? '—'
+                      : 'No family'}
               </span>
             </div>
             <div className="tcd-acct-detail-chip tcd-acct-detail-chip-wide">
@@ -491,6 +535,38 @@ function AccountDrawer({
                   Set retention
                 </button>
               </div>
+            </div>
+
+            <div className="tcd-acct-form-block">
+              <label className="tcd-acct-form-label">
+                Max chat video length
+                {chatVideoSecondsCurrent != null && (
+                  <span className="tcd-acct-form-hint">Current: {chatVideoSecondsCurrent}s</span>
+                )}
+              </label>
+              <div className="tcd-acct-form-row">
+                <input
+                  type="number"
+                  min={30}
+                  max={600}
+                  placeholder="Seconds (30–600)"
+                  value={chatVideoSeconds}
+                  onChange={(e) => setChatVideoSeconds(e.target.value)}
+                  className="tcd-acct-input"
+                  disabled={!row.familyId}
+                />
+                <button
+                  className="btn btn-primary compact"
+                  type="button"
+                  disabled={busy || !row.familyId}
+                  onClick={() => void runAdjustChatVideoLimit()}
+                >
+                  Set video limit
+                </button>
+              </div>
+              <p className="tcd-acct-section-hint">
+                Child devices offer 1/2/3 minute video-note options, clamped to this family's cap.
+              </p>
             </div>
           </section>
 

@@ -22,7 +22,14 @@ object SareChildConstants {
     const val COL_SAFE_CONTACTS = "safeContacts"
     const val COL_APP_LIMITS = "appLimits"
     const val COL_APP_BLOCK_SCHEDULES = "appBlockSchedules"
+    /** Legacy family-wide single thread (families/{id}/familyChat) — superseded by
+     *  per-device threads at COL_CHAT_MESSAGES nested under devices/{deviceId}. Kept only
+     *  so the retention purge can still clean up any pre-migration rows. */
     const val COL_FAMILY_CHAT = "familyChat"
+    /** Per-device chat thread: families/{id}/devices/{deviceId}/chatMessages/{msgId}.
+     *  Every paired device gets its own isolated conversation — adding more devices to a
+     *  family never merges anyone into a shared thread. */
+    const val COL_CHAT_MESSAGES = "chatMessages"
     const val COL_SAFETY_SETTINGS = "safetySettings"
     const val COL_GUARDIAN_INVITES = "guardianInvites"
     const val COL_SCREEN_SHARE_SCHEDULES = "screenShareSchedules"
@@ -233,4 +240,21 @@ object SareChildConstants {
     const val EXTRA_LIVE_RECORD = "live_record"
     const val LIVE_VIEW_NOTIFICATION_ID = 1011
     const val NOTIFICATION_CHANNEL_LIVE_VIEW = "live_viewing"
+
+    // ---------- Family chat (per-device) ----------
+    /** Which paired device a parent/guardian chat push or deep-link should open. */
+    const val EXTRA_CHAT_DEVICE_ID = "chat_device_id"
+    /** Child-selectable video note lengths (seconds), clamped to the family's TCD-configurable max. */
+    val CHAT_VIDEO_SECONDS_OPTIONS = listOf(60, 120, 180)
+    const val CHAT_VIDEO_SECONDS_DEFAULT_MAX = 180
+    const val CHAT_VIDEO_SECONDS_MIN = 30
+    const val CHAT_VIDEO_SECONDS_ADMIN_MAX = 600
+    /** families/{id}.maxChatVideoSeconds field name — TCD/admin can raise this per account. */
+    const val FIELD_MAX_CHAT_VIDEO_SECONDS = "maxChatVideoSeconds"
+    /** devices/{id}.assignedGuardianUids — parent-editable allowlist scoping which guardians
+     *  may see/participate in that device's chat thread. Empty/absent = parent (owner) only. */
+    const val FIELD_ASSIGNED_GUARDIAN_UIDS = "assignedGuardianUids"
+    /** devices/{id}.chatReads — map of uid -> last-read timestamp (ms), used to compute
+     *  per-participant unread badges for that device's thread. */
+    const val FIELD_CHAT_READS = "chatReads"
 }

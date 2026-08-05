@@ -52,6 +52,7 @@ export type AdminAuditAction =
   | "trigger_purge_trials"
   | "trigger_purge_retention"
   | "set_retention"
+  | "set_chat_video_limit"
   | "repair_orphans"
   | "send_test_fcm"
   | "delete_paired_device";
@@ -76,6 +77,10 @@ async function deleteDeviceNestedSubcollections(
   const devices = await familyRef.collection("devices").get();
   for (const device of devices.docs) {
     await deleteCollectionRecursive(device.ref.collection("installedApps"));
+    await deleteCollectionRecursive(device.ref.collection("photos"));
+    await deleteCollectionRecursive(device.ref.collection("activityEvents"));
+    // Per-device family chat thread (families/{id}/devices/{deviceId}/chatMessages).
+    await deleteCollectionRecursive(device.ref.collection("chatMessages"));
   }
 }
 
@@ -573,6 +578,61 @@ export const adminSetRetention = onCall({ cors: true }, async (request) => {
   });
 
   return { ok: true, familyId, retentionDays: days };
+});
+
+/**
+ * TCD-only override for how long a family's child device may record a chat video note
+ * (default 180s / 3 min, selectable 1/2/3 min in the child app). Mirrors adminSetRetention
+ * but writes families/{id}.maxChatVideoSeconds instead of retentionDays.
+ */
+export const adminSetChatVideoLimit = onCall({ cors: true }, async (request) => {
+  const adminEmail = assertProjectAdmin(request);
+  const uid = String(request.data?.uid ?? "").trim();
+  const familyIdArg = String(request.data?.familyId ?? "").trim();
+  const maxChatVideoSeconds = Number(request.data?.maxChatVideoSeconds);
+
+  if (!Number.isFinite(maxChatVideoSeconds)) {
+    throw new HttpsError("invalid-argument", "maxChatVideoSeconds (30–600) is required.");
+  }
+  const seconds = Math.round(Math.min(600, Math.max(30, maxChatVideoSeconds)));
+
+  let familyId = familyIdArg;
+  let targetEmail: string | null = null;
+
+  if (uid) {
+    const { data, email } = await loadTargetProfile(uid);
+    targetEmail = email;
+    familyId =
+      familyId ||
+      (data.ownedFamilyId as string | undefined) ||
+      (data.familyId as string | undefined) ||
+      "";
+  }
+
+  if (!familyId) {
+    throw new HttpsError("invalid-argument", "uid or familyId is required.");
+  }
+
+  const familySnap = await db.collection("families").doc(familyId).get();
+  if (!familySnap.exists) {
+    throw new HttpsError("not-found", `Family ${familyId} not found.`);
+  }
+
+  await db.collection("families").doc(familyId).set(
+    { maxChatVideoSeconds: seconds, maxChatVideoSecondsUpdatedAtMs: Date.now() },
+    { merge: true }
+  );
+
+  await writeAuditLog({
+    action: "set_chat_video_limit",
+    adminEmail,
+    targetUid: uid || familySnap.get("parentUid") || familyId,
+    targetEmail: targetEmail ?? (familySnap.get("parentEmail") as string | undefined) ?? null,
+    detail: `Set maxChatVideoSeconds=${seconds} on family ${familyId}`,
+    meta: { familyId, maxChatVideoSeconds: seconds },
+  });
+
+  return { ok: true, familyId, maxChatVideoSeconds: seconds };
 });
 
 export const adminTriggerPurgeRetention = onCall({ cors: true }, async (request) => {

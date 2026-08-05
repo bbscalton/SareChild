@@ -517,6 +517,10 @@ export function observeDevices(
           activeSession: (data.activeSession as string | null) ?? null,
           latestFrameUrl: (data.latestFrameUrl as string | null) ?? null,
           todayScreenMinutes: Number(data.todayScreenMinutes ?? 0),
+          assignedGuardianUids: Array.isArray(data.assignedGuardianUids)
+            ? (data.assignedGuardianUids as string[])
+            : [],
+          chatReads: (data.chatReads as Record<string, number> | undefined) ?? {},
         } satisfies DeviceStatus
       })
       onData(devices)
@@ -2001,18 +2005,24 @@ export async function runTcdAutoRepair(familyId: string): Promise<string[]> {
   return fixes
 }
 
-// ---------- Family chat ----------
+// ---------- Per-device family chat ----------
+// Every paired device has its own isolated thread at
+// families/{fid}/devices/{deviceId}/chatMessages/{msgId}. The parent (family owner) can see
+// every device's thread; guardians only see threads for devices the parent has assigned to them
+// (see setGuardianAssignedToDevice + firestore.rules). This intentionally supersedes the old
+// family-wide `familyChat` collection so pairing a second device never merges conversations.
 
-export function observeFamilyChat(
+function deviceChatCollectionRef(familyId: string, deviceId: string) {
+  return collection(db, COL.families, familyId, COL.devices, deviceId, COL.chatMessages)
+}
+
+export function observeDeviceChat(
   familyId: string,
+  deviceId: string,
   onData: (rows: FamilyChatMessage[]) => void,
   onError?: (err: Error) => void,
 ): () => void {
-  const q = query(
-    collection(db, COL.families, familyId, COL.familyChat),
-    orderBy('createdAtMs', 'asc'),
-    limit(300),
-  )
+  const q = query(deviceChatCollectionRef(familyId, deviceId), orderBy('createdAtMs', 'asc'), limit(300))
   return onSnapshot(
     q,
     (snap) => {
@@ -2023,10 +2033,12 @@ export function observeFamilyChat(
           senderUid: (data.senderUid as string) || '',
           senderName: (data.senderName as string) || 'Family',
           senderRole: ((data.senderRole as FamilyChatMessage['senderRole']) || 'GUARDIAN'),
-          deviceId: (data.deviceId as string | null) ?? null,
+          deviceId: (data.deviceId as string | null) ?? deviceId,
           text: (data.text as string | null) ?? null,
           mediaUrl: (data.mediaUrl as string | null) ?? null,
-          mediaType: (data.mediaType as string | null) ?? null,
+          mediaPath: (data.mediaPath as string | null) ?? null,
+          mediaType: (data.mediaType as FamilyChatMessage['mediaType']) ?? null,
+          durationMs: data.durationMs == null ? null : Number(data.durationMs),
           createdAtMs: Number(data.createdAtMs ?? 0),
         } satisfies FamilyChatMessage
       })
@@ -2036,19 +2048,137 @@ export function observeFamilyChat(
   )
 }
 
-export async function sendFamilyChatMessage(familyId: string, text: string): Promise<void> {
+/** Lightweight per-device unread counter for the chat sidebar — counts recent messages from other
+ *  participants created after this guardian/parent's last-read timestamp for that device. */
+export function observeDeviceChatUnreadCount(
+  familyId: string,
+  deviceId: string,
+  onCount: (count: number) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const uid = auth.currentUser?.uid
+  let lastRead = 0
+  let messagesUnsub: (() => void) | null = null
+
+  const attachMessagesListener = () => {
+    messagesUnsub?.()
+    const q = query(deviceChatCollectionRef(familyId, deviceId), orderBy('createdAtMs', 'desc'), limit(50))
+    messagesUnsub = onSnapshot(
+      q,
+      (snap) => {
+        const unread = snap.docs.filter((d) => {
+          const data = d.data()
+          const createdAt = Number(data.createdAtMs ?? 0)
+          const sender = (data.senderUid as string) || ''
+          return createdAt > lastRead && sender !== uid
+        }).length
+        onCount(unread)
+      },
+      (err) => onError?.(err),
+    )
+  }
+
+  const deviceUnsub = onSnapshot(
+    doc(db, COL.families, familyId, COL.devices, deviceId),
+    (snap) => {
+      const reads = (snap.get('chatReads') as Record<string, number> | undefined) ?? {}
+      const newLastRead = Number(reads[uid || ''] ?? 0)
+      if (newLastRead !== lastRead || !messagesUnsub) {
+        lastRead = newLastRead
+        attachMessagesListener()
+      }
+    },
+    (err) => onError?.(err),
+  )
+
+  return () => {
+    messagesUnsub?.()
+    deviceUnsub()
+  }
+}
+
+/** Records that this guardian/parent has seen [deviceId]'s thread up to now. */
+export async function markDeviceChatRead(familyId: string, deviceId: string): Promise<void> {
+  const uid = auth.currentUser?.uid
+  if (!uid) return
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    [`chatReads.${uid}`]: Date.now(),
+  }).catch(() => undefined)
+}
+
+/** Parent-editable allowlist controlling which guardians may see/participate in a device's chat
+ *  thread — the family owner (parent) always sees every thread regardless of this list. */
+export async function setGuardianAssignedToDevice(
+  familyId: string,
+  deviceId: string,
+  guardianUid: string,
+  assigned: boolean,
+): Promise<void> {
+  await setDoc(
+    doc(db, COL.families, familyId, COL.devices, deviceId),
+    { assignedGuardianUids: assigned ? arrayUnion(guardianUid) : arrayRemove(guardianUid) },
+    { merge: true },
+  )
+}
+
+export async function getMaxChatVideoSeconds(familyId: string): Promise<number> {
+  const DEFAULT_MAX = 180
+  const snap = await getDoc(doc(db, COL.families, familyId))
+  const value = snap.get('maxChatVideoSeconds')
+  return typeof value === 'number' && value > 0 ? value : DEFAULT_MAX
+}
+
+export async function sendDeviceChatMessage(
+  familyId: string,
+  deviceId: string,
+  opts: {
+    text?: string | null
+    mediaUrl?: string | null
+    mediaPath?: string | null
+    mediaType?: string | null
+    durationMs?: number | null
+  },
+): Promise<void> {
   const uid = auth.currentUser?.uid
   if (!uid) throw new Error('Not signed in')
   const name = auth.currentUser?.email || 'Guardian'
-  await addDoc(collection(db, COL.families, familyId, COL.familyChat), {
+  await addDoc(deviceChatCollectionRef(familyId, deviceId), {
     senderUid: uid,
     senderName: name,
     senderRole: 'GUARDIAN',
-    text: text.trim(),
-    mediaUrl: null,
-    mediaType: null,
+    deviceId,
+    text: opts.text?.trim() || null,
+    mediaUrl: opts.mediaUrl ?? null,
+    mediaPath: opts.mediaPath ?? null,
+    mediaType: opts.mediaType ?? null,
+    durationMs: opts.durationMs ?? null,
     createdAtMs: Date.now(),
   })
+  await markDeviceChatRead(familyId, deviceId)
+}
+
+/** Uploads a chat attachment (image/voice note/video) via the R2 media proxy, mirroring the
+ *  `families/{fid}/devices/{deviceId}/chat/...` path used by the Android apps. */
+export async function uploadChatMedia(
+  familyId: string,
+  deviceId: string,
+  blob: Blob,
+  fileName: string,
+): Promise<{ path: string; url: string }> {
+  const base = (import.meta.env.VITE_R2_MEDIA_PROXY_BASE_URL as string | undefined)?.trim()
+    || 'https://sarechild-media-proxy.neuereatec.workers.dev'
+  const uid = auth.currentUser?.uid || 'guardian'
+  const path = `families/${familyId}/devices/${deviceId}/chat/${Date.now()}_${uid}_${fileName}`
+  const encodedPath = path.split('/').map((p) => encodeURIComponent(p)).join('/')
+  const contentType = blob.type || 'application/octet-stream'
+  const res = await fetch(`${base}/upload/${encodedPath}?contentType=${encodeURIComponent(contentType)}`, {
+    method: 'PUT',
+    body: blob,
+  })
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`)
+  const body = (await res.json()) as { url?: string }
+  const url = body.url || `${base}/${encodedPath}`
+  return { path, url }
 }
 
 // ---------- Guardians / caregiver invites ----------

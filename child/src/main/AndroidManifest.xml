@@ -114,6 +114,19 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Lets the system camera app write photo/video chat captures to a content://
+             Uri we control (required for ACTION_IMAGE_CAPTURE/ACTION_VIDEO_CAPTURE
+             output on API 24+ — passing a raw file:// Uri would throw FileUriExposedException). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <service
             android:name=".fcm.ChildFirebaseMessagingService"
             android:exported="false">

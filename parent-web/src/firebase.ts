@@ -48,7 +48,10 @@ export const COL = {
   appBlockSchedules: 'appBlockSchedules',
   guardianInvites: 'guardianInvites',
   screenShareSchedules: 'screenShareSchedules',
+  /** Legacy family-wide single thread — superseded by chatMessages nested under devices/{id}. */
   familyChat: 'familyChat',
+  /** Per-device chat thread: families/{id}/devices/{deviceId}/chatMessages/{msgId}. */
+  chatMessages: 'chatMessages',
   mapPlaces: 'mapPlaces',
   whatsappEvents: 'whatsappEvents',
   typingEvents: 'typingEvents',

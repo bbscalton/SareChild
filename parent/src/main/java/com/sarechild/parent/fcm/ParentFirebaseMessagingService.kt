@@ -6,6 +6,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.sarechild.parent.FamilyChatActivity
 import com.sarechild.parent.MainActivity
 import com.sarechild.parent.R
 import com.sarechild.parent.data.ParentRepository
@@ -26,15 +27,32 @@ class ParentFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val title = message.data["title"]
+        val data = message.data
+        val isFamilyChat = data[SareChildConstants.FCM_DATA_TYPE] == SareChildConstants.FCM_TYPE_FAMILY_CHAT
+        val urgent = data[SareChildConstants.FCM_DATA_URGENT] == "true"
+
+        val title = data["title"]
             ?: message.notification?.title
             ?: "SareChild alert"
-        val body = message.data["body"]
+        val body = data["body"]
             ?: message.notification?.body
             ?: "Open the app for details"
 
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val channelId = if (isFamilyChat && urgent) {
+            SareChildConstants.NOTIFICATION_CHANNEL_CHAT_URGENT
+        } else if (isFamilyChat) {
+            SareChildConstants.NOTIFICATION_CHANNEL_FAMILY_CHAT
+        } else {
+            SareChildConstants.NOTIFICATION_CHANNEL_ALERTS
+        }
+
+        val targetActivity = if (isFamilyChat) FamilyChatActivity::class.java else MainActivity::class.java
+        val intent = Intent(this, targetActivity).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (isFamilyChat) {
+                putExtra(SareChildConstants.EXTRA_OPEN_CHAT, true)
+                data["deviceId"]?.let { putExtra(SareChildConstants.EXTRA_CHAT_DEVICE_ID, it) }
+            }
         }
         val pending = PendingIntent.getActivity(
             this,
@@ -42,14 +60,27 @@ class ParentFirebaseMessagingService : FirebaseMessagingService() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(this, SareChildConstants.NOTIFICATION_CHANNEL_ALERTS)
+        val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
             .setContentText(body)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(if (urgent) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(pending)
             .setAutoCancel(true)
-            .build()
-        NotificationManagerCompat.from(this).notify(System.currentTimeMillis().toInt(), notification)
+
+        if (urgent) {
+            builder.setVibrate(longArrayOf(0, 400, 200, 400, 200, 400, 200, 400))
+        } else if (isFamilyChat) {
+            builder.setVibrate(longArrayOf(0, 250, 150, 250))
+        }
+
+        val notificationId = if (isFamilyChat) {
+            SareChildConstants.CHAT_NOTIFICATION_ID
+        } else {
+            System.currentTimeMillis().toInt()
+        }
+        NotificationManagerCompat.from(this).notify(notificationId, builder.build())
     }
 }

@@ -175,6 +175,12 @@ export type DeviceStatus = {
   activeSession: string | null
   latestFrameUrl: string | null
   todayScreenMinutes: number
+  /** Guardian uids the parent has explicitly assigned to this device's chat thread.
+   *  Empty means only the family owner (parent) can see/use this thread. */
+  assignedGuardianUids: string[]
+  /** uid -> last-read timestamp (ms) for this device's chat thread, used to compute
+   *  per-participant unread badges (parent, each assigned guardian, and the child). */
+  chatReads: Record<string, number>
 }
 
 export type FamilyAlert = {
@@ -467,7 +473,10 @@ export type FamilyChatMessage = {
   deviceId?: string | null
   text?: string | null
   mediaUrl?: string | null
-  mediaType?: string | null
+  mediaPath?: string | null
+  mediaType?: 'image' | 'audio' | 'video' | string | null
+  /** Playback length for audio/video notes, in milliseconds. */
+  durationMs?: number | null
   createdAtMs: number
 }
 
@@ -570,10 +579,12 @@ export function parseUsageApps(raw: unknown): UsageAppEntry[] {
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)(\?.*)?$/i
 const AUDIO_EXT = /\.(m4a|mp3|wav|ogg|aac)(\?.*)?$/i
+const VIDEO_EXT = /\.(mp4|mov|webm|3gp|m4v)(\?.*)?$/i
 
-export function mediaKind(url: string): 'image' | 'audio' | 'other' {
+export function mediaKind(url: string): 'image' | 'audio' | 'video' | 'other' {
   if (IMAGE_EXT.test(url)) return 'image'
   if (AUDIO_EXT.test(url)) return 'audio'
+  if (VIDEO_EXT.test(url)) return 'video'
   return 'other'
 }
 

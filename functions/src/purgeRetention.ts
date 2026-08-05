@@ -261,6 +261,48 @@ async function purgeDevicePhotos(
   }
 }
 
+/** Per-device chat threads (families/{id}/devices/{deviceId}/chatMessages) — each device's
+ *  conversation is purged independently, same retentionDays as the rest of the family. */
+async function purgeDeviceChatMessages(
+  familyRef: FirebaseFirestore.DocumentReference,
+  cutoffMs: number,
+  stats: RetentionPurgeStats
+): Promise<void> {
+  const devicesSnap = await familyRef.collection("devices").get();
+  for (const device of devicesSnap.docs) {
+    const col = device.ref.collection("chatMessages");
+    for (;;) {
+      const snap = await col.where("createdAtMs", "<", cutoffMs).limit(BATCH_SIZE).get();
+      if (snap.empty) break;
+
+      const mediaKeys: string[] = [];
+      const batch = db.batch();
+      let deleted = 0;
+
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        const key = extractMediaKey(data, ["mediaPath", "mediaUrl"]);
+        if (key) mediaKeys.push(key);
+        batch.delete(doc.ref);
+        deleted++;
+      }
+
+      if (deleted === 0) break;
+      await batch.commit();
+      stats.docsDeleted += deleted;
+      stats.mediaKeysQueued += mediaKeys.length;
+
+      for (const key of mediaKeys) {
+        const ok = await deleteR2Object(key);
+        if (ok) stats.mediaDeleted++;
+        else stats.mediaDeleteFailed++;
+      }
+
+      if (snap.size < BATCH_SIZE) break;
+    }
+  }
+}
+
 async function purgeDeviceActivityEvents(
   familyRef: FirebaseFirestore.DocumentReference,
   cutoffMs: number,
@@ -300,6 +342,7 @@ async function purgeFamilyRetentionData(
   }
   await purgeDevicePhotos(familyRef, cutoffMs, stats);
   await purgeDeviceActivityEvents(familyRef, cutoffMs, stats);
+  await purgeDeviceChatMessages(familyRef, cutoffMs, stats);
   await purgeAlerts(familyRef, cutoffMs, stats);
 }
 

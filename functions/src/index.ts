@@ -13,6 +13,7 @@ export {
   adminAdjustTrial,
   adminTriggerPurgeTrials,
   adminSetRetention,
+  adminSetChatVideoLimit,
   adminTriggerPurgeRetention,
   adminRepairOrphans,
   adminSendTestFcm,
@@ -310,12 +311,14 @@ export const purgeExpiredMedia = onSchedule("every 24 hours", async () => {
   logger.info(`purgeExpiredMedia deleted ${deleted} file(s)`);
 });
 
-// ---------- Family chat push (emergency-aware) ----------
-// Any chat message — from a guardian's phone or the child's device — should reach
-// every *other* device in the family with a loud, high-priority notification, even
-// if that device's app is backgrounded or fully killed. Deliberately separate from
-// sendToFamily()/onAlertCreated above: chat has its own recipient set (child devices
-// are real push targets here, not just guardians) and its own urgency escalation.
+// ---------- Family chat push (per-device, emergency-aware) ----------
+// Each paired device has its own isolated chat thread
+// (families/{familyId}/devices/{deviceId}/chatMessages/{msgId}) — a message there should
+// reach the family owner (parent), every guardian *assigned to that specific device*, and
+// that device itself (when the sender isn't the device), never every other device's thread.
+// Deliberately separate from sendToFamily()/onAlertCreated above: chat has its own recipient
+// set (the child device is a real push target here, not just guardians) and its own urgency
+// escalation.
 const URGENT_CHAT_KEYWORDS = [
   "help", "emergency", "911", "sos", "danger", "unsafe", "scared",
   "hurt me", "please help", "call the police", "i'm in trouble", "im in trouble",
@@ -334,16 +337,22 @@ interface TokenOwner {
   tokens: string[];
 }
 
-/** Every guardian/parent profile in the family that has FCM tokens, minus [excludeUid]. */
-async function collectGuardianTokenRefs(
+/**
+ * Recipients for one device's chat thread: the family owner (parent) plus every guardian
+ * listed in that device's `assignedGuardianUids` — never every guardian in the family, and
+ * never any other device. [excludeUid] drops the sender so they don't get pushed their own
+ * message.
+ */
+async function collectDeviceChatGuardianTokenRefs(
   familyId: string,
+  deviceSnap: FirebaseFirestore.DocumentSnapshot,
   parentUid?: string | null,
   excludeUid?: string | null
 ): Promise<Map<string, TokenOwner>> {
   const uids = new Set<string>();
   if (parentUid) uids.add(parentUid);
-  const guardians = await db.collection("families").doc(familyId).collection("guardians").get();
-  guardians.docs.forEach((g) => uids.add(g.id));
+  const assigned = (deviceSnap.get("assignedGuardianUids") as string[] | undefined) ?? [];
+  assigned.forEach((uid) => uids.add(uid));
   if (excludeUid) uids.delete(excludeUid);
 
   const result = new Map<string, TokenOwner>();
@@ -358,18 +367,13 @@ async function collectGuardianTokenRefs(
   return result;
 }
 
-/** Every child device in the family that has FCM tokens, minus [excludeDeviceId] (the sender). */
-async function collectChildDeviceTokens(
-  familyId: string,
-  excludeDeviceId?: string | null
-): Promise<Map<string, TokenOwner>> {
+/** This one device's own FCM tokens (its push target when a parent/guardian messages it). */
+function collectSingleDeviceTokens(
+  deviceSnap: FirebaseFirestore.DocumentSnapshot
+): Map<string, TokenOwner> {
   const result = new Map<string, TokenOwner>();
-  const devices = await db.collection("families").doc(familyId).collection("devices").get();
-  devices.docs.forEach((d) => {
-    if (excludeDeviceId && d.id === excludeDeviceId) return;
-    const tokens = (d.get("fcmTokens") as string[] | undefined) ?? [];
-    if (tokens.length) result.set(d.id, { ref: d.ref, tokens });
-  });
+  const tokens = (deviceSnap.get("fcmTokens") as string[] | undefined) ?? [];
+  if (tokens.length) result.set(deviceSnap.id, { ref: deviceSnap.ref, tokens });
   return result;
 }
 
@@ -410,22 +414,23 @@ async function sendMulticastAndPrune(
 }
 
 /**
- * Fan out a push to everyone in the family *except* the sender whenever a family
- * chat message is created — a guardian's message reaches every child device, and a
- * child's message reaches every guardian/parent device. Messages that look urgent
- * (keyword match) escalate to the louder "family_chat_urgent" channel/sound.
+ * Fan out a push to everyone who can see *this specific device's* chat thread, except the
+ * sender — the parent + every guardian assigned to this device get a message the child
+ * sent, and the child device gets a message the parent/an assigned guardian sent. Never
+ * touches any other device's thread. Messages that look urgent (keyword match) escalate to
+ * the louder "family_chat_urgent" channel/sound.
  */
-export const onFamilyChatMessageCreated = onDocumentCreated(
-  "families/{familyId}/familyChat/{messageId}",
+export const onDeviceChatMessageCreated = onDocumentCreated(
+  "families/{familyId}/devices/{deviceId}/chatMessages/{messageId}",
   async (event) => {
     const familyId = event.params.familyId;
+    const deviceId = event.params.deviceId;
     const data = event.data?.data();
     if (!data) return;
 
     const senderUid = String(data.senderUid ?? "");
     const senderName = String(data.senderName ?? "Family member");
     const senderRole = String(data.senderRole ?? "GUARDIAN").toUpperCase();
-    const senderDeviceId = data.deviceId ? String(data.deviceId) : null;
     const text = (data.text as string | undefined) ?? null;
     const mediaType = (data.mediaType as string | undefined) ?? null;
 
@@ -435,20 +440,31 @@ export const onFamilyChatMessageCreated = onDocumentCreated(
         : text
       : mediaType === "image"
         ? "📷 Sent a photo"
-        : mediaType === "audio"
-          ? "🎤 Sent a voice message"
-          : "Sent a message";
+        : mediaType === "video"
+          ? "🎥 Sent a video"
+          : mediaType === "audio"
+            ? "🎤 Sent a voice message"
+            : "Sent a message";
+
+    const [familySnap, deviceSnap] = await Promise.all([
+      db.collection("families").doc(familyId).get(),
+      db.collection("families").doc(familyId).collection("devices").doc(deviceId).get(),
+    ]);
+    if (!deviceSnap.exists) return;
+    const parentUid = familySnap.get("parentUid") as string | undefined;
+    const childName = String(deviceSnap.get("childName") ?? "Child");
 
     const urgent = isUrgentChatText(text);
-    const title = urgent ? `🚨 Urgent — ${senderName}` : `${senderName} · Family chat`;
+    const title = urgent ? `🚨 Urgent — ${senderName}` : `${senderName} · ${childName}'s chat`;
 
-    const familySnap = await db.collection("families").doc(familyId).get();
-    const parentUid = familySnap.get("parentUid") as string | undefined;
-
-    const [guardianRefs, deviceRefs] = await Promise.all([
-      collectGuardianTokenRefs(familyId, parentUid, senderUid || undefined),
-      collectChildDeviceTokens(familyId, senderDeviceId),
-    ]);
+    const guardianRefs = await collectDeviceChatGuardianTokenRefs(
+      familyId,
+      deviceSnap,
+      parentUid,
+      senderUid || undefined
+    );
+    const deviceRefs =
+      senderRole === "CHILD" ? new Map<string, TokenOwner>() : collectSingleDeviceTokens(deviceSnap);
 
     const tokens: string[] = [];
     const ownerOfToken = new Map<string, FirebaseFirestore.DocumentReference>();
@@ -462,7 +478,7 @@ export const onFamilyChatMessageCreated = onDocumentCreated(
     });
 
     if (tokens.length === 0) {
-      logger.info("onFamilyChatMessageCreated: no recipient tokens", familyId);
+      logger.info("onDeviceChatMessageCreated: no recipient tokens", familyId, deviceId);
       return;
     }
 
@@ -476,6 +492,7 @@ export const onFamilyChatMessageCreated = onDocumentCreated(
           type: "FAMILY_CHAT",
           screen: "family_chat",
           familyId,
+          deviceId,
           messageId: event.params.messageId,
           senderUid,
           senderRole,
@@ -493,7 +510,7 @@ export const onFamilyChatMessageCreated = onDocumentCreated(
     );
 
     logger.info(
-      `onFamilyChatMessageCreated: family=${familyId} sender=${senderRole} urgent=${urgent} recipients=${tokens.length}`
+      `onDeviceChatMessageCreated: family=${familyId} device=${deviceId} sender=${senderRole} urgent=${urgent} recipients=${tokens.length}`
     );
   }
 );

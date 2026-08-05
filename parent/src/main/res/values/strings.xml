@@ -12,11 +12,20 @@
     <string name="chat_send">Send message</string>
     <string name="chat_recording">Recording… tap mic again to send</string>
     <string name="chat_media_image">Photo · tap to open</string>
-    <string name="chat_media_audio">Voice note · tap to open</string>
+    <string name="chat_media_audio">Voice note</string>
+    <string name="chat_media_video">Video</string>
     <string name="chat_media_generic">Attachment · tap to open</string>
     <string name="chat_role_guardian">Guardian</string>
     <string name="chat_role_child">Child</string>
     <string name="chat_presence_children">%1$d child online</string>
     <string name="chat_presence_children_plural">%1$d children online</string>
+    <string name="chat_presence_online_now">Online now</string>
+    <string name="chat_presence_offline">Offline</string>
+    <string name="chat_devices_title">Conversations</string>
+    <string name="chat_devices_subtitle">Every paired device has its own private thread.</string>
+    <string name="chat_no_devices_title">No paired devices yet</string>
+    <string name="chat_select_device_title">Choose a conversation</string>
+    <string name="chat_select_device_subtitle">Tap the devices icon to pick which child to message.</string>
+    <string name="chat_uploading">Sending…</string>
     <string name="parent_web_dashboard_url">https://safechild-f34ac.web.app/</string>
 </resources>

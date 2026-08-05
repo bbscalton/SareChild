@@ -19,6 +19,8 @@ class MainActivity : AppCompatActivity() {
         // itself because the app process was dead.
         val openChat = intent?.getBooleanExtra(SareChildConstants.EXTRA_OPEN_CHAT, false) == true ||
             intent?.getStringExtra(SareChildConstants.FCM_DATA_SCREEN) == SareChildConstants.FCM_SCREEN_FAMILY_CHAT
+        val chatDeviceId = intent?.getStringExtra(SareChildConstants.EXTRA_CHAT_DEVICE_ID)
+            ?: intent?.getStringExtra("deviceId")
         if (!loggedIn) {
             startActivity(Intent(this, AuthActivity::class.java))
             finish()
@@ -32,7 +34,13 @@ class MainActivity : AppCompatActivity() {
                 openChat -> FamilyChatActivity::class.java
                 else -> DashboardActivity::class.java
             }
-            startActivity(Intent(this@MainActivity, next))
+            startActivity(
+                Intent(this@MainActivity, next).apply {
+                    if (next == FamilyChatActivity::class.java && chatDeviceId != null) {
+                        putExtra(SareChildConstants.EXTRA_CHAT_DEVICE_ID, chatDeviceId)
+                    }
+                }
+            )
             finish()
         }
     }

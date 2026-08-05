@@ -169,6 +169,19 @@ select {
 .device-manage-row-main { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .device-manage-row-main > span:first-child { font-weight: 700; }
 .device-manage-row-main .btn { margin-left: auto; }
+
+.guardian-chat-access-list { list-style: none; margin: 0.75rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.guardian-chat-access-row { border: 1px solid rgba(15, 107, 76, 0.12); border-radius: 14px; padding: 0.7rem 0.9rem; }
+.guardian-chat-access-device { margin: 0 0 0.4rem; font-weight: 700; }
+.guardian-chat-access-checks { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; }
+.guardian-chat-access-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.guardian-chat-access-check input { margin: 0; }
 .device-remove-confirm { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px dashed rgba(179, 38, 30, 0.3); display: flex; flex-direction: column; gap: 0.6rem; }
 .device-remove-confirm label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
 .device-remove-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
@@ -659,12 +672,106 @@ select {
   flex: none;
 }
 
-/* --- Family chat --- */
+/* --- Family chat (per-device) --- */
+.chat-shell-wrap {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  gap: 1rem;
+  align-items: start;
+}
+
 .chat-shell {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto 1fr auto;
   gap: 0.85rem;
   height: min(70vh, 640px);
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.chat-header h2 { margin: 0.1rem 0 0; font-size: 1.1rem; }
+
+.chat-sidebar-toggle { flex: none; white-space: nowrap; }
+
+.chat-devices-sidebar {
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+}
+
+.chat-devices-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0.1rem 0.2rem 0.3rem;
+}
+
+.chat-device-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 12px;
+  padding: 0.55rem 0.6rem;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+}
+
+.chat-device-row:hover { background: rgba(15, 107, 76, 0.06); }
+
+.chat-device-row.active {
+  background: rgba(15, 107, 76, 0.1);
+  border-color: rgba(15, 107, 76, 0.35);
+}
+
+.chat-device-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--line);
+  flex: none;
+}
+
+.chat-device-dot.online { background: var(--primary); }
+
+.chat-device-name {
+  flex: 1;
+  font-size: 0.88rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-device-badge {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.3rem;
 }
 
 .chat-scroll {
@@ -720,9 +827,32 @@ select {
 
 .chat-media-audio { margin-top: 0.2rem; width: min(100%, 260px); }
 
+.chat-media-video {
+  display: block;
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: 12px;
+  margin-top: 0.2rem;
+}
+
+.chat-media-audio-wrap,
+.chat-media-video-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.chat-media-duration {
+  font-size: 0.72rem;
+  opacity: 0.65;
+  font-weight: 600;
+}
+
 .chat-composer {
   display: flex;
-  gap: 0.6rem;
+  align-items: center;
+  gap: 0.5rem;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -736,6 +866,30 @@ select {
 }
 
 .chat-composer input:focus { outline: none; }
+
+.chat-icon-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+.chat-icon-btn.recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  animation: chat-recording-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes chat-recording-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(179, 38, 30, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(179, 38, 30, 0.18); }
+}
 
 /* --- Live Map control center --- */
 .panel-flush { padding: 0; overflow: hidden; }
@@ -1733,6 +1887,16 @@ select {
   .main-area { padding: 1rem 1rem 2rem; }
   .row-card { flex-direction: column; align-items: flex-start; }
   .chat-shell { height: min(72vh, 560px); }
+  .chat-shell-wrap { grid-template-columns: 1fr; }
+  .chat-devices-sidebar {
+    order: -1;
+    max-height: none;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  .chat-devices-title { display: none; }
+  .chat-device-row { flex: none; min-width: 140px; }
 
   .livemap-shell {
     grid-template-columns: 1fr;

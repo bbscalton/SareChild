@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exposes app cacheDir so the system camera app can write chat photo/video captures
+     to a content:// Uri we control (see FamilyChatActivity capturePhoto/captureVideo). -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="chat_capture" path="." />
+</paths>

@@ -142,6 +142,8 @@ export type AdminFeatureConfig = {
   }
   /** Global default operational data retention (days) when family has no override. */
   defaultRetentionDays: number
+  /** Global default chat video-note length cap (seconds) when family has no override. */
+  defaultMaxChatVideoSeconds: number
   updatedAtMs: number
   updatedBy: string | null
 }

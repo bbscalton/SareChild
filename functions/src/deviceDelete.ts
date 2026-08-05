@@ -15,7 +15,7 @@ const R2_PROXY_BASE =
 const R2_PURGE_SECRET = process.env.R2_MEDIA_PURGE_SECRET?.trim() || "";
 
 /** Subcollections nested under families/{familyId}/devices/{deviceId}. */
-const DEVICE_SUBCOLLECTIONS = ["installedApps", "photos", "activityEvents"];
+const DEVICE_SUBCOLLECTIONS = ["installedApps", "photos", "activityEvents", "chatMessages"];
 
 /**
  * Family-level collections (families/{familyId}/{name}/*) whose docs carry a

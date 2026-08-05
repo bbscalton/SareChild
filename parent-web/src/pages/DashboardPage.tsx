@@ -126,9 +126,6 @@ export function DashboardPage() {
     autoBlockEnabled: false,
     autoBlockSeverity: 'HIGH',
   })
-  const [chatMessages, setChatMessages] = useState<FamilyChatMessage[]>([])
-  const [chatText, setChatText] = useState('')
-  const [chatBusy, setChatBusy] = useState(false)
   const [safetySettings, setSafetySettings] = useState<FamilySafetySettings>({
     escalationEnabled: true,
     escalationRiskThreshold: 60,
@@ -237,7 +234,6 @@ export function DashboardPage() {
       repo.observeTypingSafetySettings(familyId, setTypingSettings, (e) => setError(e.message)),
       repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
       repo.observeScreenShareSchedules(familyId, setScreenShareSchedules, (e) => setError(e.message)),
-      repo.observeFamilyChat(familyId, setChatMessages, (e) => setError(e.message)),
     ]
     return () => unsubs.forEach((u) => u())
   }, [familyId])
@@ -1010,20 +1006,6 @@ export function DashboardPage() {
     }
   }
 
-  const sendChatMessage = async () => {
-    if (!familyId || !chatText.trim()) return
-    setChatBusy(true)
-    setError(null)
-    try {
-      await repo.sendFamilyChatMessage(familyId, chatText)
-      setChatText('')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to send message')
-    } finally {
-      setChatBusy(false)
-    }
-  }
-
   const navGroups: NavGroup[] = [
     {
       label: 'Overview',
@@ -1334,14 +1316,12 @@ export function DashboardPage() {
             </section>
           )}
 
-          {section === 'chat' && (
+          {section === 'chat' && familyId && (
             <ChatSection
-              messages={chatMessages}
+              familyId={familyId}
+              devices={devices}
               currentUid={user?.uid}
-              text={chatText}
-              onTextChange={setChatText}
-              onSend={() => void sendChatMessage()}
-              busy={chatBusy}
+              setError={setError}
             />
           )}
 
@@ -3216,6 +3196,53 @@ export function DashboardPage() {
                   </ul>
                 )}
               </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Chat access</h3>
+                  <p className="muted small">
+                    Each paired device has its own private conversation. You (the owner) can always
+                    see every device&apos;s chat — check a box below to let a caregiver see and
+                    reply in that specific device&apos;s conversation too.
+                  </p>
+                  {guardians.filter((g) => g.role !== 'OWNER').length === 0 ? (
+                    <p className="muted small">Invite a caregiver above to assign chat access.</p>
+                  ) : (
+                    <ul className="meta guardian-chat-access-list">
+                      {devices.map((device) => (
+                        <li key={device.id} className="guardian-chat-access-row">
+                          <p className="guardian-chat-access-device">{device.childName || 'Child'}</p>
+                          <div className="guardian-chat-access-checks">
+                            {guardians
+                              .filter((g) => g.role !== 'OWNER')
+                              .map((g) => {
+                                const assigned = device.assignedGuardianUids.includes(g.uid)
+                                return (
+                                  <label key={g.uid} className="guardian-chat-access-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned}
+                                      disabled={!familyId}
+                                      onChange={(e) => {
+                                        if (!familyId) return
+                                        void repo
+                                          .setGuardianAssignedToDevice(familyId, device.id, g.uid, e.target.checked)
+                                          .catch((err) =>
+                                            setError(err instanceof Error ? err.message : 'Failed to update chat access'),
+                                          )
+                                      }}
+                                    />
+                                    {g.email || g.uid}
+                                  </label>
+                                )
+                              })}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </section>
           )}
 
@@ -3827,72 +3854,272 @@ function LocationCard({
   )
 }
 
-/** Family chat — mirrors the Android family chat collection (families/{id}/familyChat). */
+/** Family chat — one isolated thread per paired device at
+ *  families/{id}/devices/{deviceId}/chatMessages. The right sidebar lists every device with an
+ *  unread badge; selecting a device loads only that device's conversation, so pairing another
+ *  device never merges the two conversations together. Guardians only see devices the parent has
+ *  assigned to them (managed from the Guardians tab; enforced in firestore.rules). */
 function ChatSection({
-  messages,
+  familyId,
+  devices,
   currentUid,
-  text,
-  onTextChange,
-  onSend,
-  busy,
+  setError,
 }: {
-  messages: FamilyChatMessage[]
+  familyId: string
+  devices: DeviceStatus[]
   currentUid: string | undefined
-  text: string
-  onTextChange: (v: string) => void
-  onSend: () => void
-  busy: boolean
+  setError: (msg: string | null) => void
 }) {
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [messages, setMessages] = useState<FamilyChatMessage[]>([])
+  const [unreadByDevice, setUnreadByDevice] = useState<Record<string, number>>({})
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
+  const recordStartRef = useRef(0)
+
+  const deviceIdsKey = devices.map((d) => d.id).join(',')
+
+  useEffect(() => {
+    if ((!selectedDeviceId || !devices.some((d) => d.id === selectedDeviceId)) && devices.length > 0) {
+      setSelectedDeviceId(devices[0]!.id)
+    }
+  }, [devices, selectedDeviceId])
+
+  useEffect(() => {
+    if (!selectedDeviceId) {
+      setMessages([])
+      return
+    }
+    return repo.observeDeviceChat(familyId, selectedDeviceId, setMessages, (e) => setError(e.message))
+  }, [familyId, selectedDeviceId])
+
+  useEffect(() => {
+    if (!selectedDeviceId) return
+    void repo.markDeviceChatRead(familyId, selectedDeviceId)
+  }, [familyId, selectedDeviceId, messages.length])
+
+  useEffect(() => {
+    if (!deviceIdsKey) {
+      setUnreadByDevice({})
+      return
+    }
+    const ids = deviceIdsKey.split(',')
+    const unsubs = ids.map((id) =>
+      repo.observeDeviceChatUnreadCount(familyId, id, (count) =>
+        setUnreadByDevice((prev) => ({ ...prev, [id]: count })),
+      ),
+    )
+    return () => unsubs.forEach((u) => u())
+  }, [familyId, deviceIdsKey])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' })
   }, [messages.length])
 
+  const selectedDevice = devices.find((d) => d.id === selectedDeviceId)
+
+  const sendText = async () => {
+    if (!selectedDeviceId || !text.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      await repo.sendDeviceChatMessage(familyId, selectedDeviceId, { text })
+      setText('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to send message')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sendMedia = async (
+    blob: Blob,
+    fileName: string,
+    mediaType: 'image' | 'audio',
+    durationMs?: number,
+  ) => {
+    if (!selectedDeviceId) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { path, url } = await repo.uploadChatMedia(familyId, selectedDeviceId, blob, fileName)
+      await repo.sendDeviceChatMessage(familyId, selectedDeviceId, {
+        mediaUrl: url,
+        mediaPath: path,
+        mediaType,
+        durationMs: durationMs ?? null,
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to send attachment')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleRecording = async () => {
+    if (recording) {
+      mediaRecorderRef.current?.stop()
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      recordedChunksRef.current = []
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) recordedChunksRef.current.push(ev.data)
+      }
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const durationMs = Date.now() - recordStartRef.current
+        const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' })
+        setRecording(false)
+        if (blob.size > 0) void sendMedia(blob, `voice_${Date.now()}.webm`, 'audio', durationMs)
+      }
+      recordStartRef.current = Date.now()
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setRecording(true)
+    } catch {
+      setError('Microphone access is required to record a voice note.')
+    }
+  }
+
   return (
-    <section className="chat-shell">
-      <div className="chat-scroll">
-        {messages.length === 0 ? (
-          <Empty title="No messages yet" body="Send a warm check-in — your family chat is shared with every guardian and child device." />
-        ) : (
-          messages.map((m) => {
-            const mine = m.senderUid === currentUid
-            return (
-              <div key={m.id} className={mine ? 'chat-row mine' : 'chat-row'}>
-                <div className={mine ? 'chat-bubble mine' : 'chat-bubble'}>
-                  <p className="chat-sender">{m.senderName}{m.senderRole === 'CHILD' ? ' · child' : ''}</p>
-                  {m.text && <p className="chat-text">{m.text}</p>}
-                  {m.mediaUrl && <ChatMedia url={m.mediaUrl} />}
-                  <p className="chat-time">{new Date(m.createdAtMs).toLocaleString()}</p>
+    <section className="chat-shell-wrap">
+      <section className="chat-shell">
+        <header className="chat-header">
+          <div>
+            <p className="eyebrow">Private chat with</p>
+            <h2>{selectedDevice ? selectedDevice.childName : 'Select a device'}</h2>
+          </div>
+          <button
+            type="button"
+            className="btn ghost compact chat-sidebar-toggle"
+            onClick={() => setSidebarOpen((v) => !v)}
+          >
+            {sidebarOpen ? 'Hide devices \u203A' : '\u2039 Devices'}
+          </button>
+        </header>
+        <div className="chat-scroll">
+          {!selectedDeviceId ? (
+            <Empty title="No child devices yet" body="Pair a device to start a private conversation with it." />
+          ) : messages.length === 0 ? (
+            <Empty
+              title="No messages yet"
+              body={`Send a warm check-in to ${selectedDevice?.childName || 'this device'} — this conversation is private to this device only.`}
+            />
+          ) : (
+            messages.map((m) => {
+              const mine = m.senderUid === currentUid
+              return (
+                <div key={m.id} className={mine ? 'chat-row mine' : 'chat-row'}>
+                  <div className={mine ? 'chat-bubble mine' : 'chat-bubble'}>
+                    <p className="chat-sender">
+                      {m.senderName}
+                      {m.senderRole === 'CHILD' ? ' · child' : ''}
+                    </p>
+                    {m.text && <p className="chat-text">{m.text}</p>}
+                    {m.mediaUrl && <ChatMedia url={m.mediaUrl} type={m.mediaType} durationMs={m.durationMs} />}
+                    <p className="chat-time">{new Date(m.createdAtMs).toLocaleString()}</p>
+                  </div>
                 </div>
-              </div>
-            )
-          })
-        )}
-        <div ref={bottomRef} />
-      </div>
-      <form
-        className="chat-composer"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (!busy && text.trim()) onSend()
-        }}
-      >
-        <input
-          value={text}
-          onChange={(e) => onTextChange(e.target.value)}
-          placeholder="Send a message to your family…"
-          disabled={busy}
-        />
-        <button className="btn primary compact" type="submit" disabled={busy || !text.trim()}>
-          Send
-        </button>
-      </form>
+              )
+            })
+          )}
+          <div ref={bottomRef} />
+        </div>
+        <form
+          className="chat-composer"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!busy && text.trim()) void sendText()
+          }}
+        >
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) void sendMedia(file, file.name, 'image')
+            }}
+          />
+          <button
+            type="button"
+            className="btn ghost compact chat-icon-btn"
+            title="Send a photo"
+            disabled={busy || !selectedDeviceId}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {'\u{1F4F7}'}
+          </button>
+          <button
+            type="button"
+            className={recording ? 'btn primary compact chat-icon-btn recording' : 'btn ghost compact chat-icon-btn'}
+            title={recording ? 'Stop recording' : 'Record a voice note'}
+            disabled={!selectedDeviceId}
+            onClick={() => void toggleRecording()}
+          >
+            {recording ? '\u23F9' : '\u{1F3A4}'}
+          </button>
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={selectedDevice ? `Message ${selectedDevice.childName}…` : 'Select a device to chat with…'}
+            disabled={busy || !selectedDeviceId}
+          />
+          <button className="btn primary compact" type="submit" disabled={busy || !text.trim() || !selectedDeviceId}>
+            Send
+          </button>
+        </form>
+      </section>
+      {sidebarOpen && (
+        <aside className="chat-devices-sidebar">
+          <p className="chat-devices-title">Devices</p>
+          {devices.length === 0 ? (
+            <p className="muted small">Pair a device to start chatting.</p>
+          ) : (
+            devices.map((d) => {
+              const unread = unreadByDevice[d.id] || 0
+              const active = d.id === selectedDeviceId
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  className={active ? 'chat-device-row active' : 'chat-device-row'}
+                  onClick={() => setSelectedDeviceId(d.id)}
+                >
+                  <span className={d.online ? 'chat-device-dot online' : 'chat-device-dot'} />
+                  <span className="chat-device-name">{d.childName}</span>
+                  {unread > 0 && <span className="chat-device-badge">{unread > 99 ? '99+' : unread}</span>}
+                </button>
+              )
+            })
+          )}
+        </aside>
+      )}
     </section>
   )
 }
 
-function ChatMedia({ url }: { url: string }) {
-  const kind = mediaKind(url)
+function ChatMedia({
+  url,
+  type,
+  durationMs,
+}: {
+  url: string
+  type?: string | null
+  durationMs?: number | null
+}) {
+  const kind = type === 'image' || type === 'audio' || type === 'video' ? type : mediaKind(url)
   if (kind === 'image') {
     return (
       <a href={url} target="_blank" rel="noreferrer">
@@ -3901,13 +4128,34 @@ function ChatMedia({ url }: { url: string }) {
     )
   }
   if (kind === 'audio') {
-    return <audio controls src={url} className="chat-media-audio" />
+    return (
+      <div className="chat-media-audio-wrap">
+        <audio controls src={url} className="chat-media-audio" />
+        {durationMs ? <span className="chat-media-duration">{formatChatDuration(durationMs)}</span> : null}
+      </div>
+    )
+  }
+  if (kind === 'video') {
+    return (
+      <div className="chat-media-video-wrap">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video controls src={url} className="chat-media-video" />
+        {durationMs ? <span className="chat-media-duration">{formatChatDuration(durationMs)}</span> : null}
+      </div>
+    )
   }
   return (
     <a className="btn ghost compact" href={url} target="_blank" rel="noreferrer">
       Open media
     </a>
   )
+}
+
+function formatChatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  const mins = Math.floor(totalSeconds / 60)
+  const secs = totalSeconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 function DeviceCard({

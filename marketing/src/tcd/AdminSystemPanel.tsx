@@ -37,6 +37,7 @@ const ACTION_LABELS: Record<string, string> = {
   trigger_purge_trials: 'Purge trials',
   trigger_purge_retention: 'Purge retention data',
   set_retention: 'Set retention',
+  set_chat_video_limit: 'Set chat video limit',
   repair_orphans: 'Repair orphans',
   send_test_fcm: 'Test FCM',
 }

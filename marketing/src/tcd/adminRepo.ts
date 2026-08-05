@@ -69,6 +69,7 @@ const DEFAULT_LIVE_VIEW = {
 }
 
 const DEFAULT_RETENTION_DAYS = 2
+const DEFAULT_MAX_CHAT_VIDEO_SECONDS = 180
 
 function nextUtcMidnightMs(fromMs: number): number {
   const d = new Date(fromMs)
@@ -237,6 +238,7 @@ export function observeAdminFeatures(onData: (config: AdminFeatureConfig) => voi
           maxSessionMinutes: Number(data?.liveView?.maxSessionMinutes ?? DEFAULT_LIVE_VIEW.maxSessionMinutes),
         },
         defaultRetentionDays: Number(data?.defaultRetentionDays ?? DEFAULT_RETENTION_DAYS),
+        defaultMaxChatVideoSeconds: Number(data?.defaultMaxChatVideoSeconds ?? DEFAULT_MAX_CHAT_VIDEO_SECONDS),
         updatedAtMs: Number(data?.updatedAtMs ?? 0),
         updatedBy: (data?.updatedBy as string | undefined) ?? null,
       })
@@ -251,6 +253,7 @@ export async function saveAdminFeatures(config: AdminFeatureConfig): Promise<voi
     global: config.global,
     liveView: config.liveView,
     defaultRetentionDays: config.defaultRetentionDays,
+    defaultMaxChatVideoSeconds: config.defaultMaxChatVideoSeconds,
     updatedAtMs: Date.now(),
     updatedBy: auth?.currentUser?.email ?? 'admin',
   })
@@ -405,6 +408,28 @@ export async function adminSetRetention(uid: string, retentionDays: number): Pro
   const res = await callable<{ uid: string; retentionDays: number }, { familyId: string; retentionDays: number }>(
     'adminSetRetention',
   )({ uid, retentionDays })
+  return res.data
+}
+
+export async function loadFamilyMaxChatVideoSeconds(familyId: string): Promise<number> {
+  const database = requireDb()
+  const snap = await getDoc(doc(database, COL.families, familyId))
+  const familySeconds = snap.get('maxChatVideoSeconds')
+  if (familySeconds != null && Number.isFinite(Number(familySeconds))) {
+    return Math.min(600, Math.max(30, Number(familySeconds)))
+  }
+  const configSnap = await getDoc(doc(database, COL.adminConfig, 'features'))
+  const globalDefault = Number(configSnap.get('defaultMaxChatVideoSeconds') ?? DEFAULT_MAX_CHAT_VIDEO_SECONDS)
+  return Math.min(600, Math.max(30, globalDefault))
+}
+
+export async function adminSetChatVideoLimit(
+  uid: string,
+  maxChatVideoSeconds: number,
+): Promise<{ familyId: string; maxChatVideoSeconds: number }> {
+  const res = await callable<{ uid: string; maxChatVideoSeconds: number }, { familyId: string; maxChatVideoSeconds: number }>(
+    'adminSetChatVideoLimit',
+  )({ uid, maxChatVideoSeconds })
   return res.data
 }
 

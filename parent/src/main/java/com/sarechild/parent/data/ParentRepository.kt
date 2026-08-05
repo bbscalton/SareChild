@@ -353,6 +353,13 @@ class ParentRepository(
                     val lastHb = doc.getLong("lastHeartbeatMs") ?: 0L
                     @Suppress("UNCHECKED_CAST")
                     val historyMaps = doc.get("batteryHistory") as? List<Map<String, Any?>> ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    val assignedGuardianUids = (doc.get(SareChildConstants.FIELD_ASSIGNED_GUARDIAN_UIDS) as? List<String>)
+                        ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    val chatReads = (doc.get(SareChildConstants.FIELD_CHAT_READS) as? Map<String, Any?>)
+                        ?.mapNotNull { (k, v) -> (v as? Number)?.toLong()?.let { k to it } }?.toMap()
+                        ?: emptyMap()
                     DeviceStatus(
                         id = doc.id,
                         childName = doc.getString("childName") ?: "Child",
@@ -385,7 +392,9 @@ class ParentRepository(
                         offlineCallMaxAttempts = (doc.getLong("offlineCallMaxAttempts") ?: 0L).toInt(),
                         activeSession = doc.getString("activeSession"),
                         latestFrameUrl = doc.getString("latestFrameUrl"),
-                        todayScreenMinutes = (doc.getLong("todayScreenMinutes") ?: 0L).toInt()
+                        todayScreenMinutes = (doc.getLong("todayScreenMinutes") ?: 0L).toInt(),
+                        assignedGuardianUids = assignedGuardianUids,
+                        chatReads = chatReads
                     )
                 } ?: emptyList()
                 trySend(devices)
@@ -890,9 +899,15 @@ class ParentRepository(
         awaitClose { reg.remove() }
     }
 
-    fun observeFamilyChat(familyId: String): Flow<List<FamilyChatMessage>> = callbackFlow {
-        val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
-            .collection(SareChildConstants.COL_FAMILY_CHAT)
+    /** families/{fid}/devices/{did}/chatMessages — every paired device has its own isolated
+     *  thread, so callers must always pass the specific deviceId they want to view/post to. */
+    private fun deviceChatCollection(familyId: String, deviceId: String) =
+        db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_DEVICES).document(deviceId)
+            .collection(SareChildConstants.COL_CHAT_MESSAGES)
+
+    fun observeDeviceChat(familyId: String, deviceId: String): Flow<List<FamilyChatMessage>> = callbackFlow {
+        val reg = deviceChatCollection(familyId, deviceId)
             .orderBy("createdAtMs", Query.Direction.ASCENDING)
             .limit(300)
             .addSnapshotListener { snap, err ->
@@ -906,10 +921,12 @@ class ParentRepository(
                         senderUid = doc.getString("senderUid") ?: "",
                         senderName = doc.getString("senderName") ?: "Family",
                         senderRole = doc.getString("senderRole") ?: "GUARDIAN",
-                        deviceId = doc.getString("deviceId"),
+                        deviceId = doc.getString("deviceId") ?: deviceId,
                         text = doc.getString("text"),
                         mediaUrl = doc.getString("mediaUrl"),
+                        mediaPath = doc.getString("mediaPath"),
                         mediaType = doc.getString("mediaType"),
+                        durationMs = doc.getLong("durationMs"),
                         createdAtMs = doc.getLong("createdAtMs") ?: 0L
                     )
                 } ?: emptyList()
@@ -917,6 +934,71 @@ class ParentRepository(
             }
         awaitClose { reg.remove() }
     }
+
+    /** Lightweight per-device unread counter for the chat device sidebar — counts messages from
+     *  other participants created after this guardian's last-read timestamp for that device. */
+    fun observeDeviceChatUnreadCount(familyId: String, deviceId: String): Flow<Int> = callbackFlow {
+        val uid = currentUserId
+        var lastRead = 0L
+        var reg: com.google.firebase.firestore.ListenerRegistration? = null
+
+        fun attachMessagesListener() {
+            reg?.remove()
+            reg = deviceChatCollection(familyId, deviceId)
+                .orderBy("createdAtMs", Query.Direction.DESCENDING)
+                .limit(50)
+                .addSnapshotListener { snap, err ->
+                    if (err != null) return@addSnapshotListener
+                    val unread = snap?.documents?.count { doc ->
+                        val createdAt = doc.getLong("createdAtMs") ?: 0L
+                        val sender = doc.getString("senderUid") ?: ""
+                        createdAt > lastRead && sender != uid
+                    } ?: 0
+                    trySend(unread)
+                }
+        }
+
+        val deviceReg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_DEVICES).document(deviceId)
+            .addSnapshotListener { snap, _ ->
+                @Suppress("UNCHECKED_CAST")
+                val reads = snap?.get(SareChildConstants.FIELD_CHAT_READS) as? Map<String, Any?>
+                val newLastRead = (reads?.get(uid) as? Number)?.toLong() ?: 0L
+                if (newLastRead != lastRead || reg == null) {
+                    lastRead = newLastRead
+                    attachMessagesListener()
+                }
+            }
+        awaitClose {
+            reg?.remove()
+            deviceReg.remove()
+        }
+    }
+
+    /** Records that this guardian/parent has seen [deviceId]'s thread up to now. */
+    suspend fun markDeviceChatRead(familyId: String, deviceId: String) {
+        val uid = currentUserId ?: return
+        runCatching {
+            db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+                .collection(SareChildConstants.COL_DEVICES).document(deviceId)
+                .update("${SareChildConstants.FIELD_CHAT_READS}.$uid", System.currentTimeMillis())
+                .await()
+        }
+    }
+
+    /** Parent-editable allowlist controlling which guardians may see/participate in a device's
+     *  chat thread — the family owner (parent) always sees every thread regardless of this list. */
+    suspend fun setGuardianAssignedToDevice(familyId: String, deviceId: String, guardianUid: String, assigned: Boolean) {
+        val deviceRef = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+            .collection(SareChildConstants.COL_DEVICES).document(deviceId)
+        val update = if (assigned) FieldValue.arrayUnion(guardianUid) else FieldValue.arrayRemove(guardianUid)
+        deviceRef.set(mapOf(SareChildConstants.FIELD_ASSIGNED_GUARDIAN_UIDS to update), SetOptions.merge()).await()
+    }
+
+    suspend fun getMaxChatVideoSeconds(familyId: String): Int = runCatching {
+        val doc = db.collection(SareChildConstants.COL_FAMILIES).document(familyId).get().await()
+        doc.getLong(SareChildConstants.FIELD_MAX_CHAT_VIDEO_SECONDS)?.toInt()
+    }.getOrNull() ?: SareChildConstants.CHAT_VIDEO_SECONDS_DEFAULT_MAX
 
     fun observeSafetySettings(familyId: String): Flow<FamilySafetySettings> = callbackFlow {
         val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
@@ -955,11 +1037,14 @@ class ParentRepository(
             .await()
     }
 
-    suspend fun sendFamilyChatMessage(
+    suspend fun sendDeviceChatMessage(
         familyId: String,
+        deviceId: String,
         text: String? = null,
         mediaUrl: String? = null,
-        mediaType: String? = null
+        mediaPath: String? = null,
+        mediaType: String? = null,
+        durationMs: Long? = null
     ) {
         val uid = currentUserId ?: error("Not signed in")
         val profile = db.collection("parentProfiles").document(uid).get().await()
@@ -968,24 +1053,25 @@ class ParentRepository(
             senderUid = uid,
             senderName = name,
             senderRole = "GUARDIAN",
+            deviceId = deviceId,
             text = text?.trim()?.ifBlank { null },
             mediaUrl = mediaUrl,
-            mediaType = mediaType
+            mediaPath = mediaPath,
+            mediaType = mediaType,
+            durationMs = durationMs
         )
-        db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
-            .collection(SareChildConstants.COL_FAMILY_CHAT)
-            .add(msg.toMap())
-            .await()
+        deviceChatCollection(familyId, deviceId).add(msg.toMap()).await()
+        markDeviceChatRead(familyId, deviceId)
     }
 
-    suspend fun uploadChatMedia(localFile: java.io.File, contentType: String): String {
+    suspend fun uploadChatMedia(deviceId: String, localFile: java.io.File, contentType: String): Pair<String, String> {
         val familyId = getFamilyId()
         val uid = currentUserId ?: error("Not signed in")
-        val path = "families/$familyId/guardians/$uid/chat/${System.currentTimeMillis()}_${localFile.name}"
-        uploadMediaToR2(path, localFile, contentType)?.let { return it }
+        val path = "families/$familyId/devices/$deviceId/chat/${System.currentTimeMillis()}_${uid}_${localFile.name}"
+        uploadMediaToR2(path, localFile, contentType)?.let { return path to it }
         val ref = storage.reference.child(path)
         ref.putFile(android.net.Uri.fromFile(localFile)).await()
-        return ref.downloadUrl.await().toString()
+        return path to ref.downloadUrl.await().toString()
     }
 
     private suspend fun uploadMediaToR2(

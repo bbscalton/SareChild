@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import com.sarechild.shared.ChatNotificationChannels
 import com.sarechild.shared.SareChildConstants
 
 class ParentApp : Application() {
@@ -17,5 +18,6 @@ class ParentApp : Application() {
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+        ChatNotificationChannels.ensure(this)
     }
 }
