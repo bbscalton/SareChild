@@ -2,6 +2,7 @@ package com.sarechild.parent.data
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
@@ -148,12 +149,30 @@ class ParentRepository(
         bootstrapNewOwnerFamily(uid, email, withLegal = false)
     }
 
-    private suspend fun verifyFamilyAccess(uid: String, familyId: String): Boolean {
-        val guardian = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
-            .collection(SareChildConstants.COL_GUARDIANS).document(uid).get().await()
-        if (guardian.exists()) return true
-        val family = db.collection(SareChildConstants.COL_FAMILIES).document(familyId).get().await()
-        return family.exists() && family.getString("parentUid") == uid
+    /**
+     * True only for legitimate membership — not merely "a guardians/{uid} doc exists".
+     * The 2026-08-05 exploit wrote rogue OWNER/CAREGIVER docs onto other families; existence
+     * alone must never grant access.
+     */
+    private suspend fun hasLegitimateFamilyAccess(uid: String, familyId: String): Boolean {
+        val familyRef = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+        val guardian = familyRef.collection(SareChildConstants.COL_GUARDIANS).document(uid).get().await()
+        val family = familyRef.get().await()
+        if (family.exists() && family.getString("parentUid") == uid) return true
+        if (!guardian.exists()) return false
+
+        val role = (guardian.getString("role") ?: "").uppercase()
+        // OWNER guardian without being parentUid is the cross-tenant exploit pattern.
+        if (role == GuardianRole.OWNER.name) return false
+
+        // Caregiver: must have a claimed invite linking this uid to this family.
+        val invites = db.collection(SareChildConstants.COL_GUARDIAN_INVITES)
+            .whereEqualTo("familyId", familyId)
+            .whereEqualTo("claimedByUid", uid)
+            .limit(1)
+            .get()
+            .await()
+        return !invites.isEmpty
     }
 
     private suspend fun bootstrapNewOwnerFamily(
@@ -222,7 +241,15 @@ class ParentRepository(
                 )
             )
         }
-        if (!verifyFamilyAccess(uid, familyId)) {
+        if (!hasLegitimateFamilyAccess(uid, familyId)) {
+            Log.w("SareChild", "Repaired cross-tenant family link for $uid away from $familyId")
+            // Self-delete rogue guardians/{uid} (allowed by rules) before bootstrapping a fresh family.
+            runCatching {
+                db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+                    .collection(SareChildConstants.COL_GUARDIANS).document(uid)
+                    .delete()
+                    .await()
+            }
             return bootstrapNewOwnerFamily(
                 uid,
                 email,
@@ -1173,42 +1200,19 @@ class ParentRepository(
         return code
     }
 
-    /** Called by a signed-in caregiver account to join the family that issued [code]. */
+    /**
+     * Called by a signed-in caregiver account to join the family that issued [code].
+     * Runs entirely server-side (acceptGuardianInvite Cloud Function,
+     * functions/src/guardianInvites.ts) so the only way to gain guardians/{familyId}/{uid}
+     * membership is via a real, unexpired, unclaimed invite — never a direct client write
+     * to an arbitrary familyId (that was the 2026-08-05 cross-tenant isolation hole).
+     */
     suspend fun acceptGuardianInvite(code: String): Result<String> = runCatching {
-        val uid = currentUserId ?: error("Not signed in")
-        val email = auth.currentUser?.email ?: ""
-        val normalized = code.trim().uppercase()
-        val inviteRef = db.collection(SareChildConstants.COL_GUARDIAN_INVITES).document(normalized)
-        val invite = inviteRef.get().await()
-        if (!invite.exists()) error("Invalid invite code")
-        if (invite.getBoolean("claimed") == true) error("Invite already used")
-        val expires = invite.getLong("expiresAtMs") ?: 0L
-        if (System.currentTimeMillis() > expires) error("Invite expired")
-        val familyId = invite.getString("familyId") ?: error("Missing family")
-        val role = runCatching {
-            GuardianRole.valueOf(invite.getString("role") ?: "CAREGIVER")
-        }.getOrDefault(GuardianRole.CAREGIVER)
-        val existingProfile = db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).get().await()
-        val ownedFamilyId = existingProfile.getString("ownedFamilyId")
-
-        db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
-            .collection(SareChildConstants.COL_GUARDIANS).document(uid).set(
-                mapOf(
-                    "email" to email,
-                    "role" to role.name,
-                    "joinedAtMs" to System.currentTimeMillis()
-                )
-            ).await()
-        db.collection(SareChildConstants.COL_PARENT_PROFILES).document(uid).set(
-            buildMap {
-                put("familyId", familyId)
-                put("email", email)
-                if (!ownedFamilyId.isNullOrBlank()) put("ownedFamilyId", ownedFamilyId)
-            },
-            SetOptions.merge()
-        ).await()
-        inviteRef.update(mapOf("claimed" to true, "claimedByUid" to uid, "claimedAtMs" to System.currentTimeMillis())).await()
-        familyId
+        val payload = hashMapOf("code" to code.trim().uppercase())
+        val result = functions.getHttpsCallable("acceptGuardianInvite").call(payload).await()
+        @Suppress("UNCHECKED_CAST")
+        val map = result.getData() as? Map<String, Any?> ?: emptyMap()
+        map["familyId"] as? String ?: error("Cloud Function did not return a familyId")
     }
 
     fun observeWhatsAppEvents(familyId: String): Flow<List<WhatsAppEvent>> = callbackFlow {

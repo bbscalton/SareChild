@@ -443,6 +443,18 @@ export async function adminRepairOrphans(): Promise<string[]> {
   return res.data.fixes
 }
 
+export async function adminRepairCrossTenantGuardians(): Promise<string[]> {
+  const res = await callable<object, { fixes: string[] }>('adminRepairCrossTenantGuardians')({})
+  return res.data.fixes
+}
+
+export async function adminResetAccountFamilyIsolation(email: string): Promise<string[]> {
+  const res = await callable<{ email: string }, { fixes: string[] }>('adminResetAccountFamilyIsolation')({
+    email,
+  })
+  return res.data.fixes
+}
+
 export async function adminSendTestFcm(familyId: string, deviceId: string): Promise<{ successCount: number }> {
   const res = await callable<{ familyId: string; deviceId: string }, { successCount: number }>('adminSendTestFcm')({
     familyId,

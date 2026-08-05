@@ -122,14 +122,35 @@ function parseParentProfile(data: Record<string, unknown> | undefined): ParentPr
   }
 }
 
-/** True when this uid is the family owner or has an explicit guardians/{uid} membership row. */
-async function verifyFamilyAccess(uid: string, familyId: string): Promise<boolean> {
+/**
+ * True only for legitimate membership — not merely "a guardians/{uid} doc exists".
+ * The 2026-08-05 exploit wrote rogue OWNER/CAREGIVER docs onto other families; existence
+ * alone must never grant access.
+ */
+async function hasLegitimateFamilyAccess(uid: string, familyId: string): Promise<boolean> {
   const [guardianSnap, familySnap] = await Promise.all([
     getDoc(doc(db, COL.families, familyId, COL.guardians, uid)),
     getDoc(doc(db, COL.families, familyId)),
   ])
-  if (guardianSnap.exists()) return true
-  return familySnap.exists() && familySnap.data()?.parentUid === uid
+  const parentUid = familySnap.exists() ? (familySnap.data()?.parentUid as string | undefined) : undefined
+  if (parentUid === uid) return true
+
+  if (!guardianSnap.exists()) return false
+
+  const role = String(guardianSnap.data()?.role ?? '').toUpperCase()
+  // OWNER guardian without being parentUid is the cross-tenant exploit pattern.
+  if (role === 'OWNER') return false
+
+  // Caregiver (or other non-owner role): must have a claimed invite linking this uid to this family.
+  const inviteSnap = await getDocs(
+    query(
+      collection(db, COL.guardianInvites),
+      where('familyId', '==', familyId),
+      where('claimedByUid', '==', uid),
+      limit(1),
+    ),
+  )
+  return !inviteSnap.empty
 }
 
 type BootstrapExtras = {
@@ -206,9 +227,11 @@ export async function ensureParentProfile(uid: string, email: string): Promise<s
     })
   }
 
-  const allowed = await verifyFamilyAccess(uid, familyId)
+  const allowed = await hasLegitimateFamilyAccess(uid, familyId)
   if (!allowed) {
     console.warn('[SareChild] Repaired cross-tenant family link for', uid, 'away from', familyId)
+    // Self-delete rogue guardians/{uid} (allowed by rules) before bootstrapping a fresh family.
+    await deleteDoc(doc(db, COL.families, familyId, COL.guardians, uid)).catch(() => undefined)
     return bootstrapNewOwnerFamily(uid, email, {
       preserve: {
         tosAcceptedAt: data.tosAcceptedAt,
@@ -2333,46 +2356,20 @@ export async function createGuardianInvite(email: string): Promise<string> {
   return code
 }
 
+/**
+ * Redeems a guardian invite onto the signed-in caregiver's account. Runs entirely
+ * server-side (acceptGuardianInvite Cloud Function, functions/src/guardianInvites.ts)
+ * so the only way to gain guardians/{familyId}/{uid} membership is via a real,
+ * unexpired, unclaimed invite — never a direct client write to an arbitrary familyId
+ * (that was the 2026-08-05 cross-tenant isolation hole).
+ */
 export async function acceptGuardianInvite(code: string): Promise<string> {
-  const uid = auth.currentUser?.uid
-  const email = auth.currentUser?.email
-  if (!uid) throw new Error('Not signed in')
-
-  const normalized = code.trim().toUpperCase()
-  const inviteRef = doc(db, COL.guardianInvites, normalized)
-  const snap = await getDoc(inviteRef)
-  if (!snap.exists()) throw new Error('Invalid invite code')
-  const data = snap.data()
-  if (data.claimed) throw new Error('Invite already used')
-  const expiresAtMs = Number(data.expiresAtMs ?? 0)
-  if (expiresAtMs && Date.now() > expiresAtMs) throw new Error('Invite expired')
-
-  const familyId = data.familyId as string
-  if (!familyId) throw new Error('Invite missing family')
-
-  const existingProfile = await getDoc(doc(db, COL.parentProfiles, uid))
-  const ownedFamilyId = existingProfile.data()?.ownedFamilyId as string | undefined
-
-  await setDoc(doc(db, COL.families, familyId, COL.guardians, uid), {
-    email: email || (data.email as string) || '',
-    role: 'CAREGIVER' satisfies GuardianRole,
-    joinedAtMs: Date.now(),
-  })
-  await setDoc(
-    doc(db, COL.parentProfiles, uid),
-    {
-      familyId,
-      email: email || (data.email as string) || '',
-      ...(ownedFamilyId ? { ownedFamilyId } : {}),
-    },
-    { merge: true },
+  const call = httpsCallable<{ code: string }, { ok: boolean; familyId: string }>(
+    functions,
+    'acceptGuardianInvite',
   )
-  await updateDoc(inviteRef, {
-    claimed: true,
-    claimedAtMs: Date.now(),
-    claimedByUid: uid,
-  })
-  return familyId
+  const result = await call({ code: code.trim().toUpperCase() })
+  return result.data.familyId
 }
 
 /** Project-owner admin view of parent accounts (requires Firestore admin rule + signed-in admin). */

@@ -18,7 +18,12 @@ export {
   adminRepairOrphans,
   adminSendTestFcm,
 } from "./admin";
+export {
+  adminRepairCrossTenantGuardians,
+  adminResetAccountFamilyIsolation,
+} from "./accountIsolation";
 export { deletePairedDevice } from "./deviceDelete";
+export { acceptGuardianInvite } from "./guardianInvites";
 export {
   adminSetResellerStatus,
   adminTopUpResellerCredits,

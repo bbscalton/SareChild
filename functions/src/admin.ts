@@ -54,6 +54,7 @@ export type AdminAuditAction =
   | "set_retention"
   | "set_chat_video_limit"
   | "repair_orphans"
+  | "repair_cross_tenant"
   | "send_test_fcm"
   | "delete_paired_device"
   | "set_reseller_status"
@@ -129,7 +130,7 @@ function nextUtcMidnightMs(fromMs: number): number {
   return d.getTime();
 }
 
-async function createFreshFamilyForUser(uid: string, email: string): Promise<string> {
+export async function createFreshFamilyForUser(uid: string, email: string): Promise<string> {
   const now = Date.now();
   const familyRef = db.collection("families").doc();
   await familyRef.set({

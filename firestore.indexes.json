@@ -48,6 +48,14 @@
         { "fieldPath": "createdByResellerUid", "order": "ASCENDING" },
         { "fieldPath": "createdAtMs", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "guardianInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "familyId", "order": "ASCENDING" },
+        { "fieldPath": "claimedByUid", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -238,16 +238,37 @@ service cloud.firestore {
         allow create: if isFamilyGuardian(familyId) || signedIn();
       }
 
+      // Guardian membership is the crux of family isolation: whoever holds a
+      // guardians/{uid} row can read the entire family (see isFamilyGuardian above).
+      // Creation must therefore NEVER be self-service for an arbitrary familyId —
+      // only the verified family owner (bootstrapping their own OWNER row, which is
+      // only possible once families/{familyId}.parentUid already == their uid) or the
+      // acceptGuardianInvite Cloud Function (Admin SDK, bypasses rules, validates a
+      // real unexpired/unclaimed invite before writing) may create one. This closes
+      // the 2026-08-05 cross-tenant isolation hole where any signed-in user could
+      // grant themselves guardian/OWNER access to any family by id.
       match /guardians/{uid} {
         allow read: if isFamilyGuardian(familyId) || isProjectAdmin();
-        allow write: if isFamilyOwner(familyId) || (requesterActive() && request.auth.uid == uid) || isProjectAdmin();
+        allow create: if isFamilyOwner(familyId) || isProjectAdmin();
+        // Self-updates may only touch chat-presence fields (chatOnline/lastSeenMs) —
+        // role/email/joinedAtMs are immutable outside the owner/admin/invite paths.
+        allow update: if isFamilyOwner(familyId) || isProjectAdmin()
+          || (requesterActive() && request.auth.uid == uid
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.joinedAtMs == resource.data.joinedAtMs);
+        allow delete: if isFamilyOwner(familyId) || isProjectAdmin() || (requesterActive() && request.auth.uid == uid);
       }
     }
 
     match /guardianInvites/{code} {
       allow read: if signedIn();
       allow create: if isFamilyOwner(request.resource.data.familyId);
-      allow update: if requesterActive();
+      // Claiming (marking used + writing the guardians/{uid} row) happens exclusively
+      // via the acceptGuardianInvite Cloud Function, which uses Admin SDK privileges
+      // and therefore isn't subject to these rules. No client write path exists here
+      // on purpose — see the guardians/{uid} rule above for why.
+      allow update: if isFamilyOwner(request.resource.data.familyId) || isProjectAdmin();
     }
 
     match /pairingCodes/{code} {

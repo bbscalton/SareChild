@@ -39,6 +39,7 @@ const ACTION_LABELS: Record<string, string> = {
   set_retention: 'Set retention',
   set_chat_video_limit: 'Set chat video limit',
   repair_orphans: 'Repair orphans',
+  repair_cross_tenant: 'Repair cross-tenant',
   send_test_fcm: 'Test FCM',
 }
 
@@ -135,6 +136,27 @@ export function AdminSystemPanel({
     }
   }
 
+  const runCrossTenantRepair = async () => {
+    if (
+      !window.confirm(
+        'Scan all parent accounts for illegitimate cross-tenant guardian links (2026-08-05 exploit pattern)? Rogue guardians will be deleted and affected users get a fresh empty family.',
+      )
+    ) {
+      return
+    }
+    onBusy(true)
+    onError(null)
+    try {
+      const fixes = await adminRepo.adminRepairCrossTenantGuardians()
+      setRepairLog(fixes)
+      onStatus('Cross-tenant guardian repair completed.')
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Cross-tenant repair failed')
+    } finally {
+      onBusy(false)
+    }
+  }
+
   const runTestFcm = async () => {
     const familyId = testFamilyId.trim()
     const deviceId = testDeviceId.trim()
@@ -172,6 +194,14 @@ export function AdminSystemPanel({
           </button>
           <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void runRepair()}>
             Repair orphaned families
+          </button>
+          <button
+            className="btn btn-ghost compact"
+            type="button"
+            disabled={busy}
+            onClick={() => void runCrossTenantRepair()}
+          >
+            Repair cross-tenant guardians
           </button>
         </div>
         <p className="muted small" style={{ marginTop: '0.75rem' }}>
