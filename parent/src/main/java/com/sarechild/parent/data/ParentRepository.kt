@@ -96,13 +96,18 @@ data class TrialInfo(
     val status: String = "active",
     val trialStartedAt: Long = 0L,
     val trialEndsAt: Long = 0L,
+    val paidUntilMs: Long? = null,
     val lastLoginAt: Long? = null,
     val lastParentCheckInAt: Long? = null,
     val adminBlocked: Boolean = false
 ) {
+    val hasPaidAccess: Boolean
+        get() = plan == "paid" && (paidUntilMs ?: 0L) > System.currentTimeMillis()
+
     val isBlocked: Boolean
         get() = adminBlocked || status == "blocked" || status == "purged" ||
-            (plan == "trial" && trialEndsAt > 0 && System.currentTimeMillis() > trialEndsAt)
+            (!hasPaidAccess && plan == "trial" && trialEndsAt > 0 && System.currentTimeMillis() > trialEndsAt) ||
+            (plan == "paid" && (paidUntilMs ?: 0L) > 0 && System.currentTimeMillis() > (paidUntilMs ?: 0L))
 }
 
 private fun newTrialFields(now: Long): Map<String, Any> = mapOf(
@@ -302,10 +307,25 @@ class ParentRepository(
             status = doc.getString("status") ?: "active",
             trialStartedAt = doc.getLong("trialStartedAt") ?: 0L,
             trialEndsAt = doc.getLong("trialEndsAt") ?: 0L,
+            paidUntilMs = doc.getLong("paidUntilMs"),
             lastLoginAt = doc.getLong("lastLoginAt"),
             lastParentCheckInAt = doc.getLong("lastParentCheckInAt"),
             adminBlocked = doc.getBoolean("adminBlocked") == true
         )
+    }
+
+    /** Redeem a reseller voucher onto this parent account (Cloud Function). */
+    suspend fun redeemVoucher(code: String): Pair<Long, Long> {
+        val payload = hashMapOf("code" to code.trim().uppercase())
+        val result = functions
+            .getHttpsCallable("redeemVoucher")
+            .call(payload)
+            .await()
+        @Suppress("UNCHECKED_CAST")
+        val map = result.getData() as? Map<String, Any?> ?: emptyMap()
+        val planDays = (map["planDays"] as? Number)?.toLong() ?: 0L
+        val paidUntilMs = (map["paidUntilMs"] as? Number)?.toLong() ?: 0L
+        return planDays to paidUntilMs
     }
 
     private val checkInThrottleMs = 60 * 60 * 1000L

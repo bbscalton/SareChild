@@ -63,11 +63,13 @@ import com.sarechild.shared.TypingSafetyEvent
 import com.sarechild.shared.WeeklyDigest
 import com.sarechild.shared.WhatsAppEvent
 import com.sarechild.shared.WhatsAppEventType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -389,7 +391,7 @@ class DashboardActivity : AppCompatActivity() {
         }
     }
 
-    /** Full features while status == "active" and now < trialEndsAt (see ParentRepository.TrialInfo). */
+    /** Full features while status == "active" and trial/paid window is valid. */
     private fun showTrialBlockedPrompt(trial: com.sarechild.parent.data.TrialInfo) {
         val container = binding.content
         container.removeAllViews()
@@ -401,7 +403,7 @@ class DashboardActivity : AppCompatActivity() {
         val title = when {
             trial.status == "blocked" || trial.adminBlocked -> "Account suspended"
             trial.status == "purged" -> "This trial account was removed"
-            else -> "Your free trial has ended"
+            else -> "Your access has ended"
         }
         val body = when {
             trial.status == "blocked" || trial.adminBlocked ->
@@ -409,7 +411,7 @@ class DashboardActivity : AppCompatActivity() {
             trial.status == "purged" ->
                 "This account was inactive for too long during its free trial and was automatically removed along with its family data, per our trial cleanup policy."
             else ->
-                "Your 30-day free trial has finished. Paid plans are coming later — thanks for trying SareChild!"
+                "Your free trial or paid period has finished. If you bought a voucher from a SareChild reseller, enter it below to reactivate."
         }
         root.addView(TextView(this).apply {
             text = title
@@ -420,6 +422,37 @@ class DashboardActivity : AppCompatActivity() {
             text = body
             setPadding(0, dp(8), 0, dp(16))
         })
+
+        if (trial.status != "purged" && !trial.adminBlocked && trial.status != "blocked") {
+            val codeInput = addTextInput(root, "Voucher code (SC-XXXX-XXXX-XXXX)")
+            val statusTv = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)) }
+            root.addView(statusTv)
+            root.addView(MaterialButton(this).apply {
+                text = "Redeem voucher"
+                setOnClickListener {
+                    val code = codeInput.text?.toString().orEmpty()
+                    if (code.isBlank()) {
+                        statusTv.text = "Enter a voucher code"
+                        return@setOnClickListener
+                    }
+                    isEnabled = false
+                    statusTv.text = "Redeeming…"
+                    lifecycleScope.launch {
+                        try {
+                            val (days, until) = withContext(Dispatchers.IO) { repo.redeemVoucher(code) }
+                            statusTv.text = "Activated $days days — paid until ${java.text.DateFormat.getDateTimeInstance().format(until)}. Reloading…"
+                            delay(900)
+                            recreate()
+                        } catch (e: Exception) {
+                            statusTv.setTextColor(0xFFB3261E.toInt())
+                            statusTv.text = e.message ?: "Redeem failed"
+                            isEnabled = true
+                        }
+                    }
+                }
+            })
+        }
+
         root.addView(MaterialButton(this).apply {
             text = "Sign out"
             setOnClickListener {

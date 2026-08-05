@@ -15,6 +15,9 @@ function decideTrialFate(
   now: number,
   data: FirebaseFirestore.DocumentData
 ): TrialDecision {
+  // Active paid window — never purge (reseller / voucher / TCD activations).
+  const paidUntilMs = Number(data.paidUntilMs ?? 0);
+  if (data.plan === "paid" && paidUntilMs > now) return "keep";
   if (data.plan !== "trial") return "keep";
   if (data.status === "purged") return "keep";
 

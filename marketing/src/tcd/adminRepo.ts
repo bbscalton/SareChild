@@ -496,3 +496,70 @@ export function downloadCsv(filename: string, content: string): void {
 export function isSelfAdminAccount(email: string, adminEmail: string | null | undefined): boolean {
   return email.trim().toLowerCase() === (adminEmail ?? ADMIN_EMAIL).trim().toLowerCase()
 }
+
+// ---------- Reseller program (TCD) ----------
+
+export type ResellerRow = {
+  uid: string
+  email: string
+  displayName?: string
+  status: string
+  creditBalance: number
+  createdAtMs?: number
+  activatedAtMs?: number
+  notes?: string
+}
+
+export type ResellerLedgerEntry = {
+  id: string
+  resellerUid: string
+  delta: number
+  balanceAfter: number
+  reason: string
+  createdAtMs: number
+  meta?: Record<string, unknown>
+}
+
+export async function listResellers(): Promise<ResellerRow[]> {
+  const fn = callable<Record<string, never>, { ok: boolean; resellers: ResellerRow[] }>('adminListResellers')
+  const res = await fn({})
+  return (res.data.resellers ?? []).map((r) => ({
+    ...r,
+    creditBalance: Number(r.creditBalance ?? 0),
+    status: String(r.status ?? 'pending'),
+    email: String(r.email ?? ''),
+  }))
+}
+
+export async function setResellerStatus(opts: {
+  email?: string
+  uid?: string
+  status: 'pending' | 'active' | 'suspended'
+  displayName?: string
+  notes?: string
+}): Promise<{ uid: string; email: string; status: string }> {
+  const fn = callable<typeof opts, { ok: boolean; uid: string; email: string; status: string }>(
+    'adminSetResellerStatus',
+  )
+  const res = await fn(opts)
+  return res.data
+}
+
+export async function topUpResellerCredits(uid: string, amount: number, note?: string): Promise<number> {
+  const fn = callable<{ uid: string; amount: number; note?: string }, { ok: boolean; creditBalance: number }>(
+    'adminTopUpResellerCredits',
+  )
+  const res = await fn({ uid, amount, note })
+  return Number(res.data.creditBalance)
+}
+
+export async function getResellerLedger(uid: string): Promise<ResellerLedgerEntry[]> {
+  const fn = callable<{ uid: string }, { ok: boolean; entries: ResellerLedgerEntry[] }>('adminGetResellerLedger')
+  const res = await fn({ uid })
+  return res.data.entries ?? []
+}
+
+export async function saveResellerPricing(pricing: Record<string, unknown>): Promise<void> {
+  const fn = callable<{ pricing: Record<string, unknown> }, { ok: boolean }>('adminSaveResellerPricing')
+  await fn({ pricing })
+}

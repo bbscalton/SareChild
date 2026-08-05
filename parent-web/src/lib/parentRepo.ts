@@ -97,6 +97,7 @@ function parseTrialInfo(data: Record<string, unknown> | undefined): TrialInfo | 
     status: (data.status as TrialInfo['status']) || 'active',
     trialStartedAt: Number(data.trialStartedAt ?? 0),
     trialEndsAt: Number(data.trialEndsAt ?? 0),
+    paidUntilMs: data.paidUntilMs == null ? null : Number(data.paidUntilMs),
     lastLoginAt: data.lastLoginAt == null ? null : Number(data.lastLoginAt),
     lastParentCheckInAt: data.lastParentCheckInAt == null ? null : Number(data.lastParentCheckInAt),
   }
@@ -378,6 +379,16 @@ export async function deletePairedDevice(
   >(functions, 'deletePairedDevice')
   const result = await call({ familyId, deviceId })
   return result.data
+}
+
+/** Redeem a reseller voucher onto the signed-in parent account. */
+export async function redeemVoucher(code: string): Promise<{ planDays: number; paidUntilMs: number }> {
+  const call = httpsCallable<
+    { code: string },
+    { ok: boolean; planDays: number; paidUntilMs: number }
+  >(functions, 'redeemVoucher')
+  const result = await call({ code: code.trim().toUpperCase() })
+  return { planDays: result.data.planDays, paidUntilMs: result.data.paidUntilMs }
 }
 
 export async function createPairingCode(childName: string): Promise<string> {

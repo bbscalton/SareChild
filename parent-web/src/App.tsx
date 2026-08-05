@@ -6,6 +6,7 @@ import { TosGatePage } from './pages/TosGatePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { TrialExpiredPage } from './pages/TrialExpiredPage'
 import { BlockedAccountPage } from './pages/BlockedAccountPage'
+import { isSubscriptionExpired } from './types'
 
 function AuthedApp() {
   const { user, loading, trialInfo, parentProfile, needsTerms } = useAuth()
@@ -37,11 +38,7 @@ function AuthedApp() {
 
   if (accountBlocked) return <BlockedAccountPage />
 
-  const now = Date.now()
-  const blocked =
-    trialInfo != null &&
-    (trialInfo.status === 'purged' ||
-      (trialInfo.plan === 'trial' && trialInfo.trialEndsAt > 0 && now > trialInfo.trialEndsAt))
+  const blocked = isSubscriptionExpired(trialInfo)
 
   if (blocked && trialInfo) return <TrialExpiredPage trialInfo={trialInfo} />
 

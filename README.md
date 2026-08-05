@@ -98,24 +98,29 @@ Retention: **7 days** (`purgeExpiredMedia`). Alerts: **30 days** (`purgeExpiredA
 
 The marketing site is the public front door — it explains the product, links to the parent dashboard, and hosts the two APK download buttons. The parent dashboard used to live on GitHub Pages; it now lives on Firebase Hosting so GitHub Pages can serve the marketing site at the repo root without clobbering it. See `.github/workflows/deploy-marketing-pages.yml` and `.github/workflows/deploy-parent-web-firebase.yml`.
 
-## Free trial & auto-cleanup
+## Free trial, paid access & auto-cleanup
 
-There is no billing yet — every signup gets a **30-day free trial with full features**, tracked on `parentProfiles/{uid}`:
+Every signup gets a **30-day free trial with full features**, tracked on `parentProfiles/{uid}`:
 
 ```
-plan: "trial" | "paid"          // paid is reserved for future billing, unused today
-status: "active" | "at_risk" | "purged"
+plan: "trial" | "paid"
+status: "active" | "at_risk" | "purged" | "blocked"
 trialStartedAt, trialEndsAt     // trialEndsAt = trialStartedAt + 30 days
+paidUntilMs                     // set by reseller activation or voucher redeem; stacks on renew
+subscriptionSource              // "reseller" | "voucher" | "tcd"
 lastLoginAt                     // updated (throttled) on parent-web / Android sign-in and app open
 lastParentCheckInAt             // updated (throttled) when a parent views devices/alerts
 ```
 
-**Purge rule** (run daily by `functions/src/index.ts` → `purgeInactiveTrials`, and mirrored in `scripts/purge-inactive-trials.mjs` for manual/offline runs):
-1. Trial accounts past `trialEndsAt` are purged.
-2. Trial accounts that go **7+ days with no parent check-in** are marked `at_risk` (client shows a warning banner); if they then go on to hit an inactivity grace window with no login either, they're purged.
-3. Purging deletes the family's subcollections, removes guardian records (or the whole family if the purged user was the owner), deletes the Firebase Auth user, and leaves a `status: "purged"` tombstone on `parentProfiles/{uid}` so `firestore.rules` can permanently deny that UID (`requesterActive()`).
+**Paid access (reseller program):** TCD activates partners on the **Resellers** tab and tops up **credit-days** (1 credit = 1 day). Resellers use https://bbscalton.github.io/SareChild/reseller.html to look up a parent email, activate 15/30/90 days, or mint expiring vouchers. Parents redeem vouchers on the expired-access screen (web + Android). Retail defaults: 15d G$2,200 · 30d G$4,000 · 90d G$10,800 (USD/XCD shown for display).
 
-Parent-web and the Android parent app both call `recordLogin()` / `recordParentCheckIn()` (throttled to avoid excess writes) and gate the UI with `TrialInfo` — purged/expired users see a dedicated "trial ended" screen instead of the dashboard. No credit card is collected; this is purely to validate demand before paid plans launch.
+**Purge rule** (run daily by `purgeInactiveTrials`):
+1. Accounts with an **active paid window** (`plan == paid` and `paidUntilMs > now`) are never purged.
+2. Trial accounts past `trialEndsAt` are purged.
+3. Trial accounts that go **7+ days with no parent check-in** are marked `at_risk`; after a grace window they may be purged.
+4. `expirePaidSubscriptions` (daily) flips expired paid profiles back to trial with `trialEndsAt = paidUntilMs` so the client shows the redeem screen.
+
+Parent apps gate the UI with `TrialInfo` — expired users can redeem a voucher instead of only seeing a dead-end.
 
 ## Prerequisites
 

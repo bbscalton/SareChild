@@ -92,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         status: (data.status as TrialInfo['status']) || 'active',
         trialStartedAt: Number(data.trialStartedAt ?? 0),
         trialEndsAt: Number(data.trialEndsAt ?? 0),
+        paidUntilMs: data.paidUntilMs == null ? null : Number(data.paidUntilMs),
         lastLoginAt: data.lastLoginAt == null ? null : Number(data.lastLoginAt),
         lastParentCheckInAt: data.lastParentCheckInAt == null ? null : Number(data.lastParentCheckInAt),
       })

@@ -1,0 +1,275 @@
+.reseller-body {
+  background: #0b1020;
+  min-height: 100vh;
+}
+
+.reseller-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: #e2e8f0;
+  font-family: var(--font-body);
+}
+
+.reseller-auth-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(31, 111, 99, 0.35), transparent),
+    radial-gradient(ellipse 60% 50% at 90% 20%, rgba(240, 165, 58, 0.18), transparent),
+    #0b1020;
+}
+
+.reseller-auth-card {
+  width: min(440px, 100%);
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 20px;
+  padding: 1.75rem;
+  color: #f1f5f9;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.reseller-auth-card h1 {
+  color: #fff;
+}
+
+.reseller-auth-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.reseller-auth-card input {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  background: rgba(2, 6, 23, 0.7);
+  color: #fff;
+  font: inherit;
+}
+
+.reseller-auth-card .error {
+  color: #fb7185;
+  margin: 0;
+}
+
+.reseller-auth-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.reseller-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  color: #e2e8f0;
+}
+
+.reseller-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 1.5rem;
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(31, 111, 99, 0.45), rgba(15, 23, 42, 0.9)),
+    #111827;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  margin-bottom: 1.25rem;
+}
+
+.reseller-hero h1 {
+  color: #fff;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  margin-top: 0.2rem;
+}
+
+.reseller-balance-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  min-width: 160px;
+}
+
+.reseller-balance-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.reseller-balance-value {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  color: var(--amber);
+  line-height: 1;
+}
+
+.reseller-banner {
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  margin-bottom: 1rem;
+  font-size: 0.92rem;
+}
+
+.reseller-banner.ok {
+  background: rgba(31, 111, 99, 0.25);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+}
+
+.reseller-banner.error {
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(251, 113, 133, 0.4);
+  color: #fecdd3;
+}
+
+.reseller-plans h2,
+.reseller-card h2 {
+  margin-bottom: 0.65rem;
+  color: #fff;
+}
+
+.reseller-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.reseller-plan-card {
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.75);
+  border-radius: 16px;
+  padding: 1rem;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font: inherit;
+}
+
+.reseller-plan-card.active {
+  border-color: rgba(240, 165, 58, 0.7);
+  box-shadow: 0 0 0 1px rgba(240, 165, 58, 0.35);
+}
+
+.reseller-plan-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.reseller-plan-credits {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.reseller-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.reseller-card {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 18px;
+  padding: 1.15rem 1.2rem 1.35rem;
+}
+
+.reseller-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-top: 0.75rem;
+}
+
+.reseller-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.reseller-form input,
+.reseller-form select {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  background: rgba(2, 6, 23, 0.65);
+  color: #fff;
+  font: inherit;
+}
+
+.reseller-account {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.reseller-account ul {
+  margin: 0.5rem 0 0.9rem;
+  padding-left: 1.1rem;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.reseller-voucher-code {
+  margin-top: 0.85rem;
+  font-size: 1.05rem;
+}
+
+.reseller-voucher-code code,
+.reseller-voucher-list code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+}
+
+.reseller-voucher-list,
+.reseller-ledger {
+  list-style: none;
+  padding: 0;
+  margin: 0.85rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  color: #cbd5e1;
+}
+
+.reseller-voucher-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-ghost-on-dark {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+@media (max-width: 800px) {
+  .reseller-plan-grid,
+  .reseller-grid {
+    grid-template-columns: 1fr;
+  }
+}

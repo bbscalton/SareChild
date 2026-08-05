@@ -109,6 +109,31 @@ a { color: var(--primary); }
 
 .auth-card h1 { font-size: 2.1rem; }
 
+.voucher-redeem-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin: 1rem 0;
+}
+
+.voucher-redeem-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.voucher-redeem-form input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.paid-banner {
+  border-color: rgba(15, 107, 76, 0.35);
+  background: rgba(15, 107, 76, 0.08);
+}
+
 label {
   display: grid;
   gap: 0.4rem;

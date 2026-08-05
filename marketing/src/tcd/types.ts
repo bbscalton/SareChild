@@ -68,6 +68,7 @@ export type TrialInfo = {
   status: TrialStatus
   trialStartedAt: number
   trialEndsAt: number
+  paidUntilMs: number | null
   lastLoginAt: number | null
   lastParentCheckInAt: number | null
 }
@@ -186,7 +187,7 @@ export type PlatformFault = {
   source: string
 }
 
-export type TcdTab = 'overview' | 'accounts' | 'features' | 'architecture' | 'system'
+export type TcdTab = 'overview' | 'accounts' | 'resellers' | 'features' | 'architecture' | 'system'
 
 export type AdminAuditLogEntry = {
   id: string

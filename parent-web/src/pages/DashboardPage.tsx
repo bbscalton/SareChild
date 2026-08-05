@@ -1240,6 +1240,11 @@ export function DashboardPage() {
             <TrialBannerText trialInfo={trialInfo} />
           </div>
         )}
+        {trialInfo && trialInfo.plan === 'paid' && (trialInfo.paidUntilMs ?? 0) > Date.now() && (
+          <div className="banner trial-banner paid-banner">
+            <PaidBannerText trialInfo={trialInfo} />
+          </div>
+        )}
         {trialInfo && trialInfo.status === 'at_risk' && (
           <div className="banner error-banner">
             We haven't seen a check-in from you in a while — sign in and open the dashboard
@@ -3746,7 +3751,18 @@ function TrialBannerText({ trialInfo }: { trialInfo: import('../types').TrialInf
   return (
     <span>
       Free trial — {daysLeft} day{daysLeft === 1 ? '' : 's'} left with full access. Paid plans are
-      coming later; no card required for now.
+      available via a SareChild reseller voucher.
+    </span>
+  )
+}
+
+function PaidBannerText({ trialInfo }: { trialInfo: import('../types').TrialInfo }) {
+  const ends = trialInfo.paidUntilMs ?? 0
+  const daysLeft = Math.max(0, Math.ceil((ends - Date.now()) / (24 * 60 * 60 * 1000)))
+  return (
+    <span>
+      Paid plan — {daysLeft} day{daysLeft === 1 ? '' : 's'} remaining (ends {new Date(ends).toLocaleDateString()}
+      ). No trial watermark while your subscription is active.
     </span>
   )
 }

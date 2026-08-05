@@ -55,7 +55,11 @@ export type AdminAuditAction =
   | "set_chat_video_limit"
   | "repair_orphans"
   | "send_test_fcm"
-  | "delete_paired_device";
+  | "delete_paired_device"
+  | "set_reseller_status"
+  | "topup_reseller_credits"
+  | "save_reseller_pricing"
+  | "trigger_expire_paid";
 
 export async function deleteCollectionRecursive(
   ref: FirebaseFirestore.CollectionReference,

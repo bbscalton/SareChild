@@ -1715,3 +1715,31 @@
     grid-template-columns: 1fr;
   }
 }
+
+.tcd-admin-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.tcd-admin-panel-head h2 {
+  margin: 0 0 0.35rem;
+  font-family: Fraunces, Georgia, serif;
+}
+
+.tcd-reseller-ledger {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.tcd-acct-table tr.selected td {
+  background: rgba(240, 165, 58, 0.08);
+}

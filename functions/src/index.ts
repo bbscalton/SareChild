@@ -19,6 +19,21 @@ export {
   adminSendTestFcm,
 } from "./admin";
 export { deletePairedDevice } from "./deviceDelete";
+export {
+  adminSetResellerStatus,
+  adminTopUpResellerCredits,
+  adminSaveResellerPricing,
+  adminListResellers,
+  adminGetResellerLedger,
+  adminTriggerExpirePaid,
+  resellerGetDashboard,
+  resellerLookupParent,
+  resellerActivateParent,
+  resellerCreateVoucher,
+  resellerVoidVoucher,
+  redeemVoucher,
+  expirePaidSubscriptions,
+} from "./reseller";
 
 if (!admin.apps.length) {
   admin.initializeApp();

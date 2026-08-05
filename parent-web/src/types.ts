@@ -381,8 +381,25 @@ export type TrialInfo = {
   status: TrialStatus
   trialStartedAt: number
   trialEndsAt: number
+  paidUntilMs: number | null
   lastLoginAt: number | null
   lastParentCheckInAt: number | null
+}
+
+/** True when the account currently has paid (reseller/voucher) access. */
+export function hasActivePaidAccess(trial: TrialInfo | null | undefined, now = Date.now()): boolean {
+  if (!trial) return false
+  return trial.plan === 'paid' && (trial.paidUntilMs ?? 0) > now
+}
+
+/** True when access should be blocked for trial/paid expiry (not admin block). */
+export function isSubscriptionExpired(trial: TrialInfo | null | undefined, now = Date.now()): boolean {
+  if (!trial) return false
+  if (trial.status === 'purged') return true
+  if (hasActivePaidAccess(trial, now)) return false
+  if (trial.plan === 'paid' && (trial.paidUntilMs ?? 0) > 0 && now > (trial.paidUntilMs ?? 0)) return true
+  if (trial.plan === 'trial' && trial.trialEndsAt > 0 && now > trial.trialEndsAt) return true
+  return false
 }
 
 /** Mirrors parentProfiles/{uid} fields used for registration, legal acceptance, and admin views. */

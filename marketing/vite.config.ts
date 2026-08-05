@@ -15,6 +15,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         tcd: resolve(__dirname, 'tcd.html'),
+        reseller: resolve(__dirname, 'reseller.html'),
       },
     },
   },

@@ -4,6 +4,7 @@ import { useAuth } from './authContext'
 import * as repo from './repo'
 import * as adminRepo from './adminRepo'
 import { AdminAccountsPanel } from './AdminAccountsPanel'
+import { AdminResellersPanel } from './AdminResellersPanel'
 import { AdminFeaturesPanel } from './AdminFeaturesPanel'
 import { AdminSystemPanel } from './AdminSystemPanel'
 import { ArchitectureTree, buildArchNodes } from './ArchitectureTree'
@@ -439,6 +440,7 @@ function TcdDashboard({
               [
                 ['overview', 'Overview'],
                 ['accounts', 'Accounts'],
+                ['resellers', 'Resellers'],
                 ['features', 'Features'],
                 ['system', 'System'],
                 ['architecture', 'Architecture'],
@@ -531,6 +533,10 @@ function TcdDashboard({
             onError={setError}
             onlineDevices={overview?.onlineDevices ?? null}
           />
+        )}
+
+        {tab === 'resellers' && isAdmin && (
+          <AdminResellersPanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
         )}
 
         {tab === 'system' && isAdmin && (

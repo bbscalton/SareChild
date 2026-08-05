@@ -282,5 +282,23 @@ service cloud.firestore {
       allow create: if isProjectAdmin();
       allow update, delete: if false;
     }
+
+    // Reseller program — balances and vouchers mutate only via Cloud Functions.
+    match /resellers/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isProjectAdmin());
+      allow write: if false;
+    }
+
+    match /resellerLedger/{entryId} {
+      allow read: if isProjectAdmin()
+        || (signedIn() && resource.data.resellerUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /vouchers/{code} {
+      allow read: if isProjectAdmin()
+        || (signedIn() && resource.data.createdByResellerUid == request.auth.uid);
+      allow write: if false;
+    }
   }
 }
