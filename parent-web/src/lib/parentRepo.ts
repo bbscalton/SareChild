@@ -1182,24 +1182,104 @@ export function observeWhatsAppEvents(
   )
 }
 
+function isFirestoreIndexError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; message?: string }
+  if (e.code === 'failed-precondition') return true
+  const msg = e.message ?? ''
+  return /requires an index|index is currently building|index.*building/i.test(msg)
+}
+
 /** Device-scoped WhatsApp timeline — primary listener for the protection tab. */
 export function observeWhatsAppEventsForDevice(
   familyId: string,
   deviceId: string,
   onData: (rows: WhatsAppEvent[]) => void,
   onError?: (err: Error) => void,
+  onIndexFallback?: (active: boolean) => void,
 ): () => void {
-  const q = query(
-    collection(db, COL.families, familyId, COL.whatsappEvents),
-    where('deviceId', '==', deviceId),
-    orderBy('createdAtMs', 'desc'),
-    limit(300),
-  )
-  return onSnapshot(
-    q,
-    (snap) => onData(snap.docs.map((d) => mapWhatsAppEventDoc(d))),
-    (err) => onError?.(err),
-  )
+  const col = collection(db, COL.families, familyId, COL.whatsappEvents)
+  const qPrimary = query(col, where('deviceId', '==', deviceId), orderBy('createdAtMs', 'desc'), limit(300))
+  const qFallback = query(col, orderBy('createdAtMs', 'desc'), limit(1000))
+
+  let primaryUnsub: (() => void) | null = null
+  let fallbackUnsub: (() => void) | null = null
+  let retryTimer: ReturnType<typeof setInterval> | null = null
+  let usingFallback = false
+
+  const clearRetry = () => {
+    if (retryTimer != null) {
+      clearInterval(retryTimer)
+      retryTimer = null
+    }
+  }
+
+  const stopFallback = () => {
+    fallbackUnsub?.()
+    fallbackUnsub = null
+    if (usingFallback) {
+      usingFallback = false
+      onIndexFallback?.(false)
+    }
+    clearRetry()
+  }
+
+  const startFallback = () => {
+    if (usingFallback) return
+    usingFallback = true
+    onIndexFallback?.(true)
+    primaryUnsub?.()
+    primaryUnsub = null
+
+    fallbackUnsub = onSnapshot(
+      qFallback,
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => mapWhatsAppEventDoc(d))
+          .filter((r) => r.deviceId === deviceId)
+          .slice(0, 300)
+        onData(rows)
+      },
+      (err) => {
+        if (!isFirestoreIndexError(err)) onError?.(err as Error)
+      },
+    )
+
+    retryTimer = setInterval(() => attachPrimary(true), 45_000)
+  }
+
+  const attachPrimary = (isRetry: boolean) => {
+    if (primaryUnsub && !isRetry) return
+    if (isRetry) {
+      primaryUnsub?.()
+      primaryUnsub = null
+    }
+
+    const unsub = onSnapshot(
+      qPrimary,
+      (snap) => {
+        stopFallback()
+        onData(snap.docs.map((d) => mapWhatsAppEventDoc(d)))
+      },
+      (err) => {
+        unsub()
+        if (isFirestoreIndexError(err)) {
+          if (!isRetry) startFallback()
+        } else {
+          onError?.(err as Error)
+        }
+      },
+    )
+    primaryUnsub = unsub
+  }
+
+  attachPrimary(false)
+
+  return () => {
+    primaryUnsub?.()
+    fallbackUnsub?.()
+    clearRetry()
+  }
 }
 
 // ---------- Call recording section (native Android — not Cordova) ----------

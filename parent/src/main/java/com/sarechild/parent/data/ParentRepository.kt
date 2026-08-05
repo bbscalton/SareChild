@@ -1,9 +1,14 @@
 package com.sarechild.parent.data
 
+import android.os.Handler
+import android.os.Looper
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.functions.FirebaseFunctions
@@ -57,6 +62,23 @@ data class UsageDailySummary(
     val totalMinutes: Int = 0,
     val apps: List<UsageAppEntry> = emptyList()
 )
+
+/** Device-scoped WhatsApp events plus whether a family-wide query fallback is active. */
+data class WhatsAppDeviceEvents(
+    val events: List<WhatsAppEvent> = emptyList(),
+    val indexFallback: Boolean = false,
+)
+
+private fun isFirestoreIndexError(err: Exception): Boolean {
+    if (err is FirebaseFirestoreException &&
+        err.code == FirebaseFirestoreException.Code.FAILED_PRECONDITION
+    ) {
+        return true
+    }
+    val msg = err.message ?: return false
+    return msg.contains("index", ignoreCase = true) ||
+        msg.contains("requires an index", ignoreCase = true)
+}
 
 data class LocationTrailSample(
     val id: String = "",
@@ -1204,40 +1226,113 @@ class ParentRepository(
         awaitClose { reg.remove() }
     }
 
-    fun observeWhatsAppEventsForDevice(familyId: String, deviceId: String): Flow<List<WhatsAppEvent>> = callbackFlow {
-        val reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
-            .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
-            .whereEqualTo("deviceId", deviceId)
-            .orderBy("createdAtMs", Query.Direction.DESCENDING)
-            .limit(300)
-            .addSnapshotListener { snap, err ->
-                if (err != null) {
-                    close(err)
-                    return@addSnapshotListener
-                }
-                val rows = snap?.documents?.map { doc ->
-                    WhatsAppEvent(
-                        id = doc.id,
-                        deviceId = doc.getString("deviceId") ?: "",
-                        eventType = runCatching {
-                            WhatsAppEventType.valueOf(doc.getString("eventType") ?: "MESSAGE")
-                        }.getOrDefault(WhatsAppEventType.MESSAGE),
-                        contactLabel = doc.getString("contactLabel") ?: "Unknown contact",
-                        contactSafe = doc.getBoolean("contactSafe") ?: false,
-                        direction = doc.getString("direction") ?: "IN",
-                        preview = doc.getString("preview"),
-                        mediaUrl = doc.getString("mediaUrl"),
-                        mediaType = doc.getString("mediaType"),
-                        durationSec = doc.getLong("durationSec")?.toInt(),
-                        riskScore = doc.getLong("riskScore")?.toInt(),
-                        riskFlag = doc.getBoolean("riskFlag") ?: false,
-                        source = doc.getString("source") ?: "notification",
-                        createdAtMs = doc.getLong("createdAtMs") ?: 0L
-                    )
-                } ?: emptyList()
-                trySend(rows)
+    fun observeWhatsAppEventsForDevice(familyId: String, deviceId: String): Flow<WhatsAppDeviceEvents> = callbackFlow {
+        val handler = Handler(Looper.getMainLooper())
+        var primaryReg: ListenerRegistration? = null
+        var fallbackReg: ListenerRegistration? = null
+        var retryRunnable: Runnable? = null
+        var usingFallback = false
+
+        fun mapDoc(doc: DocumentSnapshot): WhatsAppEvent = WhatsAppEvent(
+            id = doc.id,
+            deviceId = doc.getString("deviceId") ?: "",
+            eventType = runCatching {
+                WhatsAppEventType.valueOf(doc.getString("eventType") ?: "MESSAGE")
+            }.getOrDefault(WhatsAppEventType.MESSAGE),
+            contactLabel = doc.getString("contactLabel") ?: "Unknown contact",
+            contactSafe = doc.getBoolean("contactSafe") ?: false,
+            direction = doc.getString("direction") ?: "IN",
+            preview = doc.getString("preview"),
+            mediaUrl = doc.getString("mediaUrl"),
+            mediaType = doc.getString("mediaType"),
+            durationSec = doc.getLong("durationSec")?.toInt(),
+            riskScore = doc.getLong("riskScore")?.toInt(),
+            riskFlag = doc.getBoolean("riskFlag") ?: false,
+            source = doc.getString("source") ?: "notification",
+            createdAtMs = doc.getLong("createdAtMs") ?: 0L,
+        )
+
+        fun clearRetry() {
+            retryRunnable?.let { handler.removeCallbacks(it) }
+            retryRunnable = null
+        }
+
+        fun stopFallback() {
+            fallbackReg?.remove()
+            fallbackReg = null
+            usingFallback = false
+            clearRetry()
+        }
+
+        lateinit var startFallback: () -> Unit
+        lateinit var attachPrimary: (Boolean) -> Unit
+
+        attachPrimary = attachPrimary@ { retry ->
+            if (primaryReg != null && !retry) return@attachPrimary
+            if (retry) {
+                primaryReg?.remove()
+                primaryReg = null
             }
-        awaitClose { reg.remove() }
+            lateinit var reg: ListenerRegistration
+            reg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+                .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
+                .whereEqualTo("deviceId", deviceId)
+                .orderBy("createdAtMs", Query.Direction.DESCENDING)
+                .limit(300)
+                .addSnapshotListener { snap, err ->
+                    if (err != null) {
+                        reg.remove()
+                        if (isFirestoreIndexError(err)) {
+                            if (!retry) startFallback()
+                        } else {
+                            close(err)
+                        }
+                        return@addSnapshotListener
+                    }
+                    stopFallback()
+                    val rows = snap?.documents?.map { mapDoc(it) } ?: emptyList()
+                    trySend(WhatsAppDeviceEvents(rows, indexFallback = false))
+                }
+            primaryReg = reg
+        }
+
+        startFallback = startFallback@ {
+            if (usingFallback) return@startFallback
+            usingFallback = true
+            primaryReg?.remove()
+            primaryReg = null
+            fallbackReg = db.collection(SareChildConstants.COL_FAMILIES).document(familyId)
+                .collection(SareChildConstants.COL_WHATSAPP_EVENTS)
+                .orderBy("createdAtMs", Query.Direction.DESCENDING)
+                .limit(1000)
+                .addSnapshotListener { snap, err ->
+                    if (err != null) {
+                        if (!isFirestoreIndexError(err)) close(err)
+                        return@addSnapshotListener
+                    }
+                    val rows = snap?.documents
+                        ?.map { mapDoc(it) }
+                        ?.filter { it.deviceId == deviceId }
+                        ?.take(300)
+                        ?: emptyList()
+                    trySend(WhatsAppDeviceEvents(rows, indexFallback = true))
+                }
+            retryRunnable = object : Runnable {
+                override fun run() {
+                    attachPrimary(true)
+                    handler.postDelayed(this, 45_000)
+                }
+            }
+            handler.postDelayed(retryRunnable!!, 45_000)
+        }
+
+        attachPrimary(false)
+
+        awaitClose {
+            primaryReg?.remove()
+            fallbackReg?.remove()
+            clearRetry()
+        }
     }
 
     fun observeCallRecordings(familyId: String): Flow<List<CallRecordingEvent>> = callbackFlow {

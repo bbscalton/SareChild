@@ -120,6 +120,7 @@ export function DashboardPage() {
   const [whatsAppBadgeEvents, setWhatsAppBadgeEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppEvents, setWhatsAppEvents] = useState<WhatsAppEvent[]>([])
   const [whatsAppDeviceId, setWhatsAppDeviceId] = useState('')
+  const [whatsAppIndexFallback, setWhatsAppIndexFallback] = useState(false)
   const [whatsAppTypeFilter, setWhatsAppTypeFilter] = useState<WhatsAppTableTypeFilter>('ALL')
   const [callRecordings, setCallRecordings] = useState<CallRecording[]>([])
   const [devicePhotos, setDevicePhotos] = useState<DevicePhoto[]>([])
@@ -287,13 +288,16 @@ export function DashboardPage() {
   useEffect(() => {
     if (!familyId || !whatsAppDeviceId) {
       setWhatsAppEvents([])
+      setWhatsAppIndexFallback(false)
       return
     }
+    setWhatsAppIndexFallback(false)
     return repo.observeWhatsAppEventsForDevice(
       familyId,
       whatsAppDeviceId,
       setWhatsAppEvents,
       (e) => setError(e.message),
+      setWhatsAppIndexFallback,
     )
   }, [familyId, whatsAppDeviceId])
 
@@ -1753,6 +1757,9 @@ export function DashboardPage() {
                   Safe-list contacts apply to the whole family (not per device) — activity is still
                   logged but does not trigger alerts. Unknown contacts are monitored and flagged.
                 </p>
+                {whatsAppIndexFallback && (
+                  <p className="muted small whatsapp-index-note">Optimizing filters…</p>
+                )}
                 <div className="whatsapp-stats">
                   <div className="whatsapp-stat">
                     <span className="whatsapp-stat-num">{whatsAppEvents.length}</span>

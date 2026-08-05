@@ -1084,6 +1084,12 @@ select {
 
 .whatsapp-hero-head h3 { margin: 0; }
 
+.whatsapp-index-note {
+  margin: 0.35rem 0 0;
+  font-style: italic;
+  opacity: 0.85;
+}
+
 .whatsapp-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));

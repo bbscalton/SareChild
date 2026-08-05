@@ -94,6 +94,7 @@ class DashboardActivity : AppCompatActivity() {
     private var screenShareSchedules: List<ScreenShareSchedule> = emptyList()
     private var screenShareDurationMinutes = 10
     private var whatsAppEvents: List<WhatsAppEvent> = emptyList()
+    private var whatsAppIndexFallback = false
     private var whatsAppDeviceId: String? = null
     private var whatsAppEventsJob: Job? = null
     private var callRecordings: List<CallRecordingEvent> = emptyList()
@@ -631,8 +632,9 @@ class DashboardActivity : AppCompatActivity() {
             return
         }
         whatsAppEventsJob = lifecycleScope.launch {
-            repo.observeWhatsAppEventsForDevice(familyId, deviceId).collectLatest {
-                whatsAppEvents = it
+            repo.observeWhatsAppEventsForDevice(familyId, deviceId).collectLatest { result ->
+                whatsAppEvents = result.events
+                whatsAppIndexFallback = result.indexFallback
                 if (currentSection == "whatsapp") refreshSection()
             }
         }
@@ -913,6 +915,15 @@ class DashboardActivity : AppCompatActivity() {
             }
             setPadding(0, dp(8), 0, dp(12))
         })
+
+        if (whatsAppIndexFallback) {
+            root.addView(TextView(this).apply {
+                text = "Optimizing filters…"
+                textSize = 13f
+                setTextColor(0xFF666666.toInt())
+                setPadding(0, 0, 0, dp(8))
+            })
+        }
 
         selectedDevice?.let { device ->
             root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
