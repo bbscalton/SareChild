@@ -4,7 +4,7 @@ export type IceServerConfig = RTCIceServer
 
 export function buildIceServers(): IceServerConfig[] {
   const servers: IceServerConfig[] = [
-    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: import.meta.env.VITE_STUN_URL?.trim() || 'stun:stun.l.google.com:19302' },
   ]
   const turnUrl = (import.meta.env.VITE_TURN_URL as string | undefined)?.trim()
   const turnUser = (import.meta.env.VITE_TURN_USERNAME as string | undefined)?.trim()

@@ -1,10 +1,12 @@
 package com.sarechild.child.monitoring
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
@@ -97,18 +99,37 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         repo = ChildRepository(this)
-        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent && !repo.eventRecorderConsent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val caps = serviceInfo?.capabilities ?: 0
+            if (caps and AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT == 0) {
+                Log.w(
+                    TAG,
+                    "canTakeScreenshot missing — toggle SareChild accessibility off/on in Settings"
+                )
+            }
+        }
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent && !repo.eventRecorderConsent
+            && !repo.screenSnapshotsActive
+        ) {
             stopMonitoringService()
             return
         }
         ensureChannel()
         showOngoingNotification()
+        ScreenSnapshotCapture.onServiceReady(this, repo)
         scope.launch { refreshRules(force = true) }
+    }
+
+    override fun onDestroy() {
+        ScreenSnapshotCapture.onServiceGone()
+        super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent && !repo.eventRecorderConsent) return
+        if (!repo.messageMonitorConsent && !repo.whatsappMonitorConsent && !repo.eventRecorderConsent
+            && !repo.screenSnapshotsActive
+        ) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return
 
@@ -129,6 +150,10 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
                     )
                 }
             }
+        }
+
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            ScreenSnapshotCapture.updateForegroundApp(pkg, resolveAppLabel(pkg))
         }
 
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
@@ -415,11 +440,15 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
 
     private fun showOngoingNotification() {
         val title = when {
+            repo.screenSnapshotsActive && !repo.messageMonitorConsent && !repo.whatsappMonitorConsent ->
+                "Screen snapshots are on"
             repo.whatsappMonitorConsent && repo.messageMonitorConsent -> "Message safety is on"
             repo.whatsappMonitorConsent -> "WhatsApp protection is on"
             else -> "Typing safety is on"
         }
         val text = when {
+            repo.screenSnapshotsActive && !repo.messageMonitorConsent && !repo.whatsappMonitorConsent ->
+                "Protected by SareChild — periodic screen snapshots for your parent."
             repo.whatsappMonitorConsent && !repo.messageMonitorConsent ->
                 "Protected by SareChild — WhatsApp on-screen text may be logged for your parent."
             repo.whatsappMonitorConsent ->
@@ -455,6 +484,7 @@ class MessageMonitorAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        private const val TAG = "MessageMonitorA11y"
         private val PHONE_REGEX = Regex("""\+?\d[\d\s\-()]{5,}\d""")
 
         fun isServiceEnabled(context: android.content.Context): Boolean {

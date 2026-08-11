@@ -69,6 +69,46 @@ export type LockScreenStatus = {
   updatedAtMs: number
 }
 
+export type ScreenSnapshotStatus = {
+  active: boolean
+  accessibilityAccess: boolean
+  updatedAtMs: number
+}
+
+export type ScreenSnapshot = {
+  id: string
+  deviceId: string
+  capturedAtMs: number
+  appPackage: string | null
+  appLabel: string | null
+  r2Path: string | null
+  imageUrl: string | null
+  thumbPath: string | null
+  thumbUrl: string | null
+  width: number
+  height: number
+}
+
+export type CameraSnapshotStatus = {
+  active: boolean
+  cameras: string
+  cameraPermission: boolean
+  updatedAtMs: number
+}
+
+export type CameraSnapshot = {
+  id: string
+  deviceId: string
+  capturedAtMs: number
+  cameraFacing: string
+  r2Path: string | null
+  imageUrl: string | null
+  thumbPath: string | null
+  thumbUrl: string | null
+  width: number
+  height: number
+}
+
 export type ActivityEventType =
   | 'APP_FOREGROUND'
   | 'APP_BACKGROUND'
@@ -147,6 +187,7 @@ export type DeviceStatus = {
   monitoringActive: boolean
   screenShareConsent: boolean
   cameraCheckConsent: boolean
+  cameraPermission: boolean
   micCheckConsent: boolean
   messageMonitorConsent: boolean
   installMonitorConsent: boolean
@@ -175,6 +216,14 @@ export type DeviceStatus = {
   activeSession: string | null
   latestFrameUrl: string | null
   todayScreenMinutes: number
+  /** True while the parent has Live Map open and the child is pinging every ~5s. */
+  liveTrackingActive: boolean
+  /** True while periodic accessibility screen snapshots are capturing. */
+  screenSnapshotsActive: boolean
+  screenSnapshotStatus: ScreenSnapshotStatus | null
+  /** True while periodic camera snapshots are capturing. */
+  cameraSnapshotsActive: boolean
+  cameraSnapshotStatus: CameraSnapshotStatus | null
   /** Guardian uids the parent has explicitly assigned to this device's chat thread.
    *  Empty means only the family owner (parent) can see/use this thread. */
   assignedGuardianUids: string[]

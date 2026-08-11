@@ -75,7 +75,7 @@ class ScreenShareScheduleWatcher(
         val notification = NotificationCompat.Builder(context, SareChildConstants.NOTIFICATION_CHANNEL_SAFETY)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("Scheduled screen share: ${schedule.label}")
-            .setContentText("Tap to Accept or Decline. Protected by SareChild.")
+            .setContentText("Starting screen share… Protected by SareChild.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pending)
             .setAutoCancel(true)

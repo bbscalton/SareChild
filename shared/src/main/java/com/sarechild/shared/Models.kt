@@ -75,6 +75,7 @@ data class DeviceStatus(
     val monitoringActive: Boolean = false,
     val screenShareConsent: Boolean = false,
     val cameraCheckConsent: Boolean = false,
+    val cameraPermission: Boolean = false,
     val micCheckConsent: Boolean = false,
     val messageMonitorConsent: Boolean = false,
     val installMonitorConsent: Boolean = false,
@@ -207,6 +208,8 @@ data class SafetyCommand(
     val liveRecord: Boolean? = null,
     /** true = front camera, false = rear. */
     val cameraFront: Boolean? = null,
+    /** Camera snapshot mode: "front", "back", or "both". */
+    val cameras: String? = null,
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "type" to type.name,
@@ -225,6 +228,7 @@ data class SafetyCommand(
         "liveScreen" to liveScreen,
         "liveRecord" to liveRecord,
         "cameraFront" to cameraFront,
+        "cameras" to cameras,
     )
 
     companion object {
@@ -253,6 +257,7 @@ data class SafetyCommand(
                 liveScreen = data["liveScreen"] as? Boolean,
                 liveRecord = data["liveRecord"] as? Boolean,
                 cameraFront = data["cameraFront"] as? Boolean,
+                cameras = data["cameras"] as? String,
             )
         }
     }
@@ -530,6 +535,98 @@ data class DevicePhoto(
                 thumbUrl = map["thumbUrl"] as? String,
                 fullPath = map["fullPath"] as? String,
                 fullUrl = map["fullUrl"] as? String
+            )
+        }
+    }
+}
+
+/** A single periodic accessibility screenshot (see ScreenSnapshotCapture on the child device). */
+data class ScreenSnapshot(
+    val id: String = "",
+    val deviceId: String = "",
+    val capturedAtMs: Long = System.currentTimeMillis(),
+    val appPackage: String? = null,
+    val appLabel: String? = null,
+    val r2Path: String? = null,
+    val imageUrl: String? = null,
+    val thumbPath: String? = null,
+    val thumbUrl: String? = null,
+    val width: Int = 0,
+    val height: Int = 0
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "deviceId" to deviceId,
+        "capturedAtMs" to capturedAtMs,
+        "appPackage" to appPackage,
+        "appLabel" to appLabel,
+        "r2Path" to r2Path,
+        "imageUrl" to imageUrl,
+        "thumbPath" to thumbPath,
+        "thumbUrl" to thumbUrl,
+        "width" to width,
+        "height" to height
+    )
+
+    companion object {
+        fun fromMap(id: String, map: Map<String, Any?>?): ScreenSnapshot? {
+            if (map == null) return null
+            return ScreenSnapshot(
+                id = id,
+                deviceId = map["deviceId"] as? String ?: "",
+                capturedAtMs = (map["capturedAtMs"] as? Number)?.toLong() ?: 0L,
+                appPackage = map["appPackage"] as? String,
+                appLabel = map["appLabel"] as? String,
+                r2Path = map["r2Path"] as? String,
+                imageUrl = map["imageUrl"] as? String,
+                thumbPath = map["thumbPath"] as? String,
+                thumbUrl = map["thumbUrl"] as? String,
+                width = (map["width"] as? Number)?.toInt() ?: 0,
+                height = (map["height"] as? Number)?.toInt() ?: 0
+            )
+        }
+    }
+}
+
+/** A single periodic camera snapshot (see CameraSnapshotCapture on the child device). */
+data class CameraSnapshot(
+    val id: String = "",
+    val deviceId: String = "",
+    val capturedAtMs: Long = System.currentTimeMillis(),
+    /** "front" or "back". */
+    val cameraFacing: String = "back",
+    val r2Path: String? = null,
+    val imageUrl: String? = null,
+    val thumbPath: String? = null,
+    val thumbUrl: String? = null,
+    val width: Int = 0,
+    val height: Int = 0
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "deviceId" to deviceId,
+        "capturedAtMs" to capturedAtMs,
+        "cameraFacing" to cameraFacing,
+        "r2Path" to r2Path,
+        "imageUrl" to imageUrl,
+        "thumbPath" to thumbPath,
+        "thumbUrl" to thumbUrl,
+        "width" to width,
+        "height" to height
+    )
+
+    companion object {
+        fun fromMap(id: String, map: Map<String, Any?>?): CameraSnapshot? {
+            if (map == null) return null
+            return CameraSnapshot(
+                id = id,
+                deviceId = map["deviceId"] as? String ?: "",
+                capturedAtMs = (map["capturedAtMs"] as? Number)?.toLong() ?: 0L,
+                cameraFacing = map["cameraFacing"] as? String ?: "back",
+                r2Path = map["r2Path"] as? String,
+                imageUrl = map["imageUrl"] as? String,
+                thumbPath = map["thumbPath"] as? String,
+                thumbUrl = map["thumbUrl"] as? String,
+                width = (map["width"] as? Number)?.toInt() ?: 0,
+                height = (map["height"] as? Number)?.toInt() ?: 0
             )
         }
     }

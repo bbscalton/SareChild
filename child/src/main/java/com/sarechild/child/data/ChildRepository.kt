@@ -2,6 +2,7 @@ package com.sarechild.child.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -34,6 +35,8 @@ import com.sarechild.shared.SafetyCommand
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
 import com.sarechild.shared.ScreenShareSchedule
+import com.sarechild.shared.ScreenSnapshot
+import com.sarechild.shared.CameraSnapshot
 import com.sarechild.shared.SafeContact
 import com.sarechild.shared.SosContact
 import com.sarechild.shared.TypingSafetyEvent
@@ -59,6 +62,10 @@ class ChildRepository(
     private val storage: FirebaseStorage = FirebaseStorage.getInstance()
 ) {
     private val prefs = context.getSharedPreferences(SareChildConstants.PREFS_NAME, Context.MODE_PRIVATE)
+
+    companion object {
+        private const val TAG = "ChildRepository"
+    }
 
     var familyId: String?
         get() = prefs.getString(SareChildConstants.PREF_FAMILY_ID, null)
@@ -141,6 +148,20 @@ class ChildRepository(
         get() = prefs.getBoolean(SareChildConstants.PREF_EVENT_RECORDER_CONSENT, false)
         set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_EVENT_RECORDER_CONSENT, value).apply()
 
+    /** True while parent has toggled periodic screen snapshots on. */
+    var screenSnapshotsActive: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_SCREEN_SNAPSHOTS_ACTIVE, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_SCREEN_SNAPSHOTS_ACTIVE, value).apply()
+
+    /** True while parent has toggled periodic camera snapshots on. */
+    var cameraSnapshotsActive: Boolean
+        get() = prefs.getBoolean(SareChildConstants.PREF_CAMERA_SNAPSHOTS_ACTIVE, false)
+        set(value) = prefs.edit().putBoolean(SareChildConstants.PREF_CAMERA_SNAPSHOTS_ACTIVE, value).apply()
+
+    var cameraSnapshotsMode: String
+        get() = prefs.getString(SareChildConstants.PREF_CAMERA_SNAPSHOTS_MODE, "back") ?: "back"
+        set(value) = prefs.edit().putString(SareChildConstants.PREF_CAMERA_SNAPSHOTS_MODE, value).apply()
+
     var lastEventRecorderSyncMs: Long
         get() = prefs.getLong(SareChildConstants.PREF_LAST_EVENT_RECORDER_SYNC_MS, 0L)
         set(value) = prefs.edit().putLong(SareChildConstants.PREF_LAST_EVENT_RECORDER_SYNC_MS, value).apply()
@@ -152,6 +173,27 @@ class ChildRepository(
     var eventRecorderEventCount24h: Int
         get() = prefs.getInt(SareChildConstants.PREF_EVENT_RECORDER_EVENT_COUNT_24H, 0)
         set(value) = prefs.edit().putInt(SareChildConstants.PREF_EVENT_RECORDER_EVENT_COUNT_24H, value).apply()
+
+    /** Reset local Event Recorder watermarks after a parent clears the cloud timeline. */
+    fun clearEventRecorderLocalState() {
+        val now = System.currentTimeMillis()
+        lastUsageEventPollMs = now
+        eventRecorderEventCount24h = 0
+        lastEventRecorderSyncMs = now
+    }
+
+    fun clearWhatsAppLocalState() {
+        prefs.edit().putLong(SareChildConstants.PREF_LAST_WHATSAPP_EVENT_AT_MS, 0L).apply()
+    }
+
+    fun clearCallRecordingLocalState() {
+        prefs.edit().putLong(SareChildConstants.PREF_LAST_CALL_RECORDING_AT_MS, 0L).apply()
+    }
+
+    /** Reset gallery sync counters after parent clears the cloud gallery index. */
+    fun clearPhotoGalleryLocalState() {
+        syncedPhotoCount = 0
+    }
 
     var lastActivityAtMs: Long
         get() = prefs.getLong(SareChildConstants.PREF_LAST_ACTIVITY_AT_MS, 0L)
@@ -308,6 +350,12 @@ class ChildRepository(
     fun consentMap(): Map<String, Any?> = mapOf(
         "screenShareConsent" to screenShareConsent,
         "cameraCheckConsent" to cameraCheckConsent,
+        "cameraPermission" to (
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.CAMERA
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ),
         "micCheckConsent" to micCheckConsent,
         "messageMonitorConsent" to messageMonitorConsent,
         "installMonitorConsent" to installMonitorConsent,
@@ -345,7 +393,10 @@ class ChildRepository(
         callRecordingStatus: Map<String, Any?> = emptyMap(),
         photoGalleryStatus: Map<String, Any?> = emptyMap(),
         eventRecorderStatus: Map<String, Any?> = emptyMap(),
-        lockScreenStatus: Map<String, Any?> = emptyMap()
+        lockScreenStatus: Map<String, Any?> = emptyMap(),
+        liveTrackingActive: Boolean = false,
+        screenSnapshotsActive: Boolean = false,
+        cameraSnapshotsActive: Boolean = false
     ) {
         val fid = familyId ?: return
         val did = deviceId ?: return
@@ -377,6 +428,9 @@ class ChildRepository(
         if (lockScreenStatus.isNotEmpty()) {
             data["lockScreenStatus"] = lockScreenStatus
         }
+        data["liveTrackingActive"] = liveTrackingActive
+        data["screenSnapshotsActive"] = screenSnapshotsActive
+        data["cameraSnapshotsActive"] = cameraSnapshotsActive
         data.putAll(consentMap())
         if (location != null) {
             data["lastLocation"] = location.toMap()
@@ -857,12 +911,14 @@ class ChildRepository(
             .await()
         prefs.edit().putLong(SareChildConstants.PREF_LAST_WHATSAPP_EVENT_AT_MS, now).apply()
         runCatching {
+            // Dot-notation fields — a nested map would replace the entire whatsappProtection
+            // object and wipe enabled/consent/notificationAccess until the next heartbeat.
             db.collection(SareChildConstants.COL_FAMILIES).document(fid)
                 .collection(SareChildConstants.COL_DEVICES).document(did)
                 .set(
                     mapOf(
                         "lastWhatsAppEventAtMs" to now,
-                        "whatsappProtection" to mapOf("lastEventAtMs" to now)
+                        "whatsappProtection.lastEventAtMs" to now
                     ),
                     SetOptions.merge()
                 )
@@ -988,6 +1044,10 @@ class ChildRepository(
         val fid = familyId ?: error("Not paired")
         val did = deviceId ?: error("Not paired")
         val path = "families/$fid/devices/$did/$folder/${System.currentTimeMillis()}_${localFile.name}"
+        return uploadMediaAtPath(localFile, path, contentType)
+    }
+
+    suspend fun uploadMediaAtPath(localFile: File, path: String, contentType: String): Pair<String, String> {
         uploadMediaToR2(path, localFile, contentType)?.let { return it }
         val ref = storage.reference.child(path)
         ref.putFile(Uri.fromFile(localFile)).await()
@@ -1091,11 +1151,17 @@ class ChildRepository(
             localFile.inputStream().use { input ->
                 conn.outputStream.use { output -> input.copyTo(output) }
             }
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val code = conn.responseCode
+            val body = if (code in 200..299) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                val err = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                error("R2 upload HTTP $code: $err")
+            }
             val mediaUrl = """"url"\s*:\s*"([^"]+)"""".toRegex().find(body)?.groupValues?.get(1)
                 ?: error("R2 response missing URL")
             path to mediaUrl
-        }.getOrNull()
+        }.onFailure { Log.w(TAG, "R2 upload failed for $path", it) }.getOrNull()
     }
 
     suspend fun setLatestFrameUrl(url: String?) {
@@ -1104,6 +1170,128 @@ class ChildRepository(
         db.collection(SareChildConstants.COL_FAMILIES).document(fid)
             .collection(SareChildConstants.COL_DEVICES).document(did)
             .set(mapOf("latestFrameUrl" to url), SetOptions.merge())
+            .await()
+    }
+
+    suspend fun postScreenSnapshot(snapshot: ScreenSnapshot) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val ref = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_SCREEN_SNAPSHOTS).document()
+        ref.set(snapshot.copy(deviceId = did).toMap()).await()
+    }
+
+    suspend fun purgeOldScreenSnapshots() {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val col = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_SCREEN_SNAPSHOTS)
+        val cutoff = System.currentTimeMillis() - SareChildConstants.SCREEN_SNAPSHOT_RETENTION_MS
+        val stale = col.whereLessThan("capturedAtMs", cutoff)
+            .limit(40)
+            .get()
+            .await()
+        for (doc in stale.documents) {
+            doc.reference.delete().await()
+        }
+        val all = col.orderBy("capturedAtMs", Query.Direction.DESCENDING)
+            .limit((SareChildConstants.SCREEN_SNAPSHOT_MAX_DOCS + 20).toLong())
+            .get()
+            .await()
+        if (all.size() > SareChildConstants.SCREEN_SNAPSHOT_MAX_DOCS) {
+            val excess = all.documents.drop(SareChildConstants.SCREEN_SNAPSHOT_MAX_DOCS)
+            for (doc in excess) {
+                doc.reference.delete().await()
+            }
+        }
+    }
+
+    suspend fun updateScreenSnapshotStatus(active: Boolean) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .set(
+                mapOf(
+                    "screenSnapshotsActive" to active,
+                    "screenSnapshotStatus" to mapOf(
+                        "active" to active,
+                        "accessibilityAccess" to com.sarechild.child.monitoring.MessageMonitorAccessibilityService
+                            .isServiceEnabled(context),
+                        "updatedAtMs" to System.currentTimeMillis()
+                    )
+                ),
+                SetOptions.merge()
+            )
+            .await()
+    }
+
+    fun newCameraSnapshotId(): String {
+        val fid = familyId ?: error("Not paired")
+        val did = deviceId ?: error("Not paired")
+        return db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_CAMERA_SNAPSHOTS).document().id
+    }
+
+    suspend fun postCameraSnapshot(snapshot: CameraSnapshot) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val ref = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_CAMERA_SNAPSHOTS).document(snapshot.id)
+        ref.set(snapshot.copy(deviceId = did).toMap()).await()
+    }
+
+    suspend fun purgeOldCameraSnapshots() {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val col = db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .collection(SareChildConstants.COL_CAMERA_SNAPSHOTS)
+        val cutoff = System.currentTimeMillis() - SareChildConstants.CAMERA_SNAPSHOT_RETENTION_MS
+        val stale = col.whereLessThan("capturedAtMs", cutoff)
+            .limit(40)
+            .get()
+            .await()
+        for (doc in stale.documents) {
+            doc.reference.delete().await()
+        }
+        val all = col.orderBy("capturedAtMs", Query.Direction.DESCENDING)
+            .limit((SareChildConstants.CAMERA_SNAPSHOT_MAX_DOCS + 20).toLong())
+            .get()
+            .await()
+        if (all.size() > SareChildConstants.CAMERA_SNAPSHOT_MAX_DOCS) {
+            val excess = all.documents.drop(SareChildConstants.CAMERA_SNAPSHOT_MAX_DOCS)
+            for (doc in excess) {
+                doc.reference.delete().await()
+            }
+        }
+    }
+
+    suspend fun updateCameraSnapshotStatus(active: Boolean, cameras: String) {
+        val fid = familyId ?: return
+        val did = deviceId ?: return
+        val hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        db.collection(SareChildConstants.COL_FAMILIES).document(fid)
+            .collection(SareChildConstants.COL_DEVICES).document(did)
+            .set(
+                mapOf(
+                    "cameraSnapshotsActive" to active,
+                    "cameraSnapshotStatus" to mapOf(
+                        "active" to active,
+                        "cameras" to cameras,
+                        "cameraPermission" to hasCamera,
+                        "updatedAtMs" to System.currentTimeMillis()
+                    )
+                ),
+                SetOptions.merge()
+            )
             .await()
     }
 

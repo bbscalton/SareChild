@@ -67,10 +67,30 @@ import type {
   LockScreenStatus,
   ActivityEvent,
   ActivityEventType,
+  ScreenSnapshot,
+  ScreenSnapshotStatus,
+  CameraSnapshot,
+  CameraSnapshotStatus,
 } from '../types'
 import { parseBatteryHistory, parseLocation, parseUsageApps } from '../types'
 
 export const TRIAL_DAYS = 30
+
+/** Matches child retention cap — keep snapshot listeners at a stable limit to avoid churn. */
+export const SNAPSHOT_LISTEN_LIMIT = 200
+
+/** Transport blips the SDK auto-reconnects from; do not surface as user-facing errors. */
+export function isIgnorableFirestoreListenerError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; message?: string }
+  if (e.code === 'unavailable' || e.code === 'cancelled' || e.code === 'deadline-exceeded') {
+    return true
+  }
+  const msg = e.message ?? ''
+  return /transport errored|WebChannelConnection|network request failed|Failed to get document/i.test(
+    msg,
+  )
+}
 
 /**
  * Bootstrap fields for a brand-new parentProfiles/{uid} doc. `plan`/`status` are their
@@ -427,13 +447,18 @@ export async function createPairingCode(childName: string): Promise<string> {
   return code
 }
 
-function parseWhatsAppProtection(raw: unknown): WhatsAppProtectionStatus | null {
+function parseWhatsAppProtection(
+  raw: unknown,
+  fallback?: { consent?: boolean; notificationAccess?: boolean },
+): WhatsAppProtectionStatus | null {
   if (!raw || typeof raw !== 'object') return null
   const data = raw as Record<string, unknown>
+  const consent = Boolean(data.consent ?? fallback?.consent)
+  const notificationAccess = Boolean(data.notificationAccess ?? fallback?.notificationAccess)
   return {
-    enabled: Boolean(data.enabled),
-    consent: Boolean(data.consent),
-    notificationAccess: Boolean(data.notificationAccess),
+    enabled: Boolean(data.enabled ?? (consent && notificationAccess)),
+    consent,
+    notificationAccess,
     accessibilityAccess: Boolean(data.accessibilityAccess),
     outgoingCaptureReady: Boolean(data.outgoingCaptureReady),
     mediaPermission: Boolean(data.mediaPermission),
@@ -468,6 +493,27 @@ function parsePhotoGalleryStatus(raw: unknown): PhotoGalleryStatus | null {
     lastSyncAtMs: Number(data.lastSyncAtMs ?? 0),
     photoCount: Number(data.photoCount ?? 0),
     lastError: (data.lastError as string | null) ?? null,
+  }
+}
+
+function parseScreenSnapshotStatus(raw: unknown): ScreenSnapshotStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  return {
+    active: Boolean(data.active),
+    accessibilityAccess: Boolean(data.accessibilityAccess),
+    updatedAtMs: Number(data.updatedAtMs ?? 0),
+  }
+}
+
+function parseCameraSnapshotStatus(raw: unknown): CameraSnapshotStatus | null {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw as Record<string, unknown>
+  return {
+    active: Boolean(data.active),
+    cameras: String(data.cameras ?? 'back'),
+    cameraPermission: Boolean(data.cameraPermission),
+    updatedAtMs: Number(data.updatedAtMs ?? 0),
   }
 }
 
@@ -523,6 +569,7 @@ export function observeDevices(
           monitoringActive: Boolean(data.monitoringActive),
           screenShareConsent: Boolean(data.screenShareConsent),
           cameraCheckConsent: Boolean(data.cameraCheckConsent),
+          cameraPermission: Boolean(data.cameraPermission),
           micCheckConsent: Boolean(data.micCheckConsent),
           messageMonitorConsent: Boolean(data.messageMonitorConsent),
           installMonitorConsent: Boolean(data.installMonitorConsent),
@@ -533,7 +580,10 @@ export function observeDevices(
           whatsappMonitorConsent: Boolean(data.whatsappMonitorConsent),
           whatsappMediaPermission: Boolean(data.whatsappMediaPermission),
           lastWhatsAppEventAtMs: Number(data.lastWhatsAppEventAtMs ?? 0),
-          whatsappProtection: parseWhatsAppProtection(data.whatsappProtection),
+          whatsappProtection: parseWhatsAppProtection(data.whatsappProtection, {
+            consent: Boolean(data.whatsappMonitorConsent),
+            notificationAccess: Boolean(data.notificationAccess),
+          }),
           callRecordingConsent: Boolean(data.callRecordingConsent),
           callRecordingEnabled: Boolean(data.callRecordingEnabled),
           lastCallRecordingAtMs: Number(data.lastCallRecordingAtMs ?? 0),
@@ -551,6 +601,11 @@ export function observeDevices(
           activeSession: (data.activeSession as string | null) ?? null,
           latestFrameUrl: (data.latestFrameUrl as string | null) ?? null,
           todayScreenMinutes: Number(data.todayScreenMinutes ?? 0),
+          liveTrackingActive: Boolean(data.liveTrackingActive),
+          screenSnapshotsActive: Boolean(data.screenSnapshotsActive),
+          screenSnapshotStatus: parseScreenSnapshotStatus(data.screenSnapshotStatus),
+          cameraSnapshotsActive: Boolean(data.cameraSnapshotsActive),
+          cameraSnapshotStatus: parseCameraSnapshotStatus(data.cameraSnapshotStatus),
           assignedGuardianUids: Array.isArray(data.assignedGuardianUids)
             ? (data.assignedGuardianUids as string[])
             : [],
@@ -734,14 +789,155 @@ export type SafetyCommandType =
   | 'REQUEST_PHOTO_SYNC'
   | 'REQUEST_EVENT_RECORDER_ACCESS'
   | 'REQUEST_EVENT_RECORDER_SYNC'
+  | 'CLEAR_EVENT_RECORDER'
+  | 'CLEAR_WHATSAPP_EVENTS'
+  | 'CLEAR_CALL_RECORDINGS'
+  | 'CLEAR_PHOTOS'
+  | 'CLEAR_TYPING_EVENTS'
+  | 'CLEAR_LOCATION_TRAIL'
+  | 'CLEAR_USAGE_DATA'
   | 'START_LIVE_VIEW'
   | 'STOP_LIVE_VIEW'
+  | 'START_LIVE_TRACKING'
+  | 'STOP_LIVE_TRACKING'
+  | 'START_SCREEN_SNAPSHOTS'
+  | 'STOP_SCREEN_SNAPSHOTS'
+  | 'START_CAMERA_SNAPSHOTS'
+  | 'STOP_CAMERA_SNAPSHOTS'
+
+const LIVE_TRACKING_DURATION_MIN = 20
+
+/** Ask the child device to ping GPS every ~5s while the parent watches Live Map. */
+export async function startLiveTracking(familyId: string, deviceId: string): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'START_LIVE_TRACKING', LIVE_TRACKING_DURATION_MIN)
+}
+
+/** Resume normal ~60s location cadence when the parent leaves Live Map. */
+export async function stopLiveTracking(familyId: string, deviceId: string): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'STOP_LIVE_TRACKING')
+}
+
+/** Start periodic accessibility screenshots (~every 5s, auto-stops after 30 min). */
+export async function startScreenSnapshots(familyId: string, deviceId: string): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'START_SCREEN_SNAPSHOTS')
+}
+
+/** Stop periodic accessibility screenshots. */
+export async function stopScreenSnapshots(familyId: string, deviceId: string): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'STOP_SCREEN_SNAPSHOTS')
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    screenSnapshotsActive: false,
+    screenSnapshotStatus: {
+      active: false,
+      updatedAtMs: Date.now(),
+    },
+  })
+}
+
+export type CameraSnapshotMode = 'front' | 'back' | 'both'
+
+/** Start periodic camera snapshots (~every 5s, auto-stops after 30 min). */
+export async function startCameraSnapshots(
+  familyId: string,
+  deviceId: string,
+  cameras: CameraSnapshotMode,
+): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'START_CAMERA_SNAPSHOTS', undefined, { cameras })
+}
+
+/** Stop periodic camera snapshots. */
+export async function stopCameraSnapshots(familyId: string, deviceId: string): Promise<void> {
+  await createSafetyCommand(familyId, deviceId, 'STOP_CAMERA_SNAPSHOTS')
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    cameraSnapshotsActive: false,
+    cameraSnapshotStatus: {
+      active: false,
+      updatedAtMs: Date.now(),
+    },
+  })
+}
+
+/** Real-time screen snapshot rows for a device (newest first). */
+export function observeScreenSnapshots(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: ScreenSnapshot[]) => void,
+  onError?: (err: Error) => void,
+  limitCount = SNAPSHOT_LISTEN_LIMIT,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.devices, deviceId, COL.screenSnapshots),
+    orderBy('capturedAtMs', 'desc'),
+    limit(limitCount),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          deviceId: (data.deviceId as string) || deviceId,
+          capturedAtMs: Number(data.capturedAtMs ?? 0),
+          appPackage: (data.appPackage as string | null) ?? null,
+          appLabel: (data.appLabel as string | null) ?? null,
+          r2Path: (data.r2Path as string | null) ?? null,
+          imageUrl: (data.imageUrl as string | null) ?? null,
+          thumbPath: (data.thumbPath as string | null) ?? null,
+          thumbUrl: (data.thumbUrl as string | null) ?? null,
+          width: Number(data.width ?? 0),
+          height: Number(data.height ?? 0),
+        } satisfies ScreenSnapshot
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
+
+/** Real-time camera snapshot rows for a device (newest first). */
+export function observeCameraSnapshots(
+  familyId: string,
+  deviceId: string,
+  onData: (rows: CameraSnapshot[]) => void,
+  onError?: (err: Error) => void,
+  limitCount = SNAPSHOT_LISTEN_LIMIT,
+): () => void {
+  const q = query(
+    collection(db, COL.families, familyId, COL.devices, deviceId, COL.cameraSnapshots),
+    orderBy('capturedAtMs', 'desc'),
+    limit(limitCount),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          deviceId: (data.deviceId as string) || deviceId,
+          capturedAtMs: Number(data.capturedAtMs ?? 0),
+          cameraFacing: String(data.cameraFacing ?? 'back'),
+          r2Path: (data.r2Path as string | null) ?? null,
+          imageUrl: (data.imageUrl as string | null) ?? null,
+          thumbPath: (data.thumbPath as string | null) ?? null,
+          thumbUrl: (data.thumbUrl as string | null) ?? null,
+          width: Number(data.width ?? 0),
+          height: Number(data.height ?? 0),
+        } satisfies CameraSnapshot
+      })
+      onData(rows)
+    },
+    (err) => onError?.(err),
+  )
+}
 
 export async function createSafetyCommand(
   familyId: string,
   deviceId: string,
   type: SafetyCommandType,
   durationMinutes?: number,
+  extras?: Record<string, unknown>,
 ): Promise<string> {
   const ref = doc(collection(db, COL.families, familyId, COL.commands))
   await setDoc(ref, {
@@ -755,6 +951,7 @@ export async function createSafetyCommand(
     resultUrl: null,
     error: null,
     durationMinutes: durationMinutes ?? null,
+    ...(extras ?? {}),
   })
   return ref.id
 }
@@ -1395,6 +1592,174 @@ export function observeDevicePhotos(
     },
     (err) => onError?.(err),
   )
+}
+
+const ACTIVITY_EVENTS_DELETE_BATCH = 400
+
+async function deleteCollectionByDeviceId(
+  familyId: string,
+  collectionName: string,
+  deviceId: string,
+): Promise<number> {
+  const colRef = collection(db, COL.families, familyId, collectionName)
+  let deleted = 0
+  for (;;) {
+    const snap = await getDocs(
+      query(colRef, where('deviceId', '==', deviceId), limit(ACTIVITY_EVENTS_DELETE_BATCH)),
+    )
+    if (snap.empty) break
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)))
+    deleted += snap.size
+    if (snap.size < ACTIVITY_EVENTS_DELETE_BATCH) break
+  }
+  return deleted
+}
+
+async function deleteDeviceSubcollection(
+  familyId: string,
+  deviceId: string,
+  subcollection: string,
+): Promise<number> {
+  const colRef = collection(db, COL.families, familyId, COL.devices, deviceId, subcollection)
+  let deleted = 0
+  for (;;) {
+    const snap = await getDocs(query(colRef, limit(ACTIVITY_EVENTS_DELETE_BATCH)))
+    if (snap.empty) break
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)))
+    deleted += snap.size
+    if (snap.size < ACTIVITY_EVENTS_DELETE_BATCH) break
+  }
+  return deleted
+}
+
+async function deleteEntireCollection(familyId: string, collectionName: string): Promise<number> {
+  const colRef = collection(db, COL.families, familyId, collectionName)
+  let deleted = 0
+  for (;;) {
+    const snap = await getDocs(query(colRef, limit(ACTIVITY_EVENTS_DELETE_BATCH)))
+    if (snap.empty) break
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)))
+    deleted += snap.size
+    if (snap.size < ACTIVITY_EVENTS_DELETE_BATCH) break
+  }
+  return deleted
+}
+
+/** Permanently delete all safety alerts for one child device. */
+export async function clearAlerts(familyId: string, deviceId: string): Promise<number> {
+  return deleteCollectionByDeviceId(familyId, COL.alerts, deviceId)
+}
+
+/** Permanently delete all WhatsApp protection events for one child device. */
+export async function clearWhatsAppEventsForDevice(familyId: string, deviceId: string): Promise<number> {
+  const deleted = await deleteCollectionByDeviceId(familyId, COL.whatsappEvents, deviceId)
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    lastWhatsAppEventAtMs: 0,
+    'whatsappProtection.lastEventAtMs': 0,
+  })
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_WHATSAPP_EVENTS')
+  return deleted
+}
+
+/** Permanently delete all call recording rows for one child device. */
+export async function clearCallRecordings(familyId: string, deviceId: string): Promise<number> {
+  const deleted = await deleteCollectionByDeviceId(familyId, COL.callRecordings, deviceId)
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    lastCallRecordingAtMs: 0,
+    'callRecordingStatus.lastRecordingAtMs': 0,
+  })
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_CALL_RECORDINGS')
+  return deleted
+}
+
+/**
+ * Permanently delete synced photo gallery metadata for one child device.
+ * R2 thumbnail objects are not deleted from this client path — only the Firestore index is cleared.
+ */
+export async function clearDevicePhotos(familyId: string, deviceId: string): Promise<number> {
+  const deleted = await deleteDeviceSubcollection(familyId, deviceId, COL.photos)
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    'photoGalleryStatus.photoCount': 0,
+  })
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_PHOTOS')
+  return deleted
+}
+
+/** Permanently delete all typing safety snippets for one child device. */
+export async function clearTypingEvents(familyId: string, deviceId: string): Promise<number> {
+  const deleted = await deleteCollectionByDeviceId(familyId, COL.typingEvents, deviceId)
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_TYPING_EVENTS')
+  return deleted
+}
+
+/** Permanently delete stored location trail points for one child device. */
+export async function clearLocationTrail(familyId: string, deviceId: string): Promise<number> {
+  const deleted = await deleteCollectionByDeviceId(familyId, COL.locationTrail, deviceId)
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_LOCATION_TRAIL')
+  return deleted
+}
+
+/**
+ * Permanently delete all screen snapshot rows for one child device and purge
+ * linked R2 images (full + thumbnail). Runs via clearScreenSnapshots Cloud
+ * Function because client-side delete cannot reach object storage.
+ */
+export async function clearScreenSnapshots(
+  familyId: string,
+  deviceId: string,
+): Promise<{ deleted: number; mediaDeleted: number }> {
+  const call = httpsCallable<
+    { familyId: string; deviceId: string },
+    { ok: boolean; deleted: number; mediaDeleted: number; mediaDeleteFailed: number }
+  >(functions, 'clearScreenSnapshots')
+  const result = await call({ familyId, deviceId })
+  return { deleted: result.data.deleted, mediaDeleted: result.data.mediaDeleted }
+}
+
+/**
+ * Permanently delete all camera snapshot rows for one child device and purge
+ * linked R2 images (full + thumbnail).
+ */
+export async function clearCameraSnapshots(
+  familyId: string,
+  deviceId: string,
+): Promise<{ deleted: number; mediaDeleted: number }> {
+  const call = httpsCallable<
+    { familyId: string; deviceId: string },
+    { ok: boolean; deleted: number; mediaDeleted: number; mediaDeleteFailed: number }
+  >(functions, 'clearCameraSnapshots')
+  const result = await call({ familyId, deviceId })
+  return { deleted: result.data.deleted, mediaDeleted: result.data.mediaDeleted }
+}
+
+/** Permanently delete daily screen-time usage rows for one child device. */
+export async function clearUsageDaily(familyId: string, deviceId: string): Promise<number> {
+  const deleted = await deleteCollectionByDeviceId(familyId, COL.usageDaily, deviceId)
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_USAGE_DATA')
+  return deleted
+}
+
+/** Permanently delete all generated weekly digests for the family. */
+export async function clearWeeklyDigests(familyId: string): Promise<number> {
+  return deleteEntireCollection(familyId, COL.digests)
+}
+
+/** Permanently delete all Event Recorder rows for one child device and ask the child to reset local state. */
+export async function clearActivityEvents(familyId: string, deviceId: string): Promise<number> {
+  const colRef = collection(db, COL.families, familyId, COL.devices, deviceId, COL.activityEvents)
+  let deleted = 0
+  for (;;) {
+    const snap = await getDocs(query(colRef, limit(ACTIVITY_EVENTS_DELETE_BATCH)))
+    if (snap.empty) break
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)))
+    deleted += snap.docs.length
+    if (snap.size < ACTIVITY_EVENTS_DELETE_BATCH) break
+  }
+  await updateDoc(doc(db, COL.families, familyId, COL.devices, deviceId), {
+    'eventRecorderStatus.eventCount24h': 0,
+  })
+  await createSafetyCommand(familyId, deviceId, 'CLEAR_EVENT_RECORDER')
+  return deleted
 }
 
 export function observeActivityEvents(

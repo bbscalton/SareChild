@@ -22,6 +22,7 @@ import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
 import com.sarechild.shared.SareChildConstants
+import com.sarechild.child.BuildConfig
 
 /**
  * WebRTC publisher helpers for child-side live viewing (camera / mic / screen).
@@ -43,9 +44,20 @@ object LiveViewWebRtc {
             .createPeerConnectionFactory()
     }
 
-    fun iceServers(): List<PeerConnection.IceServer> = listOf(
-        PeerConnection.IceServer.builder(SareChildConstants.STUN_SERVER).createIceServer()
-    )
+    fun iceServers(): List<PeerConnection.IceServer> {
+        val servers = mutableListOf(
+            PeerConnection.IceServer.builder(SareChildConstants.STUN_SERVER).createIceServer()
+        )
+        val user = BuildConfig.TURN_USERNAME.trim()
+        val cred = BuildConfig.TURN_CREDENTIAL.trim()
+        if (user.isNotEmpty() && cred.isNotEmpty()) {
+            servers += PeerConnection.IceServer.builder(SareChildConstants.TURN_SERVER_URL)
+                .setUsername(user)
+                .setPassword(cred)
+                .createIceServer()
+        }
+        return servers
+    }
 
     fun createCameraCapturer(context: Context, front: Boolean): VideoCapturer? {
         val enumerator = Camera2Enumerator(context)

@@ -117,6 +117,18 @@ service cloud.firestore {
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         }
 
+        match /screenSnapshots/{snapshotId} {
+          allow read: if isFamilyGuardian(familyId);
+          allow create, update: if isDeviceMember(familyId, deviceId);
+          allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        }
+
+        match /cameraSnapshots/{snapshotId} {
+          allow read: if isFamilyGuardian(familyId);
+          allow create, update: if isDeviceMember(familyId, deviceId);
+          allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        }
+
         // Per-device family chat thread — see canAccessDeviceChat() above. Only the
         // owner, this device's own child, or a guardian this device was assigned to
         // may read/send here (a caregiver guardian with no assignment gets nothing).
@@ -127,7 +139,7 @@ service cloud.firestore {
       }
 
       match /alerts/{alertId} {
-        allow read, update: if isFamilyGuardian(familyId);
+        allow read, update, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
@@ -158,22 +170,22 @@ service cloud.firestore {
       }
 
       match /usageDaily/{dayId} {
-        allow read: if isFamilyGuardian(familyId);
+        allow read, delete: if isFamilyGuardian(familyId);
         allow create, update: if signedIn();
       }
 
       match /locationTrail/{sampleId} {
-        allow read: if isFamilyGuardian(familyId);
+        allow read, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
       match /callSmsPreviews/{previewId} {
-        allow read: if isFamilyGuardian(familyId);
+        allow read, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
       match /callRecordings/{recordingId} {
-        allow read: if isFamilyGuardian(familyId);
+        allow read, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
@@ -183,7 +195,7 @@ service cloud.firestore {
       }
 
       match /typingEvents/{eventId} {
-        allow read, update: if isFamilyGuardian(familyId);
+        allow read, update, delete: if isFamilyGuardian(familyId);
         allow create: if signedIn();
       }
 
@@ -193,8 +205,8 @@ service cloud.firestore {
       }
 
       match /digests/{digestId} {
-        allow read: if isFamilyGuardian(familyId);
-        allow write: if false;
+        allow read, delete: if isFamilyGuardian(familyId);
+        allow create, update: if false;
       }
 
       match /sosContacts/{contactId} {

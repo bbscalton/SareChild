@@ -60,6 +60,22 @@ class EventRecorderMonitor(
         return System.currentTimeMillis() - last >= SareChildConstants.EVENT_RECORDER_SYNC_INTERVAL_MS
     }
 
+    /** Drop pending uploads and reset poll watermarks after parent clears the cloud timeline. */
+    fun clearLocalState() {
+        pending.clear()
+        foregroundPkg = null
+        foregroundStartMs = 0L
+        idleActive = false
+        idleStartMs = 0L
+        lastMediaKey = null
+        lastMediaTitle = null
+        lastMediaAtMs = 0L
+        a11yTimestamps.clear()
+        events24h.set(0)
+        events24hWindowStartMs = System.currentTimeMillis()
+        repo.clearEventRecorderLocalState()
+    }
+
     fun statusMap(
         usageAccess: Boolean,
         accessibilityAccess: Boolean,
@@ -359,6 +375,8 @@ class EventRecorderMonitor(
             )
         )
     }
+
+    suspend fun refreshStatus() = updateStatus()
 
     private fun bump24hCount(count: Int) {
         val now = System.currentTimeMillis()

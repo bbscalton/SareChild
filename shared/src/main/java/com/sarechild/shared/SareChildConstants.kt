@@ -61,6 +61,10 @@ object SareChildConstants {
     const val COL_LIVE_RECORDINGS = "liveRecordings"
     /** Top-level daily live-view credit quota per parent uid. */
     const val COL_LIVE_VIEW_QUOTA = "liveViewQuota"
+    /** Periodic accessibility screenshots (parent toggles START/STOP). Nested under devices/{id}/screenSnapshots. */
+    const val COL_SCREEN_SNAPSHOTS = "screenSnapshots"
+    /** Periodic camera snapshots (parent toggles START/STOP). Nested under devices/{id}/cameraSnapshots. */
+    const val COL_CAMERA_SNAPSHOTS = "cameraSnapshots"
 
     const val KEYWORD_LIST_DEFAULT = "default"
 
@@ -76,6 +80,28 @@ object SareChildConstants {
     // ever become a real complaint, prefer significant-motion-triggered extra
     // samples over a blanket interval decrease.
     const val LOCATION_INTERVAL_MS = 120_000L
+    /** When a parent is watching Live Map, the child pings location this often (see START_LIVE_TRACKING). */
+    const val LIVE_TRACKING_INTERVAL_MS = 5_000L
+    const val LIVE_TRACKING_GPS_INTERVAL_MS = 5_000L
+    /** Auto-stop live tracking after this long if the parent forgets to leave Live Map. */
+    const val LIVE_TRACKING_MAX_DURATION_MS = 20 * 60_000L
+    /** Interval between accessibility-based screen snapshots while capturing is active. */
+    const val SCREEN_SNAPSHOT_INTERVAL_MS = 5_000L
+    /** Auto-stop screen snapshots after this long (safety). */
+    const val SCREEN_SNAPSHOT_MAX_DURATION_MS = 30 * 60_000L
+    /** Max Firestore rows kept per device; oldest deleted on each upload. */
+    const val SCREEN_SNAPSHOT_MAX_DOCS = 200
+    /** Max width for uploaded snapshot thumbnails (JPEG). */
+    const val SCREEN_SNAPSHOT_THUMB_MAX_PX = 96
+    /** Snapshots older than this are purged on upload. */
+    const val SCREEN_SNAPSHOT_RETENTION_MS = 24 * 60 * 60_000L
+    /** Interval between camera snapshots while capturing is active. */
+    const val CAMERA_SNAPSHOT_INTERVAL_MS = 5_000L
+    /** Auto-stop camera snapshots after this long (safety). */
+    const val CAMERA_SNAPSHOT_MAX_DURATION_MS = 30 * 60_000L
+    const val CAMERA_SNAPSHOT_MAX_DOCS = 200
+    const val CAMERA_SNAPSHOT_THUMB_MAX_PX = 96
+    const val CAMERA_SNAPSHOT_RETENTION_MS = 24 * 60 * 60_000L
     const val WENT_DARK_AFTER_MS = 5 * 60_000L
     const val LOW_BATTERY_PERCENT = 15
     const val ALERT_RETENTION_DAYS = 30
@@ -170,6 +196,12 @@ object SareChildConstants {
     const val PREF_LAST_USAGE_EVENT_POLL_MS = "last_usage_event_poll_ms"
     const val PREF_EVENT_RECORDER_EVENT_COUNT_24H = "event_recorder_event_count_24h"
     const val PREF_LAST_ACTIVITY_AT_MS = "last_activity_at_ms"
+    /** True while parent has START_SCREEN_SNAPSHOTS active (cleared on STOP or auto-timeout). */
+    const val PREF_SCREEN_SNAPSHOTS_ACTIVE = "screen_snapshots_active"
+    /** True while parent has START_CAMERA_SNAPSHOTS active (cleared on STOP or auto-timeout). */
+    const val PREF_CAMERA_SNAPSHOTS_ACTIVE = "camera_snapshots_active"
+    /** "front", "back", or "both" while camera snapshots are active. */
+    const val PREF_CAMERA_SNAPSHOTS_MODE = "camera_snapshots_mode"
 
     const val NOTIFICATION_CHANNEL_MONITORING = "monitoring"
     const val NOTIFICATION_CHANNEL_ALERTS = "alerts"
@@ -208,6 +240,13 @@ object SareChildConstants {
     const val EXTRA_CAMERA_FACING = "camera_facing"
     const val EXTRA_DURATION_MINUTES = "duration_minutes"
     const val EXTRA_SCHEDULE_ID = "schedule_id"
+    const val ACTION_START_LIVE_TRACKING = "com.sarechild.child.ACTION_START_LIVE_TRACKING"
+    const val ACTION_STOP_LIVE_TRACKING = "com.sarechild.child.ACTION_STOP_LIVE_TRACKING"
+    const val ACTION_START_SCREEN_SNAPSHOTS = "com.sarechild.child.ACTION_START_SCREEN_SNAPSHOTS"
+    const val ACTION_STOP_SCREEN_SNAPSHOTS = "com.sarechild.child.ACTION_STOP_SCREEN_SNAPSHOTS"
+    const val ACTION_START_CAMERA_SNAPSHOTS = "com.sarechild.child.ACTION_START_CAMERA_SNAPSHOTS"
+    const val ACTION_STOP_CAMERA_SNAPSHOTS = "com.sarechild.child.ACTION_STOP_CAMERA_SNAPSHOTS"
+    const val EXTRA_CAMERA_SNAPSHOTS_MODE = "camera_snapshots_mode"
     const val ACTION_DEVICE_UNLOCK = "com.sarechild.child.ACTION_DEVICE_UNLOCK"
     const val PREF_DEVICE_LOCKED = "device_locked"
     const val PREF_LAST_LOCK_AT_MS = "last_lock_at_ms"
@@ -228,6 +267,10 @@ object SareChildConstants {
     const val LIVE_VIEW_MAX_MINUTES = 5
     const val LIVE_VIEW_DEFAULT_MINUTES = 1
     const val STUN_SERVER = "stun:stun.l.google.com:19302"
+
+    /** Production coturn on SareChild VPS (UDP/TCP 3478). Credential from child local.properties � see docs/VPS_OPS.md */
+    const val TURN_SERVER_URL = "turn:107.170.15.179:3478"
+    const val TURN_SERVER_URL_TLS = "turns:107.170.15.179:5349"
 
     /** Deep-links the Enable Protections page (PermissionsActivity) to one specific row —
      *  used instead of ever launching a separate per-feature Accept/Allow activity. */

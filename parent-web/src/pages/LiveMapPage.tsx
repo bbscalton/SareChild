@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as repo from '../lib/parentRepo'
-import { hasGoogleMapsKey, loadGoogleMaps, reverseGeocode } from '../lib/googleMaps'
+import { ClearAllConfirm, CLEAR_CONFIRM_TEXT } from '../components/ClearAllConfirm'
+import {
+  getGoogleMapsLoadFailure,
+  googleMapsLoadErrorMessage,
+  hasGoogleMapsKey,
+  loadGoogleMaps,
+  mapsConstructorsReady,
+  reverseGeocode,
+} from '../lib/googleMaps'
 import { snapTrailToRoads } from '../lib/roadsApi'
 import {
   attachTimestampsToSnappedPath,
@@ -11,7 +19,8 @@ import {
   formatDuration,
   haversineMeters,
   interpolatePosition,
-  type Stop,
+  labelStops,
+  type LabeledStop,
   type TrailPoint,
 } from '../lib/geo'
 import { alertCategoryLabel, alertIcon, relativeTime, severityTone } from '../lib/alertPresentation'
@@ -26,6 +35,8 @@ import type {
 } from '../types'
 
 type Mode = 'live' | 'playback'
+const LIVE_TRACKING_PING_MS = 5_000
+const LIVE_TRAIL_MAX_SAMPLES = 400
 type RangeOption = 'today' | '24h' | '7d' | 'custom'
 type SeverityGroup = 'critical' | 'medium' | 'low'
 type MapTypeOption = 'roadmap' | 'satellite' | 'hybrid' | 'terrain'
@@ -46,7 +57,7 @@ function loadStoredMapType(): MapTypeOption {
 }
 
 type Selection =
-  | { kind: 'stop'; stop: Stop }
+  | { kind: 'stop'; stop: LabeledStop }
   | { kind: 'alert'; alert: FamilyAlert }
   | { kind: 'place'; place: MapPlace }
   | null
@@ -167,6 +178,13 @@ function rangeToMs(range: RangeOption, customFrom: string, customTo: string): { 
   return { fromMs: Math.min(fromMs, toMs), toMs: Math.max(fromMs, toMs) }
 }
 
+function formatSpeed(mps: number | null | undefined): string {
+  if (mps == null || mps < 0) return '—'
+  const kmh = mps * 3.6
+  if (kmh < 1.2) return 'Stopped'
+  return `${kmh.toFixed(1)} km/h`
+}
+
 function isDeviceOnline(device: DeviceStatus, nowMs: number): boolean {
   return device.lastHeartbeatMs > 0 && nowMs - device.lastHeartbeatMs < WENT_DARK_AFTER_MS
 }
@@ -215,6 +233,14 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   const [speedMult, setSpeedMult] = useState(1)
 
   const [error, setError] = useState<string | null>(null)
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
+  const [liveTrackingRequested, setLiveTrackingRequested] = useState(false)
+
+  const [clearTrailOpen, setClearTrailOpen] = useState(false)
+  const [clearTrailConfirmText, setClearTrailConfirmText] = useState('')
+  const [clearTrailError, setClearTrailError] = useState<string | null>(null)
+  const [clearTrailBusy, setClearTrailBusy] = useState(false)
+  const [statusMsg, setStatusMsg] = useState<string | null>(null)
 
   useEffect(() => {
     if (!familyId) return
@@ -231,10 +257,41 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       setDeviceLiveTrail([])
       return
     }
-    return repo.observeLocationTrailForDevice(familyId, selectedDeviceId, setDeviceLiveTrail, (e) =>
-      setError(e.message),
+    return repo.observeLocationTrailForDevice(
+      familyId,
+      selectedDeviceId,
+      setDeviceLiveTrail,
+      (e) => setError(e.message),
+      LIVE_TRAIL_MAX_SAMPLES,
     )
   }, [familyId, selectedDeviceId])
+
+  // Tell the child to ping GPS every ~5s while Live mode is active on this device.
+  useEffect(() => {
+    if (!familyId || !selectedDeviceId || mode !== 'live') {
+      setLiveTrackingRequested(false)
+      return
+    }
+    let cancelled = false
+    const arm = async () => {
+      try {
+        await repo.startLiveTracking(familyId, selectedDeviceId)
+        if (!cancelled) setLiveTrackingRequested(true)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to start live tracking')
+      }
+    }
+    void arm()
+    const keepAlive = window.setInterval(() => {
+      void repo.startLiveTracking(familyId, selectedDeviceId)
+    }, 3 * 60_000)
+    return () => {
+      cancelled = true
+      setLiveTrackingRequested(false)
+      window.clearInterval(keepAlive)
+      void repo.stopLiveTracking(familyId, selectedDeviceId)
+    }
+  }, [familyId, selectedDeviceId, mode])
 
   const loadRange = async (opts?: { range?: RangeOption; from?: string; to?: string }) => {
     if (!familyId) return
@@ -280,15 +337,25 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       .filter((s) => s.location)
       .map((s) => ({ lat: s.location!.lat, lng: s.location!.lng, atMs: s.recordedAtMs }))
       .sort((a, b) => a.atMs - b.atMs)
-    const last = selectedDevice?.lastLocation
-    if (last) {
-      const lastAt = last.updatedAtMs ?? selectedDevice?.lastHeartbeatMs ?? 0
-      const prevAt = pts.length ? pts[pts.length - 1]!.atMs : 0
-      if (lastAt && lastAt - prevAt > 5_000) {
-        pts.push({ lat: last.lat, lng: last.lng, atMs: lastAt })
+  const loc = selectedDevice?.lastLocation
+  if (loc) {
+    const lastAt = loc.updatedAtMs ?? selectedDevice?.lastHeartbeatMs ?? Date.now()
+    if (pts.length === 0) {
+      pts.push({ lat: loc.lat, lng: loc.lng, atMs: lastAt })
+    } else {
+      const prev = pts[pts.length - 1]!
+      const distM = haversineMeters(prev, { lat: loc.lat, lng: loc.lng })
+      // Keep the trail terminal locked to device.lastLocation — the Firestore heartbeat
+      // is fresher than trail samples that may lag by a few seconds.
+      if (lastAt >= prev.atMs && (distM < 120 || lastAt - prev.atMs < LIVE_TRACKING_PING_MS * 2)) {
+        pts[pts.length - 1] = { lat: loc.lat, lng: loc.lng, atMs: Math.max(lastAt, prev.atMs) }
+      } else if (lastAt > prev.atMs) {
+        pts.push({ lat: loc.lat, lng: loc.lng, atMs: lastAt })
       }
     }
-    return pts
+  }
+  const liveCutoff = Date.now() - 30 * 60_000
+  return pts.filter((p) => p.atMs >= liveCutoff)
   }, [locationTrail, deviceLiveTrail, selectedDeviceId, selectedDevice])
 
   const playbackPoints = useMemo<TrailPoint[]>(() => {
@@ -300,7 +367,19 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
 
   const devicePoints = mode === 'live' ? livePoints : playbackPoints
   const stops = useMemo(() => detectStops(devicePoints), [devicePoints])
+  const labeledStops = useMemo(() => labelStops(stops), [stops])
   const routeStats = useMemo(() => computeRouteStats(devicePoints, stops), [devicePoints, stops])
+
+  const trailPointCountForDevice = useMemo(() => {
+    const byId = new Map<string, LocationTrailSample>()
+    locationTrail.forEach((s) => {
+      if (s.deviceId === selectedDeviceId) byId.set(s.id, s)
+    })
+    deviceLiveTrail.forEach((s) => byId.set(s.id, s))
+    return byId.size
+  }, [locationTrail, deviceLiveTrail, selectedDeviceId])
+
+  const canClearLocationTrail = Boolean(familyId && selectedDeviceId && trailPointCountForDevice > 0)
 
   // Road-accurate path: snaps the raw GPS trail to real streets via the Roads API (through the
   // Cloudflare Worker proxy — see lib/roadsApi.ts) so the polyline/marker follow actual road
@@ -313,7 +392,15 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDeviceId, mode, range])
   useEffect(() => {
-    if (devicePoints.length < 2) return
+    if (devicePoints.length < 2) {
+      setSnappedPath(null)
+      return
+    }
+    // Live mode uses raw GPS for instant marker movement; road snap lags behind real-time pings.
+    if (mode === 'live') {
+      setSnappedPath(null)
+      return
+    }
     let cancelled = false
     void snapTrailToRoads(devicePoints).then((result) => {
       if (cancelled || !result) return
@@ -322,9 +409,24 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     return () => {
       cancelled = true
     }
-  }, [devicePoints])
+  }, [devicePoints, mode])
   const renderPath = snappedPath && snappedPath.length >= 2 ? snappedPath : devicePoints
-  const isRoadSnapped = renderPath === snappedPath
+
+  /** Authoritative live position — always prefer the device doc's lastLocation over trail tail. */
+  const livePosition = useMemo(() => {
+    const loc = selectedDevice?.lastLocation
+    if (loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
+      return {
+        lat: loc.lat,
+        lng: loc.lng,
+        atMs: loc.updatedAtMs ?? selectedDevice?.lastHeartbeatMs ?? 0,
+        accuracyM: loc.accuracyM,
+        bearingDeg: loc.bearingDeg,
+      }
+    }
+    const tail = livePoints[livePoints.length - 1]
+    return tail ? { ...tail, accuracyM: null, bearingDeg: null } : null
+  }, [selectedDevice?.lastLocation, selectedDevice?.lastHeartbeatMs, livePoints])
 
   const playbackBounds = useMemo(() => {
     if (playbackPoints.length === 0) return null
@@ -360,11 +462,11 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   }, [playing, mode, playbackBounds, speedMult])
 
   const liveOngoingStop = useMemo(() => {
-    if (mode !== 'live' || stops.length === 0 || livePoints.length === 0) return null
-    const last = stops[stops.length - 1]!
+    if (mode !== 'live' || labeledStops.length === 0 || livePoints.length === 0) return null
+    const last = labeledStops[labeledStops.length - 1]!
     const lastPoint = livePoints[livePoints.length - 1]!
     return Math.abs(last.endMs - lastPoint.atMs) < 1_000 ? last : null
-  }, [mode, stops, livePoints])
+  }, [mode, labeledStops, livePoints])
 
   const filteredAlerts = useMemo(() => {
     return alerts.filter((a) => a.deviceId === selectedDeviceId && a.location && severityOn[severityGroup(a.severity)])
@@ -389,6 +491,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   const lastBoundsRef = useRef<google.maps.LatLngBounds | null>(null)
   const fitKeyRef = useRef<string>('')
   const [mapsReady, setMapsReady] = useState(false)
+  const [mapsLoadError, setMapsLoadError] = useState<string | null>(null)
   const mapsAvailable = hasGoogleMapsKey()
   const [mapType, setMapType] = useState<MapTypeOption>(loadStoredMapType)
   // Camera auto-follows the child's marker on live updates (and while scrubbing playback)
@@ -404,29 +507,61 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
 
   useEffect(() => {
     let cancelled = false
+    setMapsLoadError(null)
     void loadGoogleMaps().then((ok) => {
-      if (!cancelled) setMapsReady(ok)
+      if (cancelled) return
+      setMapsReady(ok)
+      if (!ok) {
+        setMapsLoadError(
+          googleMapsLoadErrorMessage(getGoogleMapsLoadFailure()) ??
+            'Google Maps failed to load. Check your API key, billing, and HTTP referrer restrictions.',
+        )
+      }
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [mapsAvailable])
 
   useEffect(() => {
     if (!mapsReady || !mapDivRef.current || mapObjRef.current) return
-    mapObjRef.current = new google.maps.Map(mapDivRef.current, {
-      center: { lat: 20, lng: 0 },
-      zoom: 3,
-      mapTypeId: mapType,
-      disableDefaultUI: false,
-      streetViewControl: false,
-      mapTypeControl: false,
-      fullscreenControl: true,
-      clickableIcons: false,
-      gestureHandling: 'greedy',
-      styles: CALM_MAP_STYLE,
-    })
+    if (!mapsConstructorsReady()) {
+      setMapsLoadError('Google Maps is still loading — try refreshing the page.')
+      return
+    }
+    try {
+      mapObjRef.current = new google.maps.Map(mapDivRef.current, {
+        center: { lat: 20, lng: 0 },
+        zoom: 3,
+        mapTypeId: mapType,
+        disableDefaultUI: false,
+        streetViewControl: false,
+        mapTypeControl: false,
+        fullscreenControl: true,
+        clickableIcons: false,
+        gestureHandling: 'greedy',
+        styles: CALM_MAP_STYLE,
+      })
+      requestAnimationFrame(() => {
+        if (mapObjRef.current) google.maps.event.trigger(mapObjRef.current, 'resize')
+      })
+    } catch (e) {
+      setMapsLoadError(e instanceof Error ? e.message : 'Failed to initialize the map')
+      setMapsReady(false)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapsReady])
+
+  // Re-trigger map resize when the canvas container changes size (panel layout, sidebar collapse).
+  useEffect(() => {
+    const el = mapDivRef.current
+    const map = mapObjRef.current
+    if (!el || !map || !mapsReady) return
+    const ro = new ResizeObserver(() => {
+      google.maps.event.trigger(map, 'resize')
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [mapsReady])
 
   // A manual drag/scroll-zoom means the parent wants to look elsewhere — stop auto-following
@@ -526,14 +661,21 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     })
 
     stops.forEach((stop, idx) => {
+      const labeled = labeledStops[idx]
+      const isHome = Boolean(labeled?.homeLabel)
       const marker = new google.maps.Marker({
         position: { lat: stop.lat, lng: stop.lng },
         map,
-        icon: pinIcon('#0a4f38', '⏱'),
-        label: { text: String(idx + 1), color: '#ffffff', fontSize: '11px', fontWeight: '700' },
+        icon: pinIcon(isHome ? '#0f6b4c' : '#0a4f38', isHome ? '🏠' : '⏱'),
+        label: {
+          text: isHome ? 'H' : String(labeled?.stopNumber ?? idx + 1),
+          color: '#ffffff',
+          fontSize: '11px',
+          fontWeight: '700',
+        },
         zIndex: 60,
       })
-      marker.addListener('click', () => setSelection({ kind: 'stop', stop }))
+      marker.addListener('click', () => setSelection({ kind: 'stop', stop: labeled ?? { ...stop, stopNumber: idx + 1, homeLabel: null } }))
       staticOverlaysRef.current.push(marker)
       extend(stop.lat, stop.lng)
     })
@@ -569,18 +711,30 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     }
 
     renderPath.forEach((p) => extend(p.lat, p.lng))
+    if (mode === 'live' && livePosition) {
+      extend(livePosition.lat, livePosition.lng)
+    }
 
     if (any) {
       lastBoundsRef.current = bounds
-      const key = `${selectedDeviceId}|${mode}|${range}|${renderPath.length > 0}`
-      if (fitKeyRef.current !== key) {
-        fitKeyRef.current = key
-        map.fitBounds(bounds, 72)
+      if (mode === 'live' && livePosition) {
+        const key = `${selectedDeviceId}|live|center`
+        if (fitKeyRef.current !== key) {
+          fitKeyRef.current = key
+          map.setCenter({ lat: livePosition.lat, lng: livePosition.lng })
+          map.setZoom(16)
+        }
+      } else {
+        const key = `${selectedDeviceId}|${mode}|${range}|${renderPath.length > 0}`
+        if (fitKeyRef.current !== key) {
+          fitKeyRef.current = key
+          map.fitBounds(bounds, 72)
+        }
       }
     }
     // renderPath only used for bounds-extension here; playhead-driven redraws are handled separately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [places, geofences, stops, filteredAlerts, placeDraft, mapsReady, selectedDeviceId, mode, range])
+  }, [places, geofences, stops, labeledStops, filteredAlerts, placeDraft, mapsReady, selectedDeviceId, mode, range, livePosition])
 
   // Trail polylines: the full route (road-snapped when available) + a brighter "traveled so
   // far" overlay during playback. Kept separate from the marker lifecycle below + cheap so
@@ -597,12 +751,27 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       const base = new google.maps.Polyline({
         path: full,
         map,
-        strokeColor: '#0f6b4c',
-        strokeOpacity: mode === 'playback' ? 0.28 : 0.85,
-        strokeWeight: 4,
+        strokeColor: mode === 'live' ? '#1a8f6a' : '#0f6b4c',
+        strokeOpacity: mode === 'playback' ? 0.28 : 0.55,
+        strokeWeight: mode === 'live' ? 5 : 4,
         zIndex: 10,
       })
       dynamicOverlaysRef.current.push(base)
+      if (mode === 'live') {
+        const recentCutoff = Date.now() - 15 * 60_000
+        const recent = renderPath.filter((p) => p.atMs >= recentCutoff).map((p) => ({ lat: p.lat, lng: p.lng }))
+        if (recent.length >= 2) {
+          const glow = new google.maps.Polyline({
+            path: recent,
+            map,
+            strokeColor: '#c9a24a',
+            strokeOpacity: 0.95,
+            strokeWeight: 6,
+            zIndex: 12,
+          })
+          dynamicOverlaysRef.current.push(glow)
+        }
+      }
       if (mode === 'playback') {
         const traveled = renderPath.filter((p) => p.atMs <= playhead).map((p) => ({ lat: p.lat, lng: p.lng }))
         if (traveled.length >= 2) {
@@ -658,12 +827,19 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
    *  (where `playhead` itself already advances continuously via requestAnimationFrame). Updates
    *  the heading arrow from the actual displacement so it reflects the rendered (road-snapped)
    *  path direction, and auto-follows the camera when `followMode` is on. */
-  const moveMarkerTo = (target: { lat: number; lng: number }, accuracyM: number | null | undefined, animate: boolean) => {
+  const moveMarkerTo = (
+    target: { lat: number; lng: number },
+    accuracyM: number | null | undefined,
+    animate: boolean,
+    bearingDeg?: number | null,
+  ) => {
     const marker = currentMarkerRef.current
     if (!marker) return
     const from = markerRenderedPosRef.current ?? target
     const movedM = haversineMeters(from, target)
-    if (movedM > 3) {
+    if (bearingDeg != null && Number.isFinite(bearingDeg)) {
+      markerHeadingRef.current = bearingDeg
+    } else if (movedM > 3) {
       markerHeadingRef.current = computeBearing(from, target)
     }
     const color = mode === 'live' ? '#0f6b4c' : '#12241c'
@@ -688,7 +864,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
       markerAnimRef.current = null
     } else {
       const anim = { raf: 0, from, to: target, startedAtMs: performance.now() }
-      const durationMs = 1200
+      const durationMs = mode === 'live' ? 450 : 1200
       const step = () => {
         const t = Math.min(1, (performance.now() - anim.startedAtMs) / durationMs)
         const eased = 1 - (1 - t) * (1 - t) // ease-out
@@ -719,15 +895,17 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
     }
   }
 
-  // Live mode: move to the latest (possibly road-snapped) point, animated.
+  // Live mode: marker tracks device.lastLocation (real-time heartbeat), not stale trail tail.
   useEffect(() => {
-    if (!mapsReady || mode !== 'live') return
-    const last = renderPath.length ? renderPath[renderPath.length - 1]! : null
-    const target = last ?? selectedDevice?.lastLocation ?? null
-    if (!target) return
-    moveMarkerTo(target, selectedDevice?.lastLocation?.accuracyM, true)
+    if (!mapsReady || mode !== 'live' || !livePosition) return
+    moveMarkerTo(
+      { lat: livePosition.lat, lng: livePosition.lng },
+      livePosition.accuracyM,
+      true,
+      livePosition.bearingDeg,
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapsReady, mode, renderPath, selectedDevice?.lastLocation, followMode])
+  }, [mapsReady, mode, livePosition, followMode])
 
   // Playback mode: jump to the interpolated position along the (road-snapped) path at `playhead`.
   useEffect(() => {
@@ -743,6 +921,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   useEffect(() => {
     markerRenderedPosRef.current = null
     markerHeadingRef.current = null
+    fitKeyRef.current = ''
     if (markerAnimRef.current) cancelAnimationFrame(markerAnimRef.current.raf)
     markerAnimRef.current = null
   }, [selectedDeviceId, mode])
@@ -761,7 +940,53 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   }
 
   const liveFreshnessAtMs = selectedDevice?.lastLocation?.updatedAtMs || selectedDevice?.lastHeartbeatMs || 0
-  const liveIsStale = mode === 'live' && (!liveFreshnessAtMs || liveClockMs - liveFreshnessAtMs > WENT_DARK_AFTER_MS)
+  const liveIsStale =
+    mode === 'live' &&
+    (!liveFreshnessAtMs ||
+      liveClockMs - liveFreshnessAtMs >
+        (selectedDevice?.liveTrackingActive ? LIVE_TRACKING_PING_MS * 3 : WENT_DARK_AFTER_MS))
+  const childSpeedMps = selectedDevice?.lastLocation?.speedMps ?? null
+  const childBearing = selectedDevice?.lastLocation?.bearingDeg ?? null
+  const trackingLive =
+    mode === 'live' &&
+    (selectedDevice?.liveTrackingActive || liveTrackingRequested) &&
+    !liveIsStale
+
+  const openClearTrail = () => {
+    setClearTrailOpen(true)
+    setClearTrailConfirmText('')
+    setClearTrailError(null)
+  }
+
+  const cancelClearTrail = () => {
+    setClearTrailOpen(false)
+    setClearTrailConfirmText('')
+    setClearTrailError(null)
+  }
+
+  const confirmClearTrail = async () => {
+    if (!familyId || !selectedDeviceId) return
+    if (clearTrailConfirmText.trim().toUpperCase() !== CLEAR_CONFIRM_TEXT) {
+      setClearTrailError(`Type "${CLEAR_CONFIRM_TEXT}" to confirm.`)
+      return
+    }
+    setClearTrailBusy(true)
+    setClearTrailError(null)
+    try {
+      const deleted = await repo.clearLocationTrail(familyId, selectedDeviceId)
+      setRangeTrail([])
+      setRangeLoadedFor(null)
+      setPlaying(false)
+      setStatusMsg(
+        `Cleared ${deleted.toLocaleString()} location point${deleted === 1 ? '' : 's'} for ${selectedDevice?.childName ?? 'device'}.`,
+      )
+      cancelClearTrail()
+    } catch (e) {
+      setClearTrailError(e instanceof Error ? e.message : 'Failed to clear location history')
+    } finally {
+      setClearTrailBusy(false)
+    }
+  }
 
   const saveNewPlace = async () => {
     if (!placeDraft || !familyId || !placeDraft.name.trim()) return
@@ -793,7 +1018,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
   }
 
   return (
-    <div className="livemap-shell">
+    <div className={`livemap-shell${rightPanelOpen ? '' : ' right-collapsed'}`}>
       <aside className="livemap-sidebar">
         <div className="livemap-block">
           <p className="nav-group-label">Child</p>
@@ -828,6 +1053,46 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
         </div>
 
         <div className="livemap-block">
+          <div className="card-head">
+            <p className="nav-group-label" style={{ margin: 0 }}>
+              Location trail
+            </p>
+            {canClearLocationTrail && !clearTrailOpen && (
+              <button
+                type="button"
+                className="btn danger compact"
+                disabled={clearTrailBusy}
+                onClick={openClearTrail}
+              >
+                Clear location history
+              </button>
+            )}
+          </div>
+          <ClearAllConfirm
+            open={clearTrailOpen}
+            title="Clear all location history"
+            description={
+              <>
+                This permanently deletes every stored GPS trail point for{' '}
+                <strong>{selectedDevice?.childName ?? 'this device'}</strong>. This cannot be undone.
+                New location points will still be recorded.
+              </>
+            }
+            confirmText={clearTrailConfirmText}
+            onConfirmTextChange={setClearTrailConfirmText}
+            error={clearTrailError}
+            busy={clearTrailBusy}
+            onConfirm={() => void confirmClearTrail()}
+            onCancel={cancelClearTrail}
+            confirmLabel="Permanently clear location history"
+          />
+          <p className="muted small">
+            {trailPointCountForDevice.toLocaleString()} trail point
+            {trailPointCountForDevice === 1 ? '' : 's'} loaded for this child.
+          </p>
+        </div>
+
+        <div className="livemap-block">
           <p className="nav-group-label">View</p>
           <div className="filter-row">
             <button type="button" className={mode === 'live' ? 'chip active' : 'chip'} onClick={() => setMode('live')}>
@@ -841,6 +1106,15 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
               ⏵ Playback
             </button>
           </div>
+          {mode === 'live' && (
+            <p className="livemap-live-hint muted small">
+              Live mode pings your child&apos;s GPS every <strong>5 seconds</strong> while this page is open.
+              The gold trail shows the last 15 minutes of movement.
+            </p>
+          )}
+          {mode === 'playback' && (
+            <p className="muted small">Playback uses road-snapped trails for precise route replay.</p>
+          )}
 
           {mode === 'playback' && (
             <div className="livemap-playback-config">
@@ -974,13 +1248,27 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
 
       <div className="livemap-canvas-wrap">
         {mapsAvailable ? (
-          <div ref={mapDivRef} className="livemap-canvas" />
+          <div ref={mapDivRef} className="livemap-canvas" role="application" aria-label="Live map" />
         ) : (
           <div className="livemap-canvas livemap-canvas-fallback">
             <span aria-hidden style={{ fontSize: '2rem' }}>
               🗺️
             </span>
             <p className="muted">Map preview unavailable (no Maps API key configured).</p>
+          </div>
+        )}
+        {mapsAvailable && !mapsReady && !mapsLoadError && (
+          <div className="livemap-canvas-loading">
+            <span className="livemap-loading-spinner" aria-hidden />
+            <p>Loading map…</p>
+          </div>
+        )}
+        {mapsLoadError && (
+          <div className="livemap-canvas-fallback livemap-canvas-error">
+            <span aria-hidden style={{ fontSize: '2rem' }}>
+              🗺️
+            </span>
+            <p>{mapsLoadError}</p>
           </div>
         )}
         <div className="livemap-maptype-switcher" role="group" aria-label="Map view type">
@@ -1021,15 +1309,49 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
           <div className={`livemap-status-pill ${liveIsStale ? 'is-stale' : 'is-live'}`}>
             <span className="livemap-status-dot" aria-hidden />
             <span>
-              {liveIsStale ? 'Last known' : 'Live'} · updated {formatFreshness(liveFreshnessAtMs, liveClockMs)}
-              {isRoadSnapped ? ' · road-snapped' : ''}
+              {trackingLive ? 'Live tracking' : liveIsStale ? 'Last known' : 'Live'} · updated{' '}
+              {formatFreshness(liveFreshnessAtMs, liveClockMs)}
+              {trackingLive ? ` · every ${LIVE_TRACKING_PING_MS / 1000}s` : ''}
             </span>
           </div>
         )}
+        {mode === 'live' && selectedDevice && (
+          <div className="livemap-hud">
+            <div className="livemap-hud-card">
+              <p className="livemap-hud-label">Speed</p>
+              <p className="livemap-hud-value">{formatSpeed(childSpeedMps)}</p>
+            </div>
+            <div className="livemap-hud-card">
+              <p className="livemap-hud-label">Heading</p>
+              <p className="livemap-hud-value">
+                {childBearing != null ? `${Math.round(childBearing)}°` : '—'}
+              </p>
+            </div>
+            <div className="livemap-hud-card">
+              <p className="livemap-hud-label">Trail points</p>
+              <p className="livemap-hud-value">{livePoints.length}</p>
+            </div>
+            <div className="livemap-hud-card">
+              <p className="livemap-hud-label">GPS ping</p>
+              <p className="livemap-hud-value">{trackingLive ? '5s' : '60s'}</p>
+            </div>
+          </div>
+        )}
         {error && <div className="banner error-banner livemap-canvas-banner">{error}</div>}
+        {statusMsg && <div className="banner livemap-canvas-banner">{statusMsg}</div>}
       </div>
 
-      <aside className="livemap-detail">
+      <aside className={`livemap-detail${rightPanelOpen ? '' : ' is-collapsed'}`}>
+        <button
+          type="button"
+          className="livemap-detail-toggle"
+          onClick={() => setRightPanelOpen((o) => !o)}
+          title={rightPanelOpen ? 'Collapse details panel' : 'Expand details panel'}
+          aria-expanded={rightPanelOpen}
+        >
+          {rightPanelOpen ? '›' : '‹'}
+        </button>
+        <div className="livemap-detail-inner">
         <div className="livemap-block">
           <p className="nav-group-label">Route stats</p>
           <div className="livemap-stats-grid">
@@ -1038,7 +1360,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
               <p className="muted small">Distance ({mode})</p>
             </div>
             <div>
-              <p className="livemap-stat-value">{stops.length}</p>
+              <p className="livemap-stat-value">{labeledStops.length}</p>
               <p className="muted small">Stops detected</p>
             </div>
             <div>
@@ -1051,6 +1373,45 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
             </div>
           </div>
         </div>
+
+        {labeledStops.length > 0 && (
+          <div className="livemap-block livemap-scroll">
+            <p className="nav-group-label">Stops timeline</p>
+            <p className="muted small">
+              Stops are clustered when your child stays within ~100&nbsp;m for at least 5 minutes. Stop&nbsp;1
+              is treated as Home; returns to that area are labeled Home (return).
+            </p>
+            <div className="livemap-stops-timeline">
+              {labeledStops.map((stop) => (
+                <button
+                  key={`${stop.stopNumber}-${stop.startMs}`}
+                  type="button"
+                  className={`livemap-stop-row${selection?.kind === 'stop' && selection.stop.stopNumber === stop.stopNumber ? ' active' : ''}`}
+                  onClick={() => {
+                    setSelection({ kind: 'stop', stop })
+                    if (mode === 'playback') {
+                      setPlaying(false)
+                      setPlayhead(stop.startMs)
+                    }
+                    mapObjRef.current?.panTo({ lat: stop.lat, lng: stop.lng })
+                  }}
+                >
+                  <span className="livemap-stop-badge" aria-hidden>
+                    {stop.homeLabel ? '🏠' : stop.stopNumber}
+                  </span>
+                  <span className="livemap-stop-copy">
+                    <span className="livemap-stop-title">
+                      {stop.homeLabel ?? `Stop ${stop.stopNumber}`}
+                    </span>
+                    <span className="muted small">
+                      {new Date(stop.startMs).toLocaleString()} · {formatDuration(stop.durationMs)}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {mode === 'playback' && (
           <div className="livemap-block">
@@ -1123,6 +1484,7 @@ export function LiveMapPage({ familyId, devices, alerts, geofences, locationTrai
               void repo.updateMapPlace(familyId, placeId, patch)
             }}
           />
+        </div>
         </div>
       </aside>
     </div>
@@ -1238,10 +1600,10 @@ function SelectionDetail({
     const { stop } = selection
     return (
       <div className="card">
-        <h4>⏱ Stopped here</h4>
+        <h4>{stop.homeLabel ? `🏠 ${stop.homeLabel}` : `Stop ${stop.stopNumber}`}</h4>
         <p className="livemap-stat-value">{formatDuration(stop.durationMs)}</p>
         <p className="muted small">
-          {new Date(stop.startMs).toLocaleTimeString()} – {new Date(stop.endMs).toLocaleTimeString()}
+          {new Date(stop.startMs).toLocaleString()} – {new Date(stop.endMs).toLocaleString()}
         </p>
         <p className="muted small">{stop.sampleCount} GPS samples in this cluster</p>
         {address && <p className="address-line">📍 {address}</p>}

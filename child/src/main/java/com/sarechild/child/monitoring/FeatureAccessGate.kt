@@ -43,6 +43,8 @@ object FeatureAccessGate {
     fun isCameraCheckReady(context: Context, repo: ChildRepository): Boolean =
         repo.cameraCheckConsent && hasCamera(context)
 
+    fun isCameraSnapshotReady(context: Context): Boolean = hasCamera(context)
+
     fun isMicCheckReady(context: Context, repo: ChildRepository): Boolean =
         repo.micCheckConsent && hasRecordAudio(context)
 

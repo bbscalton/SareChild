@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAuth } from '../AuthContext'
 import { isProjectAdmin } from '../lib/admin'
 import * as repo from '../lib/parentRepo'
 import { WENT_DARK_AFTER_MS } from '../firebase'
 import { LiveViewingSection } from '../components/LiveViewingSection'
+import { ScreenSnapshotsSection } from '../components/ScreenSnapshotsSection'
+import { CameraSnapshotsSection } from '../components/CameraSnapshotsSection'
 import type {
   AppBlockSchedule,
   AppLimit,
@@ -40,7 +42,19 @@ import { reverseGeocode } from '../lib/googleMaps'
 import { LiveMapPage } from './LiveMapPage'
 import { WhatsAppEventsTable } from '../components/WhatsAppEventsTable'
 import { AppsSection } from '../components/AppsSection'
+import { ClearAllConfirm, CLEAR_CONFIRM_TEXT } from '../components/ClearAllConfirm'
 import type { WhatsAppDisplayType } from '../lib/whatsappEventDisplay'
+
+type ClearTarget =
+  | 'alerts'
+  | 'whatsapp'
+  | 'callrecording'
+  | 'photos'
+  | 'typing'
+  | 'location'
+  | 'usage'
+  | 'digests'
+  | 'eventrecorder'
 
 type Section =
   | 'home'
@@ -57,6 +71,8 @@ type Section =
   | 'eventrecorder'
   | 'lockscreen'
   | 'liveview'
+  | 'screensnapshots'
+  | 'camerasnapshots'
   | 'typing'
   | 'usage'
   | 'apps'
@@ -161,6 +177,10 @@ export function DashboardPage() {
   const [sosContacts, setSosContacts] = useState<SosContact[]>([])
   const [error, setError] = useState<string | null>(null)
 
+  const onListenerError = useCallback((e: Error) => {
+    if (!repo.isIgnorableFirestoreListenerError(e)) setError(e.message)
+  }, [])
+
   // Ticks every 15s so "went dark" transitions show up live even when no new
   // Firestore snapshot arrives (heartbeats stop, so there's nothing to push).
   const [nowTick, setNowTick] = useState(() => Date.now())
@@ -191,6 +211,16 @@ export function DashboardPage() {
   const [removeConfirmText, setRemoveConfirmText] = useState('')
   const [removeBusy, setRemoveBusy] = useState(false)
   const [removeError, setRemoveError] = useState<string | null>(null)
+
+  const [clearTarget, setClearTarget] = useState<ClearTarget | null>(null)
+  const [clearConfirmText, setClearConfirmText] = useState('')
+  const [clearBusy, setClearBusy] = useState(false)
+  const [clearError, setClearError] = useState<string | null>(null)
+
+  const [alertsDeviceId, setAlertsDeviceId] = useState('')
+  const [callRecordingDeviceId, setCallRecordingDeviceId] = useState('')
+  const [typingDeviceId, setTypingDeviceId] = useState('')
+  const [locationDeviceId, setLocationDeviceId] = useState('')
 
   const [limitDeviceId, setLimitDeviceId] = useState('')
   const [limitPackage, setLimitPackage] = useState('')
@@ -245,41 +275,41 @@ export function DashboardPage() {
   useEffect(() => {
     if (!familyId) return
     const unsubs = [
-      repo.observeDevices(familyId, setDevices, (e) => setError(e.message)),
-      repo.observeAlerts(familyId, setAlerts, (e) => setError(e.message)),
-      repo.observeGeofences(familyId, setGeofences, (e) => setError(e.message)),
-      repo.observeCommands(familyId, setCommands, (e) => setError(e.message)),
-      repo.observeUsageDaily(familyId, setUsageDaily, (e) => setError(e.message)),
-      repo.observeLocationTrail(familyId, setLocationTrail, (e) => setError(e.message)),
-      repo.observeAppLimits(familyId, setAppLimits, (e) => setError(e.message)),
-      repo.observeAppBlockSchedules(familyId, setAppBlockSchedules, (e) => setError(e.message)),
-      repo.observeDigests(familyId, setDigests, (e) => setError(e.message)),
-      repo.observeGuardians(familyId, setGuardians, (e) => setError(e.message)),
-      repo.observeSosContacts(familyId, setSosContacts, (e) => setError(e.message)),
-      repo.observeSafeContacts(familyId, setSafeContacts, (e) => setError(e.message)),
-      repo.observeWhatsAppEvents(familyId, setWhatsAppBadgeEvents, (e) => setError(e.message)),
-      repo.observeCallRecordings(familyId, setCallRecordings, (e) => setError(e.message)),
-      repo.observeLiveRecordings(familyId, setLiveRecordings, (e) => setError(e.message)),
-      repo.observeTypingSafetyEvents(familyId, setTypingEvents, (e) => setError(e.message)),
-      repo.observeTypingSafetySettings(familyId, setTypingSettings, (e) => setError(e.message)),
-      repo.observeSafetySettings(familyId, setSafetySettings, (e) => setError(e.message)),
-      repo.observeScreenShareSchedules(familyId, setScreenShareSchedules, (e) => setError(e.message)),
+      repo.observeDevices(familyId, setDevices, onListenerError),
+      repo.observeAlerts(familyId, setAlerts, onListenerError),
+      repo.observeGeofences(familyId, setGeofences, onListenerError),
+      repo.observeCommands(familyId, setCommands, onListenerError),
+      repo.observeUsageDaily(familyId, setUsageDaily, onListenerError),
+      repo.observeLocationTrail(familyId, setLocationTrail, onListenerError),
+      repo.observeAppLimits(familyId, setAppLimits, onListenerError),
+      repo.observeAppBlockSchedules(familyId, setAppBlockSchedules, onListenerError),
+      repo.observeDigests(familyId, setDigests, onListenerError),
+      repo.observeGuardians(familyId, setGuardians, onListenerError),
+      repo.observeSosContacts(familyId, setSosContacts, onListenerError),
+      repo.observeSafeContacts(familyId, setSafeContacts, onListenerError),
+      repo.observeWhatsAppEvents(familyId, setWhatsAppBadgeEvents, onListenerError),
+      repo.observeCallRecordings(familyId, setCallRecordings, onListenerError),
+      repo.observeLiveRecordings(familyId, setLiveRecordings, onListenerError),
+      repo.observeTypingSafetyEvents(familyId, setTypingEvents, onListenerError),
+      repo.observeTypingSafetySettings(familyId, setTypingSettings, onListenerError),
+      repo.observeSafetySettings(familyId, setSafetySettings, onListenerError),
+      repo.observeScreenShareSchedules(familyId, setScreenShareSchedules, onListenerError),
     ]
     return () => unsubs.forEach((u) => u())
-  }, [familyId])
+  }, [familyId, onListenerError])
 
   useEffect(() => {
     if (!user?.uid) return
-    return repo.observeLiveViewQuota(user.uid, setLiveViewQuota, (e) => setError(e.message))
-  }, [user?.uid])
+    return repo.observeLiveViewQuota(user.uid, setLiveViewQuota, onListenerError)
+  }, [user?.uid, onListenerError])
 
   useEffect(() => {
     if (!familyId || !photoDeviceId) {
       setDevicePhotos([])
       return
     }
-    return repo.observeDevicePhotos(familyId, photoDeviceId, setDevicePhotos, (e) => setError(e.message))
-  }, [familyId, photoDeviceId])
+    return repo.observeDevicePhotos(familyId, photoDeviceId, setDevicePhotos, onListenerError)
+  }, [familyId, photoDeviceId, onListenerError])
 
   useEffect(() => {
     if (!familyId || !eventRecorderDeviceId) {
@@ -290,9 +320,9 @@ export function DashboardPage() {
       familyId,
       eventRecorderDeviceId,
       setActivityEvents,
-      (e) => setError(e.message),
+      onListenerError,
     )
-  }, [familyId, eventRecorderDeviceId])
+  }, [familyId, eventRecorderDeviceId, onListenerError])
 
   useEffect(() => {
     if (!familyId || !whatsAppDeviceId) {
@@ -305,10 +335,10 @@ export function DashboardPage() {
       familyId,
       whatsAppDeviceId,
       setWhatsAppEvents,
-      (e) => setError(e.message),
+      onListenerError,
       setWhatsAppIndexFallback,
     )
-  }, [familyId, whatsAppDeviceId])
+  }, [familyId, whatsAppDeviceId, onListenerError])
 
   useEffect(() => {
     if (!familyId) return
@@ -332,11 +362,23 @@ export function DashboardPage() {
     if (!photoDeviceId && devices.length > 0) setPhotoDeviceId(devices[0]!.id)
     if (!eventRecorderDeviceId && devices.length > 0) setEventRecorderDeviceId(devices[0]!.id)
     if (!lockScreenDeviceId && devices.length > 0) setLockScreenDeviceId(devices[0]!.id)
+    if (!alertsDeviceId && devices.length > 0) setAlertsDeviceId(devices[0]!.id)
+    if (!callRecordingDeviceId && devices.length > 0) setCallRecordingDeviceId(devices[0]!.id)
+    if (!typingDeviceId && devices.length > 0) setTypingDeviceId(devices[0]!.id)
+    if (!locationDeviceId && devices.length > 0) setLocationDeviceId(devices[0]!.id)
     if (devices.length > 0 && !offlineCallNumber) {
       setOfflineCallNumber(devices[0]!.offlineCallNumber || '')
       setOfflineCallAttempts(String(devices[0]!.offlineCallMaxAttempts || 2))
     }
-  }, [devices, limitDeviceId, scheduleDeviceId, photoDeviceId])
+  }, [devices, limitDeviceId, scheduleDeviceId, photoDeviceId, alertsDeviceId, callRecordingDeviceId, typingDeviceId, locationDeviceId])
+
+  const deviceChildName = (deviceId: string) =>
+    devices.find((d) => d.id === deviceId)?.childName || 'this device'
+
+  const alertsForDevice = useMemo(
+    () => alerts.filter((a) => a.deviceId === alertsDeviceId),
+    [alerts, alertsDeviceId],
+  )
 
   const unread = useMemo(() => alerts.filter((a) => !a.read).length, [alerts])
   const latestUnreadAlert = useMemo(
@@ -344,13 +386,13 @@ export function DashboardPage() {
     [alerts],
   )
   const filteredAlerts = useMemo(() => {
-    const sorted = [...alerts].sort((a, b) => b.createdAtMs - a.createdAtMs)
+    const sorted = [...alertsForDevice].sort((a, b) => b.createdAtMs - a.createdAtMs)
     if (alertFilter === 'all') return sorted
     if (alertFilter === 'critical') {
       return sorted.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high')
     }
     return sorted.filter((a) => severityTone(a.severity) === 'low' || severityTone(a.severity) === 'medium')
-  }, [alerts, alertFilter])
+  }, [alertsForDevice, alertFilter])
 
   // Live fleet snapshot derived from the same Firestore listeners already
   // driving the Devices/Alerts tabs, so TCD reflects changes instantly
@@ -405,7 +447,7 @@ export function DashboardPage() {
     const wp = d.whatsappProtection
     const consent = wp?.consent ?? d.whatsappMonitorConsent
     const notif = wp?.notificationAccess ?? d.notificationAccess
-    const enabled = wp?.enabled
+    const enabled = wp?.enabled ?? (consent && notif)
     if (enabled) return null
     if (!consent) {
       return {
@@ -432,13 +474,18 @@ export function DashboardPage() {
     }
   }, [selectedWhatsAppDevice])
 
+  const callRecordingsForDevice = useMemo(
+    () => callRecordings.filter((r) => r.deviceId === callRecordingDeviceId),
+    [callRecordings, callRecordingDeviceId],
+  )
+
   const callRecordingStats = useMemo(() => {
-    const total = callRecordings.length
-    const withAudio = callRecordings.filter((r) => r.audioCaptured).length
-    const totalDurationSec = callRecordings.reduce((sum, r) => sum + r.durationSec, 0)
-    const lastMs = callRecordings.reduce((max, r) => Math.max(max, r.createdAtMs), 0)
+    const total = callRecordingsForDevice.length
+    const withAudio = callRecordingsForDevice.filter((r) => r.audioCaptured).length
+    const totalDurationSec = callRecordingsForDevice.reduce((sum, r) => sum + r.durationSec, 0)
+    const lastMs = callRecordingsForDevice.reduce((max, r) => Math.max(max, r.createdAtMs), 0)
     return { total, withAudio, totalDurationSec, lastMs }
-  }, [callRecordings])
+  }, [callRecordingsForDevice])
 
   const filteredPhotos = useMemo(() => {
     if (!photoDateFilter.trim()) return devicePhotos
@@ -505,6 +552,11 @@ export function DashboardPage() {
     }
   }, [activityEvents, devices, eventRecorderDeviceId])
 
+  const canClearEventRecorderEvents = useMemo(() => {
+    if (!familyId || !eventRecorderDeviceId) return false
+    return eventRecorderStats.eventCount24h > 0 || activityEvents.length > 0
+  }, [familyId, eventRecorderDeviceId, eventRecorderStats.eventCount24h, activityEvents.length])
+
   const filteredActivityEvents = useMemo(() => {
     let rows = activityEvents
     if (eventTypeFilter !== 'all') rows = rows.filter((e) => e.type === eventTypeFilter)
@@ -535,38 +587,43 @@ export function DashboardPage() {
   }, [activityEvents, eventTypeFilter, eventAppFilter, eventDateFilter, eventSearch])
 
   const filteredCallRecordings = useMemo(() => {
-    if (callRecordingFilter === 'all') return callRecordings
+    if (callRecordingFilter === 'all') return callRecordingsForDevice
     if (callRecordingFilter === 'cellular') {
-      return callRecordings.filter((r) => r.callType === 'CELLULAR')
+      return callRecordingsForDevice.filter((r) => r.callType === 'CELLULAR')
     }
     if (callRecordingFilter === 'voip') {
-      return callRecordings.filter((r) => r.callType === 'VOIP_PARTIAL')
+      return callRecordingsForDevice.filter((r) => r.callType === 'VOIP_PARTIAL')
     }
-    return callRecordings.filter((r) => r.callType === 'MISSED')
-  }, [callRecordings, callRecordingFilter])
+    return callRecordingsForDevice.filter((r) => r.callType === 'MISSED')
+  }, [callRecordingsForDevice, callRecordingFilter])
+
+  const typingEventsForDevice = useMemo(
+    () => typingEvents.filter((e) => e.deviceId === typingDeviceId),
+    [typingEvents, typingDeviceId],
+  )
 
   const typingFlaggedCount = useMemo(
-    () => typingEvents.filter((e) => e.matchedWords.length > 0).length,
-    [typingEvents],
+    () => typingEventsForDevice.filter((e) => e.matchedWords.length > 0).length,
+    [typingEventsForDevice],
   )
   const typingUnreviewedFlaggedCount = useMemo(
-    () => typingEvents.filter((e) => e.matchedWords.length > 0 && !e.reviewed).length,
-    [typingEvents],
+    () => typingEventsForDevice.filter((e) => e.matchedWords.length > 0 && !e.reviewed).length,
+    [typingEventsForDevice],
   )
   const filteredTypingEvents = useMemo(() => {
-    if (typingFilter === 'flagged') return typingEvents.filter((e) => e.matchedWords.length > 0)
+    if (typingFilter === 'flagged') return typingEventsForDevice.filter((e) => e.matchedWords.length > 0)
     if (typingFilter === 'unreviewed') {
-      return typingEvents.filter((e) => e.matchedWords.length > 0 && !e.reviewed)
+      return typingEventsForDevice.filter((e) => e.matchedWords.length > 0 && !e.reviewed)
     }
-    return typingEvents
-  }, [typingEvents, typingFilter])
+    return typingEventsForDevice
+  }, [typingEventsForDevice, typingFilter])
 
   // Extra protection idea: a simple per-app "risk score" (% of captured snippets that matched a
   // prohibited word) so a parent can see at a glance which apps deserve the closest attention —
   // computed client-side from the same timeline already being observed above, so it's free.
   const typingAppRiskScores = useMemo(() => {
     const counts = new Map<string, { label: string; flagged: number; total: number }>()
-    typingEvents.forEach((e) => {
+    typingEventsForDevice.forEach((e) => {
       const key = e.packageName || e.appLabel
       const entry = counts.get(key) || { label: e.appLabel || key, flagged: 0, total: 0 }
       entry.total += 1
@@ -584,7 +641,26 @@ export function DashboardPage() {
       .filter((r) => r.flagged > 0)
       .sort((a, b) => b.score - a.score || b.flagged - a.flagged)
       .slice(0, 6)
-  }, [typingEvents])
+  }, [typingEventsForDevice])
+
+  const locationTrailForDevice = useMemo(
+    () => locationTrail.filter((s) => s.deviceId === locationDeviceId),
+    [locationTrail, locationDeviceId],
+  )
+
+  const usageDailyForDevice = useMemo(
+    () => usageDaily.filter((u) => u.deviceId === limitDeviceId),
+    [usageDaily, limitDeviceId],
+  )
+
+  const canClearAlerts = Boolean(familyId && alertsDeviceId && alertsForDevice.length > 0)
+  const canClearWhatsApp = Boolean(familyId && whatsAppDeviceId && whatsAppEvents.length > 0)
+  const canClearCallRecordings = Boolean(familyId && callRecordingDeviceId && callRecordingsForDevice.length > 0)
+  const canClearPhotos = Boolean(familyId && photoDeviceId && devicePhotos.length > 0)
+  const canClearTyping = Boolean(familyId && typingDeviceId && typingEventsForDevice.length > 0)
+  const canClearLocationTrail = Boolean(familyId && locationDeviceId && locationTrailForDevice.length > 0)
+  const canClearUsage = Boolean(familyId && limitDeviceId && usageDailyForDevice.length > 0)
+  const canClearDigests = Boolean(familyId && digests.length > 0)
 
   const galleryItems = useMemo(() => {
     const fromAlerts = alerts
@@ -655,6 +731,204 @@ export function DashboardPage() {
       setRemoveBusy(false)
     }
   }
+
+  const openClear = (target: ClearTarget) => {
+    setClearTarget(target)
+    setClearConfirmText('')
+    setClearError(null)
+  }
+
+  const cancelClear = () => {
+    setClearTarget(null)
+    setClearConfirmText('')
+    setClearError(null)
+  }
+
+  const confirmClear = async () => {
+    if (!familyId || !clearTarget) return
+    if (clearConfirmText.trim().toUpperCase() !== CLEAR_CONFIRM_TEXT) {
+      setClearError(`Type "${CLEAR_CONFIRM_TEXT}" to confirm.`)
+      return
+    }
+    setClearBusy(true)
+    setClearError(null)
+    try {
+      let deleted = 0
+      let message = 'Data cleared.'
+      switch (clearTarget) {
+        case 'alerts':
+          deleted = await repo.clearAlerts(familyId, alertsDeviceId)
+          message = `Cleared ${deleted.toLocaleString()} alert${deleted === 1 ? '' : 's'} for ${deviceChildName(alertsDeviceId)}.`
+          break
+        case 'whatsapp':
+          deleted = await repo.clearWhatsAppEventsForDevice(familyId, whatsAppDeviceId)
+          setWhatsAppTypeFilter('ALL')
+          message = `Cleared ${deleted.toLocaleString()} WhatsApp event${deleted === 1 ? '' : 's'} for ${deviceChildName(whatsAppDeviceId)}. New activity will still be recorded.`
+          break
+        case 'callrecording':
+          deleted = await repo.clearCallRecordings(familyId, callRecordingDeviceId)
+          setCallRecordingFilter('all')
+          message = `Cleared ${deleted.toLocaleString()} call recording${deleted === 1 ? '' : 's'} for ${deviceChildName(callRecordingDeviceId)}. Audio files in cloud storage may remain until retention cleanup.`
+          break
+        case 'photos':
+          deleted = await repo.clearDevicePhotos(familyId, photoDeviceId)
+          setPhotoDateFilter('')
+          setSelectedPhoto(null)
+          message = `Cleared ${deleted.toLocaleString()} synced photo${deleted === 1 ? '' : 's'} for ${deviceChildName(photoDeviceId)}. Thumbnail files in cloud storage may remain until retention cleanup.`
+          break
+        case 'typing':
+          deleted = await repo.clearTypingEvents(familyId, typingDeviceId)
+          setTypingFilter('all')
+          message = `Cleared ${deleted.toLocaleString()} typing safety snippet${deleted === 1 ? '' : 's'} for ${deviceChildName(typingDeviceId)}.`
+          break
+        case 'location':
+          deleted = await repo.clearLocationTrail(familyId, locationDeviceId)
+          message = `Cleared ${deleted.toLocaleString()} location history point${deleted === 1 ? '' : 's'} for ${deviceChildName(locationDeviceId)}.`
+          break
+        case 'usage':
+          deleted = await repo.clearUsageDaily(familyId, limitDeviceId)
+          message = `Cleared ${deleted.toLocaleString()} daily usage row${deleted === 1 ? '' : 's'} for ${deviceChildName(limitDeviceId)}.`
+          break
+        case 'digests':
+          deleted = await repo.clearWeeklyDigests(familyId)
+          message = `Cleared ${deleted.toLocaleString()} weekly digest${deleted === 1 ? '' : 's'}.`
+          break
+        case 'eventrecorder':
+          deleted = await repo.clearActivityEvents(familyId, eventRecorderDeviceId)
+          setEventSearch('')
+          setEventAppFilter('')
+          setEventDateFilter('')
+          setEventTypeFilter('all')
+          message = `Cleared ${deleted.toLocaleString()} activity event${deleted === 1 ? '' : 's'} for ${deviceChildName(eventRecorderDeviceId)}. New activity will still be recorded.`
+          break
+      }
+      setStatusMsg(message)
+      cancelClear()
+    } catch (e) {
+      setClearError(e instanceof Error ? e.message : 'Failed to clear data')
+    } finally {
+      setClearBusy(false)
+    }
+  }
+
+  const clearConfirmCopy = useMemo(() => {
+    switch (clearTarget) {
+      case 'alerts':
+        return {
+          title: 'Clear all alerts',
+          description: (
+            <>
+              This permanently deletes every safety alert for <strong>{deviceChildName(alertsDeviceId)}</strong>.
+              Alerts cannot be restored. New alerts will still appear when triggered.
+            </>
+          ),
+          confirmLabel: 'Permanently clear alerts',
+        }
+      case 'whatsapp':
+        return {
+          title: 'Clear all WhatsApp events',
+          description: (
+            <>
+              This permanently deletes every WhatsApp protection event for{' '}
+              <strong>{deviceChildName(whatsAppDeviceId)}</strong>. The timeline cannot be restored. Monitoring
+              will keep recording new activity after you clear.
+            </>
+          ),
+          confirmLabel: 'Permanently clear WhatsApp events',
+        }
+      case 'callrecording':
+        return {
+          title: 'Clear all call recordings',
+          description: (
+            <>
+              This permanently deletes every call recording row for{' '}
+              <strong>{deviceChildName(callRecordingDeviceId)}</strong>. Audio files in cloud storage may remain
+              until retention cleanup runs.
+            </>
+          ),
+          confirmLabel: 'Permanently clear call recordings',
+        }
+      case 'photos':
+        return {
+          title: 'Clear all synced photos',
+          description: (
+            <>
+              This permanently deletes the synced photo gallery index for{' '}
+              <strong>{deviceChildName(photoDeviceId)}</strong>. Thumbnail files in cloud storage may remain until
+              retention cleanup. Photos on the child phone are not deleted.
+            </>
+          ),
+          confirmLabel: 'Permanently clear gallery index',
+        }
+      case 'typing':
+        return {
+          title: 'Clear all typing safety snippets',
+          description: (
+            <>
+              This permanently deletes every typing safety snippet for{' '}
+              <strong>{deviceChildName(typingDeviceId)}</strong>. Snippets cannot be restored.
+            </>
+          ),
+          confirmLabel: 'Permanently clear snippets',
+        }
+      case 'location':
+        return {
+          title: 'Clear location history',
+          description: (
+            <>
+              This permanently deletes every stored location trail point for{' '}
+              <strong>{deviceChildName(locationDeviceId)}</strong>. The child&apos;s current location on the map is
+              not affected.
+            </>
+          ),
+          confirmLabel: 'Permanently clear location history',
+        }
+      case 'usage':
+        return {
+          title: 'Clear screen-time history',
+          description: (
+            <>
+              This permanently deletes every daily screen-time row for{' '}
+              <strong>{deviceChildName(limitDeviceId)}</strong>. New usage will sync on the next daily rollup.
+            </>
+          ),
+          confirmLabel: 'Permanently clear usage history',
+        }
+      case 'digests':
+        return {
+          title: 'Clear all weekly digests',
+          description: (
+            <>This permanently deletes every generated weekly digest for your family. Summaries cannot be restored.</>
+          ),
+          confirmLabel: 'Permanently clear digests',
+        }
+      case 'eventrecorder':
+        return {
+          title: 'Clear all activity events',
+          description: (
+            <>
+              This permanently deletes every activity event for{' '}
+              <strong>{deviceChildName(eventRecorderDeviceId)}</strong>. The timeline cannot be restored. Event
+              Recorder will keep recording new activity after you clear.
+            </>
+          ),
+          confirmLabel: 'Permanently clear timeline',
+        }
+      default:
+        return null
+    }
+  }, [
+    clearTarget,
+    alertsDeviceId,
+    whatsAppDeviceId,
+    callRecordingDeviceId,
+    photoDeviceId,
+    typingDeviceId,
+    locationDeviceId,
+    limitDeviceId,
+    eventRecorderDeviceId,
+    devices,
+  ])
 
   const addGeofence = async () => {
     if (!familyId) return
@@ -1129,6 +1403,18 @@ export function DashboardPage() {
           sub: 'Camera, audio & screen (WebRTC)',
           icon: '\u{1F4F9}',
         },
+        {
+          id: 'screensnapshots',
+          label: 'Screen snapshots',
+          sub: 'Periodic accessibility captures',
+          icon: '\u{1F4F1}',
+        },
+        {
+          id: 'camerasnapshots',
+          label: 'Camera snapshots',
+          sub: 'Periodic front/back stills',
+          icon: '\u{1F4F7}',
+        },
       ],
     },
     {
@@ -1184,6 +1470,8 @@ export function DashboardPage() {
     eventrecorder: 'Event recorder',
     lockscreen: 'Lock screen',
     liveview: 'Live viewing',
+    screensnapshots: 'Screen snapshots',
+    camerasnapshots: 'Camera snapshots',
     typing: 'Typing safety',
     usage: 'App usage & limits',
     apps: 'Apps',
@@ -1276,7 +1564,7 @@ export function DashboardPage() {
         {error && <div className="banner error-banner">{error}</div>}
         {statusMsg && <div className="banner ok-banner">{statusMsg}</div>}
 
-        <main className={section === 'livemap' ? 'panel panel-flush' : 'panel'}>
+        <main className={section === 'livemap' ? 'panel panel-flush livemap-panel' : 'panel'}>
           {section === 'home' && (
             <section className="stack">
               {devices.length === 0 ? (
@@ -1326,11 +1614,52 @@ export function DashboardPage() {
 
           {section === 'alerts' && (
             <section className="stack">
+              {devices.length > 0 && (
+                <div className="card">
+                  <div className="eventrecorder-timeline-head">
+                    <h3>Device</h3>
+                    {canClearAlerts && clearTarget !== 'alerts' && (
+                      <button
+                        className="btn danger compact"
+                        type="button"
+                        disabled={busy || clearBusy}
+                        onClick={() => openClear('alerts')}
+                      >
+                        Clear all alerts
+                      </button>
+                    )}
+                  </div>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={alertsDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setAlertsDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                  <ClearAllConfirm
+                    open={clearTarget === 'alerts'}
+                    title={clearConfirmCopy?.title ?? ''}
+                    description={clearConfirmCopy?.description}
+                    confirmText={clearConfirmText}
+                    onConfirmTextChange={setClearConfirmText}
+                    error={clearError}
+                    busy={clearBusy}
+                    onConfirm={() => void confirmClear()}
+                    onCancel={cancelClear}
+                    confirmLabel={clearConfirmCopy?.confirmLabel}
+                  />
+                </div>
+              )}
               <div className="filter-row">
                 {(
                   [
-                    ['all', `All (${alerts.length})`],
-                    ['critical', `Critical (${alerts.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high').length})`],
+                    ['all', `All (${alertsForDevice.length})`],
+                    ['critical', `Critical (${alertsForDevice.filter((a) => severityTone(a.severity) === 'critical' || severityTone(a.severity) === 'high').length})`],
                     ['info', 'Info'],
                   ] as const
                 ).map(([id, label]) => (
@@ -1346,8 +1675,12 @@ export function DashboardPage() {
               </div>
               {filteredAlerts.length === 0 ? (
                 <Empty
-                  title={alerts.length === 0 ? 'All quiet — no alerts yet' : 'No alerts in this filter'}
-                  body="That's a good thing! Safety alerts from your child's device will show up here."
+                  title={alertsForDevice.length === 0 ? 'All quiet — no alerts yet' : 'No alerts in this filter'}
+                  body={
+                    alertsForDevice.length === 0
+                      ? "That's a good thing! Safety alerts from your child's device will show up here."
+                      : 'Try another filter or choose a different device.'
+                  }
                 />
               ) : (
                 filteredAlerts.map((a) => {
@@ -1407,6 +1740,13 @@ export function DashboardPage() {
             />
           )}
 
+          {section === 'livemap' && !familyId && (
+            <div className="empty">
+              <h3>Loading live map…</h3>
+              <p className="muted">Connecting to your family workspace.</p>
+            </div>
+          )}
+
           {section === 'livemap' && familyId && (
             <LiveMapPage
               familyId={familyId}
@@ -1419,7 +1759,23 @@ export function DashboardPage() {
           )}
 
           {section === 'map' && (
-            <LocationsSection devices={devices} trail={locationTrail} nowTick={nowTick} />
+            <LocationsSection
+              devices={devices}
+              trail={locationTrail}
+              nowTick={nowTick}
+              locationDeviceId={locationDeviceId}
+              onLocationDeviceIdChange={setLocationDeviceId}
+              canClearLocationTrail={canClearLocationTrail}
+              clearOpen={clearTarget === 'location'}
+              clearConfirmCopy={clearConfirmCopy}
+              clearConfirmText={clearConfirmText}
+              onClearConfirmTextChange={setClearConfirmText}
+              clearError={clearError}
+              clearBusy={clearBusy}
+              onOpenClear={() => openClear('location')}
+              onCancelClear={cancelClear}
+              onConfirmClear={() => void confirmClear()}
+            />
           )}
 
           {section === 'safety' && (
@@ -1771,7 +2127,19 @@ export function DashboardPage() {
                       ? `Messages from: ${selectedWhatsAppDevice.childName}`
                       : 'WhatsApp protection'}
                   </h3>
-                  <span className="pill online">Live</span>
+                  <div className="row gap">
+                    {canClearWhatsApp && clearTarget !== 'whatsapp' && (
+                      <button
+                        className="btn danger compact"
+                        type="button"
+                        disabled={busy || clearBusy}
+                        onClick={() => openClear('whatsapp')}
+                      >
+                        Clear all events
+                      </button>
+                    )}
+                    <span className="pill online">Live</span>
+                  </div>
                 </div>
                 <p className="muted">
                   Consent-based monitoring of WhatsApp activity on paired devices. Message bodies are
@@ -1819,6 +2187,19 @@ export function DashboardPage() {
                   </div>
                 </div>
               </div>
+
+              <ClearAllConfirm
+                open={clearTarget === 'whatsapp'}
+                title={clearConfirmCopy?.title ?? ''}
+                description={clearConfirmCopy?.description}
+                confirmText={clearConfirmText}
+                onConfirmTextChange={setClearConfirmText}
+                error={clearError}
+                busy={clearBusy}
+                onConfirm={() => void confirmClear()}
+                onCancel={cancelClear}
+                confirmLabel={clearConfirmCopy?.confirmLabel}
+              />
 
               {whatsAppSetupStatus && (
                 <Empty title={whatsAppSetupStatus.title} body={whatsAppSetupStatus.body} />
@@ -1963,7 +2344,19 @@ export function DashboardPage() {
               <div className="card callrecording-hero">
                 <div className="callrecording-hero-head">
                   <h3>Call recording</h3>
-                  <span className="pill online">Native Android</span>
+                  <div className="row gap">
+                    {canClearCallRecordings && clearTarget !== 'callrecording' && (
+                      <button
+                        className="btn danger compact"
+                        type="button"
+                        disabled={busy || clearBusy}
+                        onClick={() => openClear('callrecording')}
+                      >
+                        Clear all recordings
+                      </button>
+                    )}
+                    <span className="pill online">Native Android</span>
+                  </div>
                 </div>
                 <p className="muted">
                   Consent-based call monitoring on paired devices. SareChild is a native Kotlin app —{' '}
@@ -2011,6 +2404,37 @@ export function DashboardPage() {
                   </div>
                 </div>
               </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Select device</h3>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={callRecordingDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setCallRecordingDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <ClearAllConfirm
+                open={clearTarget === 'callrecording'}
+                title={clearConfirmCopy?.title ?? ''}
+                description={clearConfirmCopy?.description}
+                confirmText={clearConfirmText}
+                onConfirmTextChange={setClearConfirmText}
+                error={clearError}
+                busy={clearBusy}
+                onConfirm={() => void confirmClear()}
+                onCancel={cancelClear}
+                confirmLabel={clearConfirmCopy?.confirmLabel}
+              />
 
               {devices.length > 0 && (
                 <div className="card">
@@ -2070,7 +2494,7 @@ export function DashboardPage() {
                 <div className="filter-row">
                   {(
                     [
-                      ['all', `All (${callRecordings.length})`],
+                      ['all', `All (${callRecordingsForDevice.length})`],
                       ['cellular', 'Cellular'],
                       ['voip', 'VoIP'],
                       ['missed', 'Missed'],
@@ -2149,7 +2573,19 @@ export function DashboardPage() {
               <div className="card photos-hero">
                 <div className="photos-hero-head">
                   <h3>Photo gallery</h3>
-                  <span className="pill online">MediaStore sync</span>
+                  <div className="row gap">
+                    {canClearPhotos && clearTarget !== 'photos' && (
+                      <button
+                        className="btn danger compact"
+                        type="button"
+                        disabled={busy || clearBusy}
+                        onClick={() => openClear('photos')}
+                      >
+                        Clear all photos
+                      </button>
+                    )}
+                    <span className="pill online">MediaStore sync</span>
+                  </div>
                 </div>
                 <p className="muted">
                   Thumbnails from your child&apos;s device gallery, synced with their consent. Uses standard Android
@@ -2252,6 +2688,16 @@ export function DashboardPage() {
                             >
                               Refresh gallery
                             </button>
+                            {d.id === photoDeviceId && canClearPhotos && clearTarget !== 'photos' && (
+                              <button
+                                className="btn danger compact"
+                                type="button"
+                                disabled={busy || clearBusy}
+                                onClick={() => openClear('photos')}
+                              >
+                                Clear all photos
+                              </button>
+                            )}
                           </div>
                         </li>
                       )
@@ -2261,7 +2707,31 @@ export function DashboardPage() {
               )}
 
               <div className="card">
-                <h3>Gallery</h3>
+                <div className="eventrecorder-timeline-head">
+                  <h3>Gallery</h3>
+                  {canClearPhotos && clearTarget !== 'photos' && (
+                    <button
+                      className="btn danger compact"
+                      type="button"
+                      disabled={busy || clearBusy}
+                      onClick={() => openClear('photos')}
+                    >
+                      Clear all photos
+                    </button>
+                  )}
+                </div>
+                <ClearAllConfirm
+                  open={clearTarget === 'photos'}
+                  title={clearConfirmCopy?.title ?? ''}
+                  description={clearConfirmCopy?.description}
+                  confirmText={clearConfirmText}
+                  onConfirmTextChange={setClearConfirmText}
+                  error={clearError}
+                  busy={clearBusy}
+                  onConfirm={() => void confirmClear()}
+                  onCancel={cancelClear}
+                  confirmLabel={clearConfirmCopy?.confirmLabel}
+                />
                 <div className="filter-row photos-filters">
                   <label className="photos-date-filter">
                     <span className="muted small">Taken on (local date)</span>
@@ -2496,6 +2966,18 @@ export function DashboardPage() {
                             >
                               Refresh timeline
                             </button>
+                            {d.id === eventRecorderDeviceId &&
+                              canClearEventRecorderEvents &&
+                              clearTarget !== 'eventrecorder' && (
+                                <button
+                                  className="btn danger compact"
+                                  type="button"
+                                  disabled={busy || clearBusy}
+                                  onClick={() => openClear('eventrecorder')}
+                                >
+                                  Clear all events
+                                </button>
+                              )}
                           </div>
                         </li>
                       )
@@ -2505,7 +2987,31 @@ export function DashboardPage() {
               )}
 
               <div className="card">
-                <h3>Activity timeline</h3>
+                <div className="eventrecorder-timeline-head">
+                  <h3>Activity timeline</h3>
+                  {canClearEventRecorderEvents && clearTarget !== 'eventrecorder' && (
+                    <button
+                      className="btn danger compact"
+                      type="button"
+                      disabled={busy || clearBusy}
+                      onClick={() => openClear('eventrecorder')}
+                    >
+                      Clear all events
+                    </button>
+                  )}
+                </div>
+                <ClearAllConfirm
+                  open={clearTarget === 'eventrecorder'}
+                  title={clearConfirmCopy?.title ?? ''}
+                  description={clearConfirmCopy?.description}
+                  confirmText={clearConfirmText}
+                  onConfirmTextChange={setClearConfirmText}
+                  error={clearError}
+                  busy={clearBusy}
+                  onConfirm={() => void confirmClear()}
+                  onCancel={cancelClear}
+                  confirmLabel={clearConfirmCopy?.confirmLabel}
+                />
                 <div className="filter-row eventrecorder-filters">
                   <input
                     type="search"
@@ -2720,12 +3226,46 @@ export function DashboardPage() {
             />
           )}
 
+          {section === 'screensnapshots' && familyId && (
+            <ScreenSnapshotsSection
+              familyId={familyId}
+              devices={devices}
+              busy={busy}
+              setBusy={setBusy}
+              setStatusMsg={setStatusMsg}
+              setError={setError}
+            />
+          )}
+
+          {section === 'camerasnapshots' && familyId && (
+            <CameraSnapshotsSection
+              familyId={familyId}
+              devices={devices}
+              busy={busy}
+              setBusy={setBusy}
+              setStatusMsg={setStatusMsg}
+              setError={setError}
+            />
+          )}
+
           {section === 'typing' && (
             <section className="stack">
               <div className="card typing-hero">
                 <div className="typing-hero-head">
                   <h3>Typing safety — keyboard &amp; message shield</h3>
-                  <span className="pill online">Live</span>
+                  <div className="row gap">
+                    {canClearTyping && clearTarget !== 'typing' && (
+                      <button
+                        className="btn danger compact"
+                        type="button"
+                        disabled={busy || clearBusy}
+                        onClick={() => openClear('typing')}
+                      >
+                        Clear all snippets
+                      </button>
+                    )}
+                    <span className="pill online">Live</span>
+                  </div>
                 </div>
                 <p className="muted">
                   With your child&apos;s consent, SareChild can see words typed in messaging apps —
@@ -2743,7 +3283,7 @@ export function DashboardPage() {
                 </p>
                 <div className="typing-stats">
                   <div className="typing-stat">
-                    <span className="typing-stat-num">{typingEvents.length}</span>
+                    <span className="typing-stat-num">{typingEventsForDevice.length}</span>
                     <span className="typing-stat-label">Snippets (300 latest)</span>
                   </div>
                   <div className="typing-stat">
@@ -2764,6 +3304,37 @@ export function DashboardPage() {
                   </div>
                 </div>
               </div>
+
+              {devices.length > 0 && (
+                <div className="card">
+                  <h3>Select device</h3>
+                  <div className="filter-row">
+                    {devices.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={typingDeviceId === d.id ? 'chip active' : 'chip'}
+                        onClick={() => setTypingDeviceId(d.id)}
+                      >
+                        {d.childName}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <ClearAllConfirm
+                open={clearTarget === 'typing'}
+                title={clearConfirmCopy?.title ?? ''}
+                description={clearConfirmCopy?.description}
+                confirmText={clearConfirmText}
+                onConfirmTextChange={setClearConfirmText}
+                error={clearError}
+                busy={clearBusy}
+                onConfirm={() => void confirmClear()}
+                onCancel={cancelClear}
+                confirmLabel={clearConfirmCopy?.confirmLabel}
+              />
 
               {devices.length > 0 && devices.every((d) => !d.messageMonitorConsent) && (
                 <Empty
@@ -2791,11 +3362,23 @@ export function DashboardPage() {
               )}
 
               <div className="card">
-                <h3>Timeline</h3>
+                <div className="eventrecorder-timeline-head">
+                  <h3>Timeline</h3>
+                  {canClearTyping && clearTarget !== 'typing' && (
+                    <button
+                      className="btn danger compact"
+                      type="button"
+                      disabled={busy || clearBusy}
+                      onClick={() => openClear('typing')}
+                    >
+                      Clear all snippets
+                    </button>
+                  )}
+                </div>
                 <div className="filter-row">
                   {(
                     [
-                      ['all', `All (${typingEvents.length})`],
+                      ['all', `All (${typingEventsForDevice.length})`],
                       ['flagged', `Flagged (${typingFlaggedCount})`],
                       ['unreviewed', `Needs review (${typingUnreviewedFlaggedCount})`],
                     ] as [TypingFilter, string][]
@@ -3234,11 +3817,35 @@ export function DashboardPage() {
               </div>
 
               <div className="card">
-                <h3>Screen time by day</h3>
-                {usageDaily.length === 0 ? (
-                  <p className="muted small">No usage data synced yet.</p>
+                <div className="eventrecorder-timeline-head">
+                  <h3>Screen time by day</h3>
+                  {canClearUsage && clearTarget !== 'usage' && (
+                    <button
+                      className="btn danger compact"
+                      type="button"
+                      disabled={busy || clearBusy}
+                      onClick={() => openClear('usage')}
+                    >
+                      Clear usage history
+                    </button>
+                  )}
+                </div>
+                <ClearAllConfirm
+                  open={clearTarget === 'usage'}
+                  title={clearConfirmCopy?.title ?? ''}
+                  description={clearConfirmCopy?.description}
+                  confirmText={clearConfirmText}
+                  onConfirmTextChange={setClearConfirmText}
+                  error={clearError}
+                  busy={clearBusy}
+                  onConfirm={() => void confirmClear()}
+                  onCancel={cancelClear}
+                  confirmLabel={clearConfirmCopy?.confirmLabel}
+                />
+                {usageDailyForDevice.length === 0 ? (
+                  <p className="muted small">No usage data synced yet for {deviceChildName(limitDeviceId)}.</p>
                 ) : (
-                  usageDaily.map((u) => {
+                  usageDailyForDevice.map((u) => {
                     const name = devices.find((d) => d.id === u.deviceId)?.childName || u.deviceId
                     return (
                       <div key={u.id} className="usage-row">
@@ -3270,6 +3877,33 @@ export function DashboardPage() {
 
           {section === 'digests' && (
             <section className="stack">
+              <div className="card">
+                <div className="eventrecorder-timeline-head">
+                  <h3>Weekly digests</h3>
+                  {canClearDigests && clearTarget !== 'digests' && (
+                    <button
+                      className="btn danger compact"
+                      type="button"
+                      disabled={busy || clearBusy}
+                      onClick={() => openClear('digests')}
+                    >
+                      Clear all digests
+                    </button>
+                  )}
+                </div>
+                <ClearAllConfirm
+                  open={clearTarget === 'digests'}
+                  title={clearConfirmCopy?.title ?? ''}
+                  description={clearConfirmCopy?.description}
+                  confirmText={clearConfirmText}
+                  onConfirmTextChange={setClearConfirmText}
+                  error={clearError}
+                  busy={clearBusy}
+                  onConfirm={() => void confirmClear()}
+                  onCancel={cancelClear}
+                  confirmLabel={clearConfirmCopy?.confirmLabel}
+                />
+              </div>
               {digests.length === 0 ? (
                 <Empty
                   title="No digests yet"
@@ -4003,10 +4637,34 @@ function LocationsSection({
   devices,
   trail,
   nowTick,
+  locationDeviceId,
+  onLocationDeviceIdChange,
+  canClearLocationTrail,
+  clearOpen,
+  clearConfirmCopy,
+  clearConfirmText,
+  onClearConfirmTextChange,
+  clearError,
+  clearBusy,
+  onOpenClear,
+  onCancelClear,
+  onConfirmClear,
 }: {
   devices: DeviceStatus[]
   trail: LocationTrailSample[]
   nowTick: number
+  locationDeviceId: string
+  onLocationDeviceIdChange: (deviceId: string) => void
+  canClearLocationTrail: boolean
+  clearOpen: boolean
+  clearConfirmCopy: { title: string; description: ReactNode; confirmLabel?: string } | null
+  clearConfirmText: string
+  onClearConfirmTextChange: (value: string) => void
+  clearError: string | null
+  clearBusy: boolean
+  onOpenClear: () => void
+  onCancelClear: () => void
+  onConfirmClear: () => void
 }) {
   if (devices.length === 0) {
     return (
@@ -4015,11 +4673,50 @@ function LocationsSection({
       </section>
     )
   }
+  const selectedDevice = devices.find((d) => d.id === locationDeviceId) ?? devices[0]!
+  const deviceTrail = trail.filter((s) => s.deviceId === selectedDevice.id)
   return (
     <section className="stack">
-      {devices.map((d) => (
-        <LocationCard key={d.id} device={d} online={isDeviceOnline(d, nowTick)} trail={trail.filter((s) => s.deviceId === d.id).slice(0, 8)} />
-      ))}
+      <div className="card">
+        <div className="eventrecorder-timeline-head">
+          <h3>Location history</h3>
+          {canClearLocationTrail && !clearOpen && (
+            <button className="btn danger compact" type="button" disabled={clearBusy} onClick={onOpenClear}>
+              Clear location history
+            </button>
+          )}
+        </div>
+        <div className="filter-row">
+          {devices.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              className={locationDeviceId === d.id ? 'chip active' : 'chip'}
+              onClick={() => onLocationDeviceIdChange(d.id)}
+            >
+              {d.childName}
+            </button>
+          ))}
+        </div>
+        <ClearAllConfirm
+          open={clearOpen}
+          title={clearConfirmCopy?.title ?? ''}
+          description={clearConfirmCopy?.description}
+          confirmText={clearConfirmText}
+          onConfirmTextChange={onClearConfirmTextChange}
+          error={clearError}
+          busy={clearBusy}
+          onConfirm={onConfirmClear}
+          onCancel={onCancelClear}
+          confirmLabel={clearConfirmCopy?.confirmLabel}
+        />
+      </div>
+      <LocationCard
+        key={selectedDevice.id}
+        device={selectedDevice}
+        online={isDeviceOnline(selectedDevice, nowTick)}
+        trail={deviceTrail.slice(0, 8)}
+      />
     </section>
   )
 }
@@ -4161,7 +4858,9 @@ function ChatSection({
       setMessages([])
       return
     }
-    return repo.observeDeviceChat(familyId, selectedDeviceId, setMessages, (e) => setError(e.message))
+    return repo.observeDeviceChat(familyId, selectedDeviceId, setMessages, (e) => {
+      if (!repo.isIgnorableFirestoreListenerError(e)) setError(e.message)
+    })
   }, [familyId, selectedDeviceId])
 
   useEffect(() => {

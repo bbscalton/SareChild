@@ -12,6 +12,7 @@ import android.location.Location
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
@@ -26,6 +27,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.sarechild.child.MainActivity
 import com.sarechild.child.R
 import com.sarechild.child.data.ChildRepository
@@ -43,12 +45,17 @@ import kotlinx.coroutines.tasks.await
 
 class MonitoringForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var foregroundTypeFallback = false
     private lateinit var repo: ChildRepository
     private lateinit var fused: com.google.android.gms.location.FusedLocationProviderClient
     private lateinit var geofencingClient: GeofencingClient
     private var heartbeatJob: Job? = null
+    private var liveTrackingJob: Job? = null
     private var usageBlockJob: Job? = null
     private var lastLocation: LatLngPoint? = null
+    private var liveTrackingActive = false
+    private var liveTrackingExpiresAtMs = 0L
+    private var lastLivePublishMs = 0L
     private var lastLowBatteryAlertMs = 0L
     private var lastNotifAccess: Boolean? = null
     private var lastLocationPerm: Boolean? = null
@@ -62,21 +69,43 @@ class MonitoringForegroundService : Service() {
     private var lastWallClockMs: Long = 0L
     private var lastElapsedRealtimeMs: Long = 0L
     private var lastCheckInPromptMs: Long = 0L
+    private var lastTodayScreenMinutes = 0
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val loc = result.lastLocation ?: return
-            lastLocation = LatLngPoint(
-                lat = loc.latitude,
-                lng = loc.longitude,
-                accuracyM = loc.accuracy,
-                updatedAtMs = System.currentTimeMillis(),
-                // hasBearing()/hasSpeed() are false on many fixes (e.g. stationary/Wi-Fi-only
-                // fixes) — only attach them when the platform actually reports a fix for this
-                // sample, so the parent map's heading arrow doesn't show a stale/fake 0°.
-                bearingDeg = if (loc.hasBearing()) loc.bearing else null,
-                speedMps = if (loc.hasSpeed()) loc.speed else null
-            )
+            lastLocation = loc.toLatLngPoint()
+            if (liveTrackingActive) {
+                scope.launch { maybePublishLiveLocation(force = false) }
+            }
+        }
+    }
+
+    private fun Location.toLatLngPoint(): LatLngPoint = LatLngPoint(
+        lat = latitude,
+        lng = longitude,
+        accuracyM = accuracy,
+        updatedAtMs = System.currentTimeMillis(),
+        bearingDeg = if (hasBearing()) bearing else null,
+        speedMps = if (hasSpeed()) speed else null
+    )
+
+    private suspend fun fetchFreshLocation(): LatLngPoint? {
+        if (!hasLocationPermission()) return lastLocation
+        return try {
+            val loc = fused.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                CancellationTokenSource().token
+            ).await()
+            if (loc != null) {
+                val point = loc.toLatLngPoint()
+                lastLocation = point
+                point
+            } else {
+                lastLocation
+            }
+        } catch (_: Exception) {
+            lastLocation
         }
     }
 
@@ -88,17 +117,52 @@ class MonitoringForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Process STOP actions before ensureServiceRunning — prefs are still true there and
+        // would re-arm capture + race Firestore status back to active=true.
+        when (intent?.action) {
+            SareChildConstants.ACTION_STOP_LIVE_TRACKING -> disableLiveTracking()
+            SareChildConstants.ACTION_STOP_SCREEN_SNAPSHOTS -> ScreenSnapshotCapture.stop(this)
+            SareChildConstants.ACTION_STOP_CAMERA_SNAPSHOTS -> CameraSnapshotCapture.stop(this)
+        }
+        ensureServiceRunning()
+        when (intent?.action) {
+            SareChildConstants.ACTION_START_LIVE_TRACKING -> {
+                val durationMin = intent.getIntExtra(
+                    SareChildConstants.EXTRA_DURATION_MINUTES,
+                    (SareChildConstants.LIVE_TRACKING_MAX_DURATION_MS / 60_000L).toInt()
+                ).coerceIn(1, 60)
+                enableLiveTracking(durationMin * 60_000L)
+            }
+            SareChildConstants.ACTION_START_SCREEN_SNAPSHOTS -> {
+                ScreenSnapshotCapture.start(this)
+            }
+            SareChildConstants.ACTION_START_CAMERA_SNAPSHOTS -> {
+                val mode = intent.getStringExtra(SareChildConstants.EXTRA_CAMERA_SNAPSHOTS_MODE)
+                CameraSnapshotCapture.start(this, mode)
+            }
+        }
+        return START_STICKY
+    }
+
+    private fun ensureServiceRunning() {
         startAsForeground()
         startLocationUpdates()
         startHeartbeatLoop()
         startUsageBlockLoop()
-        repo.startAppBlockScheduleListener()
-        commandListener = CommandListener(this, repo).also { it.start() }
-        unpairHandler = DeviceUnpairHandler(this, repo).also { it.start() }
-        scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
-        ensureCallRecordingMonitor()
-        scope.launch { refreshGeofences() }
-        return START_STICKY
+        if (repo.screenSnapshotsActive) {
+            ScreenSnapshotCapture.start(this)
+        }
+        if (repo.cameraSnapshotsActive) {
+            CameraSnapshotCapture.start(this, repo.cameraSnapshotsMode)
+        }
+        if (commandListener == null) {
+            repo.startAppBlockScheduleListener()
+            commandListener = CommandListener(this, repo).also { it.start() }
+            unpairHandler = DeviceUnpairHandler(this, repo).also { it.start() }
+            scheduleWatcher = ScreenShareScheduleWatcher(this, repo).also { it.start() }
+            ensureCallRecordingMonitor()
+            scope.launch { refreshGeofences() }
+        }
     }
 
     private fun startAsForeground() {
@@ -121,37 +185,203 @@ class MonitoringForegroundService : Service() {
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val type = resolveForegroundServiceType()
                 ServiceCompat.startForeground(
                     this,
                     SareChildConstants.FGS_NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    type
                 )
+                if (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA != 0) {
+                    foregroundTypeFallback = false
+                }
             } else {
                 startForeground(SareChildConstants.FGS_NOTIFICATION_ID, notification)
             }
-        } catch (_: SecurityException) {
-            // API 34+: location-type FGS requires runtime location permission — stop cleanly
-            // until PermissionsActivity grants it and calls [start] again.
-            stopSelf()
+        } catch (e: SecurityException) {
+            // API 34+: missing manifest FGS type or runtime permission — retry location-only
+            // so CommandListener stays alive (camera snapshots need manifest camera type).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    ServiceCompat.startForeground(
+                        this,
+                        SareChildConstants.FGS_NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    )
+                    foregroundTypeFallback = true
+                    Log.w(TAG, "FGS started location-only after SecurityException", e)
+                } catch (e2: SecurityException) {
+                    Log.e(TAG, "FGS start failed — stopping service", e2)
+                    stopSelf()
+                }
+            } else {
+                stopSelf()
+            }
         }
+    }
+
+    private fun resolveForegroundServiceType(): Int {
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        if (repo.cameraSnapshotsActive && hasCameraPermission() && !foregroundTypeFallback) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        }
+        return type
+    }
+
+    private fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+
+    fun refreshForegroundType() {
+        if (!::repo.isInitialized) return
+        foregroundTypeFallback = false
+        startAsForeground()
     }
 
     private fun startLocationUpdates() {
         if (!hasLocationPermission()) return
-        // HIGH_ACCURACY (GPS-backed, not just network/Wi-Fi) so the parent map's road-snapped
-        // playback and live marker reflect the child's real position — network-only fixes can
-        // be 100s of meters off, which is what caused "path is off the street" complaints.
-        // Interval/minUpdateInterval are intentionally unchanged (see LOCATION_INTERVAL_MS doc)
-        // to avoid materially increasing wakeups/battery for a cadence parents rarely notice.
+        val fast = liveTrackingActive
+        val interval = if (fast) {
+            SareChildConstants.LIVE_TRACKING_GPS_INTERVAL_MS
+        } else {
+            SareChildConstants.LOCATION_INTERVAL_MS
+        }
+        val minInterval = if (fast) {
+            SareChildConstants.LIVE_TRACKING_GPS_INTERVAL_MS
+        } else {
+            60_000L
+        }
         val request = LocationRequest.Builder(
             Priority.PRIORITY_HIGH_ACCURACY,
-            SareChildConstants.LOCATION_INTERVAL_MS
-        ).setMinUpdateIntervalMillis(60_000L).build()
+            interval
+        )
+            .setMinUpdateIntervalMillis(minInterval)
+            .setMaxUpdateDelayMillis(if (fast) interval else interval * 2)
+            .build()
         try {
+            fused.removeLocationUpdates(locationCallback)
             fused.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
+            if (fast) {
+                scope.launch {
+                    runCatching {
+                        val loc = fused.getCurrentLocation(
+                            Priority.PRIORITY_HIGH_ACCURACY,
+                            CancellationTokenSource().token
+                        ).await()
+                        if (loc != null) lastLocation = loc.toLatLngPoint()
+                    }
+                }
+            }
         } catch (_: SecurityException) {
             // permission race
+        }
+    }
+
+    private fun enableLiveTracking(durationMs: Long = SareChildConstants.LIVE_TRACKING_MAX_DURATION_MS) {
+        liveTrackingActive = true
+        liveTrackingExpiresAtMs = System.currentTimeMillis() + durationMs.coerceAtMost(
+            SareChildConstants.LIVE_TRACKING_MAX_DURATION_MS
+        )
+        lastLivePublishMs = 0L
+        startLocationUpdates()
+        startLiveTrackingLoop()
+        scope.launch { maybePublishLiveLocation(force = true) }
+    }
+
+    private fun disableLiveTracking() {
+        if (!liveTrackingActive) return
+        liveTrackingActive = false
+        liveTrackingExpiresAtMs = 0L
+        liveTrackingJob?.cancel()
+        liveTrackingJob = null
+        startLocationUpdates()
+        scope.launch {
+            runCatching {
+                repo.updateHeartbeat(
+                    batteryPercent = readBatteryPercent(),
+                    charging = isCharging(),
+                    location = lastLocation,
+                    notificationAccess = isNotificationAccessEnabled(),
+                    locationPermission = hasLocationPermission(),
+                    monitoringActive = true,
+                    todayScreenMinutes = lastTodayScreenMinutes,
+                    liveTrackingActive = false,
+                    screenSnapshotsActive = repo.screenSnapshotsActive,
+                    cameraSnapshotsActive = repo.cameraSnapshotsActive
+                )
+            }
+        }
+    }
+
+    private fun startLiveTrackingLoop() {
+        liveTrackingJob?.cancel()
+        liveTrackingJob = scope.launch {
+            while (isActive && liveTrackingActive) {
+                if (System.currentTimeMillis() > liveTrackingExpiresAtMs) {
+                    disableLiveTracking()
+                    break
+                }
+                runCatching { maybePublishLiveLocation(force = true) }
+                delay(SareChildConstants.LIVE_TRACKING_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Pushes a fresh GPS fix to Firestore when a parent is watching Live Map (~every 5s). */
+    private suspend fun maybePublishLiveLocation(force: Boolean) {
+        if (!liveTrackingActive || !repo.isPaired) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastLivePublishMs < SareChildConstants.LIVE_TRACKING_INTERVAL_MS) return
+        val point = fetchFreshLocation() ?: return
+        lastLivePublishMs = now
+        val battery = readBatteryPercent()
+        val charging = isCharging()
+        val networkAvailable = isNetworkAvailable()
+        runCatching {
+            repo.addLocationTrailSample(
+                location = point,
+                batteryPercent = battery,
+                charging = charging,
+                hadNetwork = networkAvailable
+            )
+        }
+        runCatching {
+            repo.updateHeartbeat(
+                batteryPercent = battery,
+                charging = charging,
+                location = point,
+                notificationAccess = isNotificationAccessEnabled(),
+                locationPermission = hasLocationPermission(),
+                monitoringActive = true,
+                todayScreenMinutes = lastTodayScreenMinutes,
+                whatsappMediaPermission = WhatsAppMonitor.hasMediaPermission(this),
+                whatsappProtection = WhatsAppMonitor.protectionStatusMap(
+                    consent = repo.whatsappMonitorConsent,
+                    notificationAccess = isNotificationAccessEnabled(),
+                    accessibilityAccess = isAccessibilityServiceEnabled(),
+                    mediaPermission = WhatsAppMonitor.hasMediaPermission(this),
+                    lastEventAtMs = repo.lastWhatsAppEventAtMs()
+                ),
+                callRecordingStatus = VoipCallRecordingHelper.protectionStatusMap(
+                    consent = repo.callRecordingConsent,
+                    enabled = repo.callRecordingEnabled,
+                    micPermission = hasRecordAudioPermission(),
+                    phoneStatePermission = hasPhoneStatePermission(),
+                    lastRecordingAtMs = repo.lastCallRecordingAtMs()
+                ),
+                photoGalleryStatus = PhotoGallerySync.statusMap(this, repo),
+                eventRecorderStatus = eventRecorderMonitor?.statusMap(
+                    usageAccess = UsageMonitorHelper.hasUsageAccess(this),
+                    accessibilityAccess = isAccessibilityServiceEnabled(),
+                    notificationAccess = isNotificationAccessEnabled()
+                ).orEmpty(),
+                lockScreenStatus = repo.lockScreenStatusMap(this),
+                liveTrackingActive = true,
+                screenSnapshotsActive = repo.screenSnapshotsActive
+            )
         }
     }
 
@@ -240,6 +470,7 @@ class MonitoringForegroundService : Service() {
         if (repo.usageConsent) {
             screenMinutes = UsageMonitorHelper.syncAndEnforce(this, repo)
         }
+        lastTodayScreenMinutes = screenMinutes
         if (repo.isPaired) {
             runCatching { AppInventoryHelper.sync(this, repo) }
         }
@@ -284,7 +515,10 @@ class MonitoringForegroundService : Service() {
             callRecordingStatus = callRecProtection,
             photoGalleryStatus = photoStatus,
             eventRecorderStatus = eventRecStatus,
-            lockScreenStatus = lockScreenStatus
+            lockScreenStatus = lockScreenStatus,
+            liveTrackingActive = liveTrackingActive,
+            screenSnapshotsActive = repo.screenSnapshotsActive,
+            cameraSnapshotsActive = repo.cameraSnapshotsActive
         )
         scheduleWatcher?.tick()
     }
@@ -473,6 +707,7 @@ class MonitoringForegroundService : Service() {
         eventRecorderMonitor = null
         fused.removeLocationUpdates(locationCallback)
         heartbeatJob?.cancel()
+        liveTrackingJob?.cancel()
         usageBlockJob?.cancel()
         scope.cancel()
         super.onDestroy()
@@ -481,6 +716,8 @@ class MonitoringForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private const val TAG = "MonitoringFGS"
+
         /** API 34+ rejects a location foreground service until coarse/fine location is granted. */
         fun canStart(context: android.content.Context): Boolean {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
@@ -502,6 +739,15 @@ class MonitoringForegroundService : Service() {
                 ContextCompat.startForegroundService(context, intent)
             } catch (_: Exception) {
                 // Background FGS start restrictions or permission race — safe to retry later.
+            }
+        }
+
+        fun refreshForegroundServiceType(context: android.content.Context) {
+            val intent = Intent(context, MonitoringForegroundService::class.java)
+            try {
+                context.startService(intent)
+            } catch (_: Exception) {
+                // Service may not be running yet.
             }
         }
     }

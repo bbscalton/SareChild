@@ -12,6 +12,41 @@ const GOOGLE_MAPS_BROWSER_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as str
 declare global {
   interface Window {
     google?: typeof google
+    gm_authFailure?: () => void
+  }
+}
+
+export type GoogleMapsLoadFailure =
+  | 'missing_key'
+  | 'script_network'
+  | 'referrer_or_billing'
+  | 'bootstrap_timeout'
+  | 'bootstrap_error'
+
+let lastLoadFailure: GoogleMapsLoadFailure | null = null
+
+export function getGoogleMapsLoadFailure(): GoogleMapsLoadFailure | null {
+  return lastLoadFailure
+}
+
+/** User-facing hint for the most recent load failure (null when load succeeded or not attempted). */
+export function googleMapsLoadErrorMessage(failure: GoogleMapsLoadFailure | null = lastLoadFailure): string | null {
+  switch (failure) {
+    case 'missing_key':
+      return 'Map preview unavailable — set VITE_GOOGLE_MAPS_API_KEY in parent-web/.env and rebuild.'
+    case 'script_network':
+      return 'Google Maps script could not be downloaded. Check your network connection and try again.'
+    case 'referrer_or_billing':
+      return (
+        'Google Maps blocked this site — add your URL to the API key HTTP referrer allowlist in Google Cloud Console ' +
+        '(APIs & Services → Credentials), confirm billing is enabled, and enable Maps JavaScript API + Geocoding API.'
+      )
+    case 'bootstrap_timeout':
+      return 'Google Maps timed out while initializing. Refresh the page; if it persists, check API key restrictions and billing.'
+    case 'bootstrap_error':
+      return 'Google Maps failed to initialize. Confirm Maps JavaScript API and Geocoding API are enabled for your key.'
+    default:
+      return null
   }
 }
 
@@ -20,29 +55,100 @@ export function hasGoogleMapsKey(): boolean {
 }
 
 let loadPromise: Promise<boolean> | null = null
+let authFailureFlag = false
 
-/** Resolves true once `window.google.maps` is ready, or false if no key is configured / load failed. */
+function installAuthFailureHook(): void {
+  if (authFailureFlag) return
+  window.gm_authFailure = () => {
+    authFailureFlag = true
+    lastLoadFailure = 'referrer_or_billing'
+  }
+}
+
+/** True when legacy constructors (Map, Marker, Geocoder, …) are usable. */
+export function mapsConstructorsReady(): boolean {
+  return typeof window.google?.maps?.Map === 'function'
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error('maps bootstrap timeout')), ms)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        window.clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
+
+/** After loading=async, constructors are only available once importLibrary finishes. */
+async function bootstrapMapsLibraries(): Promise<boolean> {
+  if (authFailureFlag) return false
+  if (!window.google?.maps?.importLibrary) return mapsConstructorsReady()
+  if (mapsConstructorsReady()) return true
+  try {
+    await withTimeout(window.google.maps.importLibrary('maps'), 20_000)
+    return mapsConstructorsReady()
+  } catch {
+    lastLoadFailure = lastLoadFailure ?? 'bootstrap_error'
+    return false
+  }
+}
+
+/** Resolves true once `window.google.maps.Map` is ready, or false if no key / load failed. */
 export function loadGoogleMaps(): Promise<boolean> {
-  if (!GOOGLE_MAPS_BROWSER_KEY) return Promise.resolve(false)
-  if (window.google?.maps) return Promise.resolve(true)
+  if (!GOOGLE_MAPS_BROWSER_KEY) {
+    lastLoadFailure = 'missing_key'
+    return Promise.resolve(false)
+  }
+  if (mapsConstructorsReady()) {
+    lastLoadFailure = null
+    return Promise.resolve(true)
+  }
   if (loadPromise) return loadPromise
 
-  loadPromise = new Promise<boolean>((resolve) => {
+  installAuthFailureHook()
+  lastLoadFailure = null
+
+  loadPromise = (async () => {
     const existing = document.getElementById('sarechild-google-maps-script')
-    if (existing) {
-      existing.addEventListener('load', () => resolve(true))
-      existing.addEventListener('error', () => resolve(false))
-      return
+    if (!existing) {
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement('script')
+        script.id = 'sarechild-google-maps-script'
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_BROWSER_KEY}&v=weekly&loading=async`
+        script.async = true
+        script.defer = true
+        script.onload = () => resolve()
+        script.onerror = () => reject(new Error('maps script network error'))
+        document.head.appendChild(script)
+      })
+    } else if (!window.google?.maps) {
+      await new Promise<void>((resolve, reject) => {
+        existing.addEventListener('load', () => resolve(), { once: true })
+        existing.addEventListener('error', () => reject(new Error('maps script network error')), { once: true })
+      })
     }
-    const script = document.createElement('script')
-    script.id = 'sarechild-google-maps-script'
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_BROWSER_KEY}&v=weekly&loading=async&libraries=geometry`
-    script.async = true
-    script.defer = true
-    script.onload = () => resolve(true)
-    script.onerror = () => resolve(false)
-    document.head.appendChild(script)
+    if (authFailureFlag) return false
+    const ready = await bootstrapMapsLibraries()
+    if (!ready && !lastLoadFailure) {
+      lastLoadFailure = authFailureFlag ? 'referrer_or_billing' : 'bootstrap_error'
+    }
+    if (ready) lastLoadFailure = null
+    return ready
+  })().catch((err: unknown) => {
+    if (!lastLoadFailure) {
+      lastLoadFailure =
+        err instanceof Error && err.message.includes('timeout') ? 'bootstrap_timeout' : 'script_network'
+    }
+    return false
   })
+
   return loadPromise
 }
 
@@ -58,12 +164,12 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string |
 
   const promise = (async () => {
     const ready = await loadGoogleMaps()
-    if (!ready || !window.google?.maps) {
+    if (!ready || !mapsConstructorsReady()) {
       geocodeCache.set(key, null)
       return null
     }
     try {
-      const geocoder = new window.google.maps.Geocoder()
+      const geocoder = new window.google!.maps.Geocoder()
       const response = await geocoder.geocode({ location: { lat, lng } })
       const address = response.results?.[0]?.formatted_address ?? null
       geocodeCache.set(key, address)

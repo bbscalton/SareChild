@@ -57,7 +57,10 @@ export function LiveViewingSection({
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const recorderRef = useRef<{ stop: () => Promise<Blob> } | null>(null)
   const appliedChildCandidates = useRef<Set<string>>(new Set())
+  const pendingChildCandidates = useRef<IceCandidatePayload[]>([])
+  const signalingChainRef = useRef<Promise<void>>(Promise.resolve())
   const sessionUnsubRef = useRef<(() => void) | null>(null)
+  const teardownInProgressRef = useRef(false)
 
   useEffect(() => {
     if (devices.length && !deviceId) setDeviceId(devices[0]!.id)
@@ -101,24 +104,32 @@ export function LiveViewingSection({
   }, [activeSession?.endsAtMs, activeSession?.id])
 
   async function teardownSession(reason: string) {
+    if (teardownInProgressRef.current) return
+    teardownInProgressRef.current = true
+
+    const session = activeSession
     sessionUnsubRef.current?.()
     sessionUnsubRef.current = null
-    if (recorderRef.current && activeSession?.config.record) {
+    signalingChainRef.current = Promise.resolve()
+    appliedChildCandidates.current.clear()
+    pendingChildCandidates.current = []
+
+    if (recorderRef.current && session?.config.record) {
       try {
         const blob = await recorderRef.current.stop()
         const { path, url } = await repo.uploadLiveRecordingBlob(
           familyId,
-          activeSession.deviceId,
-          activeSession.id,
+          session.deviceId,
+          session.id,
           blob,
         )
         await repo.createLiveRecording(familyId, {
-          sessionId: activeSession.id,
-          deviceId: activeSession.deviceId,
+          sessionId: session.id,
+          deviceId: session.deviceId,
           status: 'ready',
           mediaUrl: url,
           mediaPath: path,
-          durationSec: activeSession.durationMinutes * 60,
+          durationSec: session.durationMinutes * 60,
           sizeBytes: blob.size,
           createdAtMs: Date.now(),
         })
@@ -128,22 +139,58 @@ export function LiveViewingSection({
       }
     }
     recorderRef.current = null
-    pcRef.current?.close()
+
+    const pc = pcRef.current
     pcRef.current = null
+    pc?.close()
     if (videoRef.current) videoRef.current.srcObject = null
-    if (activeSession && activeSession.status !== 'ended') {
-      await repo.updateLiveSession(familyId, activeSession.id, {
+
+    if (session && session.status !== 'ended') {
+      try {
+        await repo.stopLiveViewSession(familyId, session.deviceId)
+      } catch (e) {
+        onError(e instanceof Error ? e.message : 'Failed to stop child live view')
+      }
+      await repo.updateLiveSession(familyId, session.id, {
         status: 'ended',
         endedAtMs: Date.now(),
         endReason: reason,
       })
     }
+
     setActiveSession(null)
     setCountdownSec(null)
+    teardownInProgressRef.current = false
+  }
+
+  async function applyQueuedChildCandidates(pc: RTCPeerConnection) {
+    if (!pc.remoteDescription) return
+    const queued = pendingChildCandidates.current.splice(0)
+    for (const raw of queued) {
+      const key = String(raw.candidate ?? '')
+      if (!key || appliedChildCandidates.current.has(key)) continue
+      appliedChildCandidates.current.add(key)
+      await addRemoteIceCandidate(pc, raw)
+    }
+  }
+
+  async function ingestChildCandidates(pc: RTCPeerConnection, candidates: IceCandidatePayload[]) {
+    for (const raw of candidates) {
+      const key = String(raw.candidate ?? '')
+      if (!key || appliedChildCandidates.current.has(key)) continue
+      if (!pc.remoteDescription) {
+        pendingChildCandidates.current.push(raw)
+        continue
+      }
+      appliedChildCandidates.current.add(key)
+      await addRemoteIceCandidate(pc, raw)
+    }
   }
 
   async function connectWebRtc(sessionId: string) {
     appliedChildCandidates.current.clear()
+    pendingChildCandidates.current = []
+    signalingChainRef.current = Promise.resolve()
     const pc = await createViewerPeerConnection(
       (stream) => {
         if (videoRef.current) {
@@ -160,23 +207,25 @@ export function LiveViewingSection({
     )
     pcRef.current = pc
 
-    sessionUnsubRef.current = repo.observeLiveSession(familyId, sessionId, async (session) => {
+    sessionUnsubRef.current = repo.observeLiveSession(familyId, sessionId, (session) => {
       setActiveSession(session)
-      if (session.answer && pc.remoteDescription == null) {
-        await applyAnswer(pc, {
-          type: session.answer.type as RTCSdpType,
-          sdp: session.answer.sdp,
+      signalingChainRef.current = signalingChainRef.current
+        .then(async () => {
+          if (session.answer && pc.remoteDescription == null) {
+            await applyAnswer(pc, {
+              type: session.answer.type as RTCSdpType,
+              sdp: session.answer.sdp,
+            })
+            await applyQueuedChildCandidates(pc)
+          }
+          await ingestChildCandidates(pc, session.childCandidates as IceCandidatePayload[])
+          if (session.status === 'ended' || session.status === 'failed' || session.status === 'declined') {
+            await teardownSession(session.endReason || session.error || session.status)
+          }
         })
-      }
-      for (const raw of session.childCandidates) {
-        const key = String(raw.candidate ?? '')
-        if (!key || appliedChildCandidates.current.has(key)) continue
-        appliedChildCandidates.current.add(key)
-        await addRemoteIceCandidate(pc, raw as IceCandidatePayload)
-      }
-      if (session.status === 'ended' || session.status === 'failed' || session.status === 'declined') {
-        void teardownSession(session.endReason || session.error || session.status)
-      }
+        .catch((e) => {
+          onError(e instanceof Error ? e.message : 'Live view signaling failed')
+        })
     })
 
     const offer = await createOffer(pc)
@@ -393,7 +442,7 @@ export function LiveViewingSection({
               </div>
               <video ref={videoRef} className="liveview-video" playsInline autoPlay muted={false} />
               <p className="muted small">
-                WebRTC P2P via Google STUN. Some networks need TURN — set VITE_TURN_* env vars if
+                WebRTC via STUN + TURN (coturn at 107.170.15.179). Set VITE_TURN_* in .env if
                 video stays blank.
               </p>
             </div>

@@ -111,6 +111,15 @@ object WhatsAppMonitor {
 
     fun isWhatsApp(packageName: String): Boolean = packageName in WHATSAPP_PACKAGES
 
+    /** Drop in-memory dedupe caches after parent clears the cloud timeline. */
+    fun clearLocalDedupeState() {
+        recentAlerts.clear()
+        recentEventHashes.clear()
+        recentOutgoingKeys.clear()
+        recentOutgoingContacts.clear()
+        lastContactByPackage.clear()
+    }
+
     /** Called from the media observer to guess the contact behind a just-added media file. */
     fun recentContactLabel(packageName: String): String? {
         val (label, at) = lastContactByPackage[packageName] ?: return null

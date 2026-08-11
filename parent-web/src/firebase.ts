@@ -1,29 +1,36 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
-import { getFirestore } from 'firebase/firestore'
+import { initializeFirestore } from 'firebase/firestore'
 import { getFunctions } from 'firebase/functions'
 
-function requireEnv(name: string): string {
-  const value = (import.meta.env[name] as string | undefined)?.trim()
-  if (!value) {
+/** Vite only inlines literal `import.meta.env.VITE_*` — dynamic `import.meta.env[name]` stays undefined in production. */
+function requireEnv(value: string | undefined, name: string): string {
+  const trimmed = value?.trim()
+  if (!trimmed) {
     throw new Error(`Missing required env: ${name}`)
   }
-  return value
+  return trimmed
 }
 
 const firebaseConfig = {
-  apiKey: requireEnv('VITE_FIREBASE_API_KEY'),
-  authDomain: requireEnv('VITE_FIREBASE_AUTH_DOMAIN'),
-  projectId: requireEnv('VITE_FIREBASE_PROJECT_ID'),
-  storageBucket: requireEnv('VITE_FIREBASE_STORAGE_BUCKET'),
-  messagingSenderId: requireEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
-  appId: requireEnv('VITE_FIREBASE_APP_ID'),
+  apiKey: requireEnv(import.meta.env.VITE_FIREBASE_API_KEY, 'VITE_FIREBASE_API_KEY'),
+  authDomain: requireEnv(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, 'VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: requireEnv(import.meta.env.VITE_FIREBASE_PROJECT_ID, 'VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: requireEnv(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, 'VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: requireEnv(
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  ),
+  appId: requireEnv(import.meta.env.VITE_FIREBASE_APP_ID, 'VITE_FIREBASE_APP_ID'),
   measurementId: (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string | undefined)?.trim(),
 }
 
 export const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
-export const db = getFirestore(app)
+// Edge / corporate proxies sometimes break WebChannel streaming; auto-detect long polling.
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+})
 export const functions = getFunctions(app)
 
 export const COL = {
@@ -63,6 +70,8 @@ export const COL = {
   liveSessions: 'liveSessions',
   liveRecordings: 'liveRecordings',
   liveViewQuota: 'liveViewQuota',
+  screenSnapshots: 'screenSnapshots',
+  cameraSnapshots: 'cameraSnapshots',
 } as const
 
 export const WENT_DARK_AFTER_MS = 5 * 60 * 1000

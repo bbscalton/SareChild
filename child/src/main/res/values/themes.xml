@@ -109,4 +109,13 @@
     <style name="Widget.SareChild.Card.Soft" parent="Widget.SareChild.Card">
         <item name="cardElevation">0dp</item>
     </style>
+
+    <!-- Headless gate activities: no visible UI before the system MediaProjection dialog. -->
+    <style name="Theme.SareChild.TransparentGate" parent="Theme.SareChild">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

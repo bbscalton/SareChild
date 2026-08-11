@@ -143,7 +143,7 @@ cd parent-web && npm install && npm run build && cd .. && firebase deploy --only
 - R2 bucket: `luscsl-uploads`
 - Android uploads now try Cloudflare R2 first, then fall back to Firebase Storage if R2 is unreachable.
 
-**Public APK downloads** are served from the same Worker at `GET /downloads/parent.apk` and `GET /downloads/child.apk`, backed by R2 objects at `downloads/parent.apk` / `downloads/child.apk` in the `luscsl-uploads` bucket. Upload/update a build with:
+**Public APK downloads** are served from the same Worker at `GET /downloads/parent.apk` and `GET /downloads/child.apk`, backed by R2 objects at `downloads/parent.apk` / `downloads/child.apk` in the `luscsl-uploads` bucket. Use `scripts/upload-apks.ps1` (never upload release-unsigned). Manual upload/update:
 
 ```bash
 # Debug builds (historical default for direct sideload):
@@ -203,6 +203,8 @@ Project: `safechild-f34ac` · Billing: linked, Always-Free/free-tier friendly us
 
 Not enabled (documented as future candidates only, not wired — avoid unused paid APIs): Vision API / ML Kit (no photo-classification feature yet), Speech-to-Text and Cloud Translation (chat voice notes are stored as raw audio; no transcription/translation pipeline yet), Distance Matrix / Routes (no travel-time or proximity-to-geofence feature yet).
 
+
+**VPS (coturn / staging):** See [docs/VPS_OPS.md](docs/VPS_OPS.md) for DigitalOcean setup, TURN credential rotation, and staging deploy.
 **API keys** (all restricted; never commit key values — they live in `local.properties` / `parent-web/.env`, both gitignored):
 
 | Key | Restriction | apiTargets |

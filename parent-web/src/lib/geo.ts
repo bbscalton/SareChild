@@ -18,6 +18,19 @@ export type Stop = {
   sampleCount: number
 }
 
+/** Cluster radius when grouping trail points into a single stop (~geofence size). */
+export const LOCATION_STOP_CLUSTER_RADIUS_M = 100
+/** Minimum dwell time before a cluster counts as a stop. */
+export const LOCATION_STOP_MIN_DWELL_MS = 5 * 60_000
+/** Radius around the first stop treated as "home" for return labeling. */
+export const LOCATION_HOME_RADIUS_M = 100
+
+export type LabeledStop = Stop & {
+  stopNumber: number
+  /** "Home" for the first stop; "Home (return)" when the child revisits stop 1's area. */
+  homeLabel: 'Home' | 'Home (return)' | null
+}
+
 const EARTH_RADIUS_M = 6_371_000
 
 /** Great-circle distance between two points in meters. */
@@ -32,9 +45,9 @@ export function haversineMeters(a: { lat: number; lng: number }, b: { lat: numbe
 }
 
 export type StopDetectionOptions = {
-  /** Points within this radius of a cluster's running centroid count as "still there". Default 70m — wider than typical smartphone GPS jitter (10-30m) but tight enough to separate a home stop from a walk to the corner store. */
+  /** Points within this radius of a cluster's running centroid count as "still there". */
   radiusM?: number
-  /** Minimum dwell time for a cluster to count as a stop. Default 5 minutes. */
+  /** Minimum dwell time for a cluster to count as a stop. */
   minDurationMs?: number
 }
 
@@ -44,8 +57,8 @@ export type StopDetectionOptions = {
  * running centroid for at least `minDurationMs`. Single-pass, O(n).
  */
 export function detectStops(points: TrailPoint[], opts: StopDetectionOptions = {}): Stop[] {
-  const radiusM = opts.radiusM ?? 70
-  const minDurationMs = opts.minDurationMs ?? 5 * 60_000
+  const radiusM = opts.radiusM ?? LOCATION_STOP_CLUSTER_RADIUS_M
+  const minDurationMs = opts.minDurationMs ?? LOCATION_STOP_MIN_DWELL_MS
   const stops: Stop[] = []
   if (points.length === 0) return stops
 
@@ -90,6 +103,23 @@ export function detectStops(points: TrailPoint[], opts: StopDetectionOptions = {
   finalizeCluster()
 
   return stops
+}
+
+/** Numbers stops chronologically and labels returns to the first stop's area as Home. */
+export function labelStops(stops: Stop[], opts: { homeRadiusM?: number } = {}): LabeledStop[] {
+  const homeRadiusM = opts.homeRadiusM ?? LOCATION_HOME_RADIUS_M
+  if (stops.length === 0) return []
+  const home = stops[0]!
+  return stops.map((stop, index) => {
+    const stopNumber = index + 1
+    let homeLabel: LabeledStop['homeLabel'] = null
+    if (index === 0) {
+      homeLabel = 'Home'
+    } else if (haversineMeters(home, stop) <= homeRadiusM) {
+      homeLabel = 'Home (return)'
+    }
+    return { ...stop, stopNumber, homeLabel }
+  })
 }
 
 export type RouteStats = {

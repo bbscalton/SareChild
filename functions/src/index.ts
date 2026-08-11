@@ -23,6 +23,7 @@ export {
   adminResetAccountFamilyIsolation,
 } from "./accountIsolation";
 export { deletePairedDevice } from "./deviceDelete";
+export { clearScreenSnapshots, clearCameraSnapshots } from "./clearDeviceData";
 export { acceptGuardianInvite } from "./guardianInvites";
 export {
   adminSetResellerStatus,

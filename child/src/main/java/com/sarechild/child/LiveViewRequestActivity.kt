@@ -3,7 +3,6 @@ package com.sarechild.child
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -12,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivitySafetyRequestBinding
 import com.sarechild.child.monitoring.LiveViewService
+import com.sarechild.child.monitoring.ScreenCaptureHelper
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SareChildConstants
 import kotlinx.coroutines.launch
@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
  * dialog (runtime permission sheet, or MediaProjection capture confirmation).
  */
 class LiveViewRequestActivity : AppCompatActivity() {
-    private lateinit var binding: ActivitySafetyRequestBinding
+    private var binding: ActivitySafetyRequestBinding? = null
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
     private var sessionId: String = ""
@@ -33,6 +33,7 @@ class LiveViewRequestActivity : AppCompatActivity() {
     private var enableScreen = false
     private var cameraFront = false
     private var recordEnabled = false
+    private var projectionLaunched = false
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -54,19 +55,23 @@ class LiveViewRequestActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivitySafetyRequestBinding.inflate(layoutInflater)
-        setContentView(binding.root)
         repo = ChildRepository(this)
-        handleIntent(intent)
+        projectionLaunched = savedInstanceState?.getBoolean(STATE_PROJECTION_LAUNCHED) == true
+        handleIntent(intent, savedInstanceState)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_PROJECTION_LAUNCHED, projectionLaunched)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIntent(intent)
+        handleIntent(intent, null)
     }
 
-    private fun handleIntent(intent: Intent) {
+    private fun handleIntent(intent: Intent, savedInstanceState: Bundle?) {
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
         sessionId = intent.getStringExtra(SareChildConstants.EXTRA_LIVE_SESSION_ID).orEmpty()
         durationMinutes = intent.getIntExtra(
@@ -84,13 +89,6 @@ class LiveViewRequestActivity : AppCompatActivity() {
             return
         }
 
-        val parts = buildList {
-            if (enableVideo && !enableScreen) add(if (cameraFront) "front camera" else "rear camera")
-            if (enableScreen) add("screen")
-            if (enableAudio) add("microphone")
-        }.joinToString(", ")
-        binding.body.text = "Sharing $parts live for about $durationMinutes minute(s), visibly."
-
         val missingItem = when {
             enableScreen && !repo.screenShareConsent -> "screen"
             enableVideo && !enableScreen && !repo.cameraCheckConsent -> "camera"
@@ -103,9 +101,21 @@ class LiveViewRequestActivity : AppCompatActivity() {
         }
 
         if (enableScreen) {
-            val mpm = getSystemService(MediaProjectionManager::class.java)
-            screenCapture.launch(mpm.createScreenCaptureIntent())
+            if (savedInstanceState != null || projectionLaunched) return
+            ScreenCaptureHelper.launchFullScreenCaptureWhenReady(this, screenCapture) {
+                projectionLaunched = true
+            }
             return
+        }
+
+        if (binding == null) {
+            binding = ActivitySafetyRequestBinding.inflate(layoutInflater)
+            setContentView(binding!!.root)
+            val parts = buildList {
+                if (enableVideo) add(if (cameraFront) "front camera" else "rear camera")
+                if (enableAudio) add("microphone")
+            }.joinToString(", ")
+            binding!!.body.text = "Sharing $parts live for about $durationMinutes minute(s), visibly."
         }
         proceedAfterPermissions()
     }
@@ -127,6 +137,7 @@ class LiveViewRequestActivity : AppCompatActivity() {
     }
 
     private fun launchLiveService(resultCode: Int, data: Intent?) {
+        stopService(Intent(this, LiveViewService::class.java))
         lifecycleScope.launch { repo.updateCommand(commandId, SafetyCommandStatus.ACCEPTED) }
         val svc = Intent(this, LiveViewService::class.java).apply {
             putExtra(SareChildConstants.EXTRA_COMMAND_ID, commandId)
@@ -166,5 +177,9 @@ class LiveViewRequestActivity : AppCompatActivity() {
             repo.updateLiveSession(sessionId, mapOf("status" to "declined", "error" to reason))
         }
         finish()
+    }
+
+    companion object {
+        private const val STATE_PROJECTION_LAUNCHED = "projection_launched"
     }
 }

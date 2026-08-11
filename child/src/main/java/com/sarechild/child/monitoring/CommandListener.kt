@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.google.firebase.firestore.ListenerRegistration
 import com.sarechild.child.DeviceLockActivity
 import com.sarechild.child.LiveViewRequestActivity
@@ -196,6 +197,188 @@ class CommandListener(
                         )
                     }
                 }
+                return
+            }
+            SafetyCommandType.CLEAR_EVENT_RECORDER -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        EventRecorderMonitor.current()?.clearLocalState()
+                            ?: repo.clearEventRecorderLocalState()
+                        EventRecorderMonitor(context, repo).refreshStatus()
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "Event Recorder clear failed"
+                        )
+                    }
+                }
+                return
+            }
+            SafetyCommandType.CLEAR_WHATSAPP_EVENTS -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        repo.clearWhatsAppLocalState()
+                        WhatsAppMonitor.clearLocalDedupeState()
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "WhatsApp clear failed"
+                        )
+                    }
+                }
+                return
+            }
+            SafetyCommandType.CLEAR_CALL_RECORDINGS -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        repo.clearCallRecordingLocalState()
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "Call recording clear failed"
+                        )
+                    }
+                }
+                return
+            }
+            SafetyCommandType.CLEAR_PHOTOS -> {
+                scope.launch {
+                    repo.updateCommand(command.id, SafetyCommandStatus.RUNNING)
+                    runCatching {
+                        repo.clearPhotoGalleryLocalState()
+                        PhotoGallerySync(context, repo).sync(forceFull = false)
+                        repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED)
+                    }.onFailure { e ->
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = e.message ?: "Photo gallery clear failed"
+                        )
+                    }
+                }
+                return
+            }
+            SafetyCommandType.CLEAR_TYPING_EVENTS,
+            SafetyCommandType.CLEAR_LOCATION_TRAIL,
+            SafetyCommandType.CLEAR_USAGE_DATA -> {
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.START_LIVE_TRACKING -> {
+                if (!hasLocationPermission(context)) {
+                    scope.launch {
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = "Location permission not granted"
+                        )
+                    }
+                    return
+                }
+                val durationMin = command.durationMinutes?.coerceIn(1, 60)
+                    ?: (SareChildConstants.LIVE_TRACKING_MAX_DURATION_MS / 60_000L).toInt()
+                val intent = Intent(context, MonitoringForegroundService::class.java).apply {
+                    action = SareChildConstants.ACTION_START_LIVE_TRACKING
+                    putExtra(SareChildConstants.EXTRA_DURATION_MINUTES, durationMin)
+                }
+                MonitoringForegroundService.start(context)
+                context.startService(intent)
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.STOP_LIVE_TRACKING -> {
+                val intent = Intent(context, MonitoringForegroundService::class.java).apply {
+                    action = SareChildConstants.ACTION_STOP_LIVE_TRACKING
+                }
+                context.startService(intent)
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.START_SCREEN_SNAPSHOTS -> {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    scope.launch {
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = "Screen snapshots require Android 11+"
+                        )
+                    }
+                    return
+                }
+                // Arm before the accessibility gate so onServiceConnected starts the loop once
+                // the user enables the service (otherwise it sees no consents and disableSelf()).
+                ScreenSnapshotCapture.start(context)
+                MonitoringForegroundService.start(context)
+                if (!MessageMonitorAccessibilityService.isServiceEnabled(context)) {
+                    scope.launch {
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = "Accessibility permission not enabled"
+                        )
+                    }
+                    redirectToEnableProtections(command, "message_monitor", "Accessibility (message monitor)")
+                    return
+                }
+                val intent = Intent(context, MonitoringForegroundService::class.java).apply {
+                    action = SareChildConstants.ACTION_START_SCREEN_SNAPSHOTS
+                }
+                context.startService(intent)
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.STOP_SCREEN_SNAPSHOTS -> {
+                ScreenSnapshotCapture.stop(context)
+                val intent = Intent(context, MonitoringForegroundService::class.java).apply {
+                    action = SareChildConstants.ACTION_STOP_SCREEN_SNAPSHOTS
+                }
+                MonitoringForegroundService.start(context)
+                context.startService(intent)
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.START_CAMERA_SNAPSHOTS -> {
+                if (!FeatureAccessGate.isCameraSnapshotReady(context)) {
+                    scope.launch {
+                        repo.updateCommand(
+                            command.id,
+                            SafetyCommandStatus.FAILED,
+                            error = "Camera permission not granted"
+                        )
+                    }
+                    redirectToEnableProtections(command, "camera", "Camera")
+                    return
+                }
+                val cameras = command.cameras?.lowercase()?.takeIf {
+                    it == "front" || it == "back" || it == "both"
+                } ?: "back"
+                CameraSnapshotCapture.start(context, cameras)
+                MonitoringForegroundService.start(context)
+                val intent = Intent(context, MonitoringForegroundService::class.java).apply {
+                    action = SareChildConstants.ACTION_START_CAMERA_SNAPSHOTS
+                    putExtra(SareChildConstants.EXTRA_CAMERA_SNAPSHOTS_MODE, cameras)
+                }
+                context.startService(intent)
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
+                return
+            }
+            SafetyCommandType.STOP_CAMERA_SNAPSHOTS -> {
+                CameraSnapshotCapture.stop(context)
+                val intent = Intent(context, MonitoringForegroundService::class.java).apply {
+                    action = SareChildConstants.ACTION_STOP_CAMERA_SNAPSHOTS
+                }
+                MonitoringForegroundService.start(context)
+                context.startService(intent)
+                scope.launch { repo.updateCommand(command.id, SafetyCommandStatus.COMPLETED) }
                 return
             }
             SafetyCommandType.START_LIVE_VIEW -> {
@@ -395,5 +578,17 @@ class CommandListener(
                 )
             )
         }
+    }
+
+    private fun hasLocationPermission(ctx: Context): Boolean {
+        val fine = ContextCompat.checkSelfPermission(
+            ctx,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            ctx,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return fine || coarse
     }
 }

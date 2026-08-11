@@ -3,7 +3,6 @@ package com.sarechild.child
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -11,6 +10,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.sarechild.child.data.ChildRepository
 import com.sarechild.child.databinding.ActivitySafetyRequestBinding
+import com.sarechild.child.monitoring.ScreenCaptureHelper
 import com.sarechild.child.monitoring.ScreenShareService
 import com.sarechild.shared.SafetyCommandStatus
 import com.sarechild.shared.SafetyCommandType
@@ -27,11 +27,12 @@ import kotlinx.coroutines.launch
  * Enable Protections with that row highlighted instead of asking here.
  */
 class SafetyRequestActivity : AppCompatActivity() {
-    private lateinit var binding: ActivitySafetyRequestBinding
+    private var binding: ActivitySafetyRequestBinding? = null
     private lateinit var repo: ChildRepository
     private var commandId: String = ""
     private lateinit var commandType: SafetyCommandType
     private var durationMinutes: Int = SareChildConstants.SCREEN_SHARE_DEFAULT_MINUTES
+    private var projectionLaunched = false
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -78,23 +79,27 @@ class SafetyRequestActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivitySafetyRequestBinding.inflate(layoutInflater)
-        setContentView(binding.root)
         repo = ChildRepository(this)
-        handleIntent(intent)
+        projectionLaunched = savedInstanceState?.getBoolean(STATE_PROJECTION_LAUNCHED) == true
+        handleIntent(intent, savedInstanceState)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_PROJECTION_LAUNCHED, projectionLaunched)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIntent(intent)
+        handleIntent(intent, null)
     }
 
-    private fun handleIntent(intent: Intent) {
+    private fun handleIntent(intent: Intent, savedInstanceState: Bundle?) {
         commandId = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_ID).orEmpty()
         val typeName = intent.getStringExtra(SareChildConstants.EXTRA_COMMAND_TYPE).orEmpty()
         val type = runCatching { SafetyCommandType.valueOf(typeName) }.getOrNull()
-        if (type == null || commandId.isBlank()) {
+        if (type == null) {
             finish()
             return
         }
@@ -110,16 +115,18 @@ class SafetyRequestActivity : AppCompatActivity() {
 
         when (commandType) {
             SafetyCommandType.SCREEN_SHARE -> {
-                binding.body.text = "Sharing runs for about $durationMinutes minute(s), visibly."
                 if (!repo.screenShareConsent) {
                     redirectToEnableProtections("screen")
                     return
                 }
-                val mpm = getSystemService(MediaProjectionManager::class.java)
-                screenCapture.launch(mpm.createScreenCaptureIntent())
+                if (savedInstanceState != null || projectionLaunched) return
+                ScreenCaptureHelper.launchFullScreenCaptureWhenReady(this, screenCapture) {
+                    projectionLaunched = true
+                }
             }
             SafetyCommandType.CAMERA_CHECK -> {
-                binding.body.text = "Opening the camera for a visible safety photo."
+                ensureBinding()
+                binding!!.body.text = "Opening the camera for a visible safety photo."
                 if (!repo.cameraCheckConsent) {
                     redirectToEnableProtections("camera")
                     return
@@ -134,7 +141,8 @@ class SafetyRequestActivity : AppCompatActivity() {
                 }
             }
             SafetyCommandType.MIC_CHECK -> {
-                binding.body.text = "Recording a short ${SareChildConstants.MIC_CHECK_SECONDS}s voice check, visibly."
+                ensureBinding()
+                binding!!.body.text = "Recording a short ${SareChildConstants.MIC_CHECK_SECONDS}s voice check, visibly."
                 if (!repo.micCheckConsent) {
                     redirectToEnableProtections("mic")
                     return
@@ -150,6 +158,12 @@ class SafetyRequestActivity : AppCompatActivity() {
             }
             else -> finish()
         }
+    }
+
+    private fun ensureBinding() {
+        if (binding != null) return
+        binding = ActivitySafetyRequestBinding.inflate(layoutInflater)
+        setContentView(binding!!.root)
     }
 
     /** Consent for this capability hasn't been switched on from Enable Protections yet —
@@ -188,5 +202,9 @@ class SafetyRequestActivity : AppCompatActivity() {
 
     private fun micIntent() = Intent(this, MicCheckActivity::class.java).apply {
         putExtra(SareChildConstants.EXTRA_COMMAND_ID, commandId)
+    }
+
+    companion object {
+        private const val STATE_PROJECTION_LAUNCHED = "projection_launched"
     }
 }

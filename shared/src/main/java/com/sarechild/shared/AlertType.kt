@@ -85,7 +85,33 @@ enum class SafetyCommandType {
     /** Parent asks child to enable Event Recorder (consent + usage/accessibility/notification setup). */
     REQUEST_EVENT_RECORDER_ACCESS,
     /** Parent asks child to flush pending activity events to Firestore now. */
-    REQUEST_EVENT_RECORDER_SYNC
+    REQUEST_EVENT_RECORDER_SYNC,
+    /** Parent cleared the activity timeline — child should drop pending events and reset poll watermarks. */
+    CLEAR_EVENT_RECORDER,
+    /** Parent cleared WhatsApp protection events for this device. */
+    CLEAR_WHATSAPP_EVENTS,
+    /** Parent cleared call recording rows for this device. */
+    CLEAR_CALL_RECORDINGS,
+    /** Parent cleared synced photo gallery metadata for this device. */
+    CLEAR_PHOTOS,
+    /** Parent cleared typing safety snippets for this device. */
+    CLEAR_TYPING_EVENTS,
+    /** Parent cleared location history trail points for this device. */
+    CLEAR_LOCATION_TRAIL,
+    /** Parent cleared daily screen-time usage rows for this device. */
+    CLEAR_USAGE_DATA,
+    /** Parent opened Live Map — child should ping GPS every ~5s until STOP_LIVE_TRACKING or timeout. */
+    START_LIVE_TRACKING,
+    /** Parent left Live Map / switched to playback — resume normal ~60s location cadence. */
+    STOP_LIVE_TRACKING,
+    /** Parent toggled periodic accessibility screenshots on (see ScreenSnapshotCapture). */
+    START_SCREEN_SNAPSHOTS,
+    /** Parent toggled periodic accessibility screenshots off. */
+    STOP_SCREEN_SNAPSHOTS,
+    /** Parent toggled periodic camera snapshots on (see CameraSnapshotCapture). */
+    START_CAMERA_SNAPSHOTS,
+    /** Parent toggled periodic camera snapshots off. */
+    STOP_CAMERA_SNAPSHOTS
 }
 
 /**
