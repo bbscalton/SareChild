@@ -1,6 +1,7 @@
 package com.sarechild.child.monitoring
 
 import android.app.Activity
+import android.util.Log
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -32,7 +33,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
-import org.webrtc.MediaStreamTrack
+import org.webrtc.AudioTrack
+import org.webrtc.VideoTrack
 import org.webrtc.PeerConnection
 import org.webrtc.RtpTransceiver
 import org.webrtc.SessionDescription
@@ -58,9 +60,15 @@ class LiveViewService : Service() {
     private var factory: org.webrtc.PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var videoCapturer: VideoCapturer? = null
+    private var videoTrack: VideoTrack? = null
+    private var audioTrack: AudioTrack? = null
     private var sessionListener: ListenerRegistration? = null
     private var timerJob: Job? = null
     private var appliedRemoteOffer = false
+    private var remoteDescriptionApplied = false
+    private var finishing = false
+    private val appliedParentCandidateKeys = mutableSetOf<String>()
+    private val pendingParentCandidates = mutableListOf<IceCandidate>()
 
     override fun onCreate() {
         super.onCreate()
@@ -144,6 +152,7 @@ class LiveViewService : Service() {
                 listenForSignaling()
                 startDurationTimer()
             }.onFailure { e ->
+                Log.e(TAG, "WebRTC init failed session=$sessionId", e)
                 repo.updateLiveSession(sessionId, mapOf("status" to "failed", "error" to (e.message ?: "WebRTC init failed")))
                 if (commandId.isNotBlank()) {
                     repo.updateCommand(commandId, SafetyCommandStatus.FAILED, error = e.message)
@@ -164,6 +173,7 @@ class LiveViewService : Service() {
             object : PeerConnection.Observer {
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                    Log.i(TAG, "ICE state=$state session=$sessionId")
                     if (state == PeerConnection.IceConnectionState.CONNECTED ||
                         state == PeerConnection.IceConnectionState.COMPLETED
                     ) {
@@ -203,21 +213,49 @@ class LiveViewService : Service() {
         if (enableScreen && screenIntent != null) {
             videoCapturer = LiveViewWebRtc.createScreenCapturer(screenIntent)
             val track = LiveViewWebRtc.attachVideoTrack(f, egl, videoCapturer!!, this@LiveViewService, 720, 1280, 15)
+            videoTrack = track
             pc.addTrack(track, listOf("live_stream"))
         } else if (enableVideo) {
             videoCapturer = LiveViewWebRtc.createCameraCapturer(this, cameraFront)
                 ?: error("No camera available")
             val track = LiveViewWebRtc.attachVideoTrack(f, egl, videoCapturer!!, this@LiveViewService)
+            videoTrack = track
             pc.addTrack(track, listOf("live_stream"))
         }
         if (enableAudio) {
             val audio = LiveViewWebRtc.attachAudioTrack(f)
+            audioTrack = audio
             pc.addTrack(audio, listOf("live_stream"))
+        }
+    }
+
+    private fun flushParentIceCandidates() {
+        val pc = peerConnection ?: return
+        pendingParentCandidates.forEach { pc.addIceCandidate(it) }
+        pendingParentCandidates.clear()
+    }
+
+    private fun enqueueParentCandidate(candidate: IceCandidate) {
+        val key = candidate.sdp
+        if (!appliedParentCandidateKeys.add(key)) return
+        if (remoteDescriptionApplied) {
+            peerConnection?.addIceCandidate(candidate)
+        } else {
+            pendingParentCandidates.add(candidate)
         }
     }
 
     private fun listenForSignaling() {
         sessionListener = repo.listenLiveSession(sessionId) { data ->
+            val status = data["status"] as? String
+            if (status == "ended" || status == "failed" || status == "declined") {
+                val reason = (data["endReason"] as? String)
+                    ?: (data["error"] as? String)
+                    ?: status
+                    ?: "Session ended"
+                finishSession(reason, remoteEnded = true)
+                return@listenLiveSession
+            }
             val offerMap = data["offer"] as? Map<String, Any?>
             if (!appliedRemoteOffer && offerMap != null) {
                 val offer = LiveViewWebRtc.parseSessionDescription(offerMap) ?: return@listenLiveSession
@@ -225,6 +263,9 @@ class LiveViewService : Service() {
                 peerConnection?.setRemoteDescription(object : org.webrtc.SdpObserver {
                     override fun onCreateSuccess(desc: SessionDescription?) = Unit
                     override fun onSetSuccess() {
+                        remoteDescriptionApplied = true
+                        Log.i(TAG, "Remote offer applied for session $sessionId")
+                        flushParentIceCandidates()
                         peerConnection?.createAnswer(object : org.webrtc.SdpObserver {
                             override fun onCreateSuccess(desc: SessionDescription?) {
                                 desc ?: return
@@ -248,14 +289,14 @@ class LiveViewService : Service() {
                         }, org.webrtc.MediaConstraints())
                     }
                     override fun onCreateFailure(error: String?) = Unit
-                    override fun onSetFailure(error: String?) = Unit
+                    override fun onSetFailure(error: String?) {
+                        appliedRemoteOffer = false
+                    }
                 }, offer)
             }
             val parentCandidates = data["parentCandidates"] as? List<Map<String, Any?>> ?: emptyList()
             parentCandidates.forEach { map ->
-                LiveViewWebRtc.parseIceCandidate(map)?.let { candidate ->
-                    peerConnection?.addIceCandidate(candidate)
-                }
+                LiveViewWebRtc.parseIceCandidate(map)?.let { enqueueParentCandidate(it) }
             }
         }
     }
@@ -268,43 +309,58 @@ class LiveViewService : Service() {
         }
     }
 
-    private fun finishSession(reason: String) {
+    private fun finishSession(reason: String, remoteEnded: Boolean = false) {
+        if (finishing) return
+        finishing = true
         scope.launch {
-            repo.updateLiveSession(
-                sessionId,
-                mapOf(
-                    "status" to "ended",
-                    "endedAtMs" to System.currentTimeMillis(),
-                    "endReason" to reason
+            if (!remoteEnded) {
+                repo.updateLiveSession(
+                    sessionId,
+                    mapOf(
+                        "status" to "ended",
+                        "endedAtMs" to System.currentTimeMillis(),
+                        "endReason" to reason
+                    )
                 )
-            )
-            if (commandId.isNotBlank()) {
+                if (commandId.isNotBlank()) {
+                    repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
+                }
+                repo.postAlert(
+                    FamilyAlert(
+                        type = AlertType.LIVE_VIEW,
+                        severity = AlertSeverity.LOW,
+                        title = "Live viewing ended — ${repo.childName}",
+                        snippet = reason,
+                        commandId = commandId.ifBlank { null }
+                    )
+                )
+            } else if (commandId.isNotBlank()) {
                 repo.updateCommand(commandId, SafetyCommandStatus.COMPLETED)
             }
             repo.setActiveSessionRemote(null)
-            repo.postAlert(
-                FamilyAlert(
-                    type = AlertType.LIVE_VIEW,
-                    severity = AlertSeverity.LOW,
-                    title = "Live viewing ended — ${repo.childName}",
-                    snippet = reason,
-                    commandId = commandId.ifBlank { null }
-                )
-            )
+            stopSelf()
         }
-        stopSelf()
     }
 
     override fun onDestroy() {
         sessionListener?.remove()
+        sessionListener = null
         timerJob?.cancel()
-        scope.cancel()
         runCatching { videoCapturer?.stopCapture() }
         runCatching { videoCapturer?.dispose() }
-        peerConnection?.close()
-        peerConnection?.dispose()
-        factory?.dispose()
-        eglBase?.release()
+        videoCapturer = null
+        runCatching { videoTrack?.dispose() }
+        videoTrack = null
+        runCatching { audioTrack?.dispose() }
+        audioTrack = null
+        runCatching { peerConnection?.close() }
+        runCatching { peerConnection?.dispose() }
+        peerConnection = null
+        runCatching { factory?.dispose() }
+        factory = null
+        runCatching { eglBase?.release() }
+        eglBase = null
+        scope.cancel()
         super.onDestroy()
     }
 
@@ -313,14 +369,37 @@ class LiveViewService : Service() {
     private fun startAsForeground(includeProjection: Boolean) {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            if (includeProjection) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            var type = resolveLiveViewForegroundType(includeProjection)
+            try {
+                startForeground(SareChildConstants.LIVE_VIEW_NOTIFICATION_ID, notification, type)
+            } catch (e: SecurityException) {
+                // API 34+: missing runtime permission for a declared FGS type crashes here.
+                Log.w(TAG, "FGS start failed type=$type — retrying with projection-only", e)
+                val fallback = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                try {
+                    startForeground(SareChildConstants.LIVE_VIEW_NOTIFICATION_ID, notification, fallback)
+                } catch (e2: SecurityException) {
+                    Log.e(TAG, "FGS start failed — stopping live view", e2)
+                    stopSelf()
+                }
             }
-            startForeground(SareChildConstants.LIVE_VIEW_NOTIFICATION_ID, notification, type)
         } else {
             startForeground(SareChildConstants.LIVE_VIEW_NOTIFICATION_ID, notification)
         }
+    }
+
+    private fun resolveLiveViewForegroundType(includeProjection: Boolean): Int {
+        var type = 0
+        if (enableVideo && !enableScreen) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        }
+        if (enableAudio) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        if (includeProjection || enableScreen) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        }
+        return type
     }
 
     private fun buildNotification(): Notification {
@@ -351,6 +430,7 @@ class LiveViewService : Service() {
     }
 
     companion object {
+        private const val TAG = "LiveViewService"
         const val EXTRA_RESULT_CODE = "live_projection_result_code"
         const val EXTRA_RESULT_DATA = "live_projection_result_data"
     }

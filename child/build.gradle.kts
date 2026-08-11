@@ -12,9 +12,13 @@ android {
         applicationId = "com.sarechild.child"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 9
+        versionName = "1.0.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        val turnUser = (rootProject.extra["TURN_USERNAME"] as String?) ?: ""
+        val turnCred = (rootProject.extra["TURN_CREDENTIAL"] as String?) ?: ""
+        buildConfigField("String", "TURN_USERNAME", "\"$turnUser\"")
+        buildConfigField("String", "TURN_CREDENTIAL", "\"$turnCred\"")
     }
 
     buildTypes {
@@ -35,6 +39,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
@@ -55,4 +60,9 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("io.getstream:stream-webrtc-android:1.3.8")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
+    implementation("com.google.guava:guava:33.3.1-android")
 }
