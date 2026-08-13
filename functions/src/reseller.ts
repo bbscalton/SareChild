@@ -690,3 +690,80 @@ export const adminTriggerExpirePaid = onCall({ cors: true }, async (request) => 
   });
   return { ok: true, ...result };
 });
+
+function clampStr(raw: unknown, max: number): string {
+  return String(raw ?? "")
+    .trim()
+    .slice(0, max);
+}
+
+/**
+ * Public marketing intake — no Auth required. Writes to resellerApplications for ops review.
+ * Activation still happens via adminSetResellerStatus after the partner creates an Auth account.
+ */
+export const resellerApply = onCall({ cors: true }, async (request) => {
+  const name = clampStr(request.data?.name, 120);
+  const email = clampStr(request.data?.email, 200).toLowerCase();
+  const phone = clampStr(request.data?.phone, 40);
+  const country = clampStr(request.data?.country, 80);
+  const businessType = clampStr(request.data?.businessType, 80);
+  const message = clampStr(request.data?.message, 2000);
+
+  if (name.length < 2) {
+    throw new HttpsError("invalid-argument", "Please enter your name.");
+  }
+  if (!email.includes("@") || email.length < 5) {
+    throw new HttpsError("invalid-argument", "A valid email is required.");
+  }
+  if (phone.length < 6) {
+    throw new HttpsError("invalid-argument", "Please enter a phone or WhatsApp number.");
+  }
+  if (country.length < 2) {
+    throw new HttpsError("invalid-argument", "Please enter your country.");
+  }
+
+  // Light rate-limit: reject duplicate open applications from the same email within 24h.
+  const dayAgo = Date.now() - DAY_MS;
+  const recent = await db
+    .collection("resellerApplications")
+    .where("email", "==", email)
+    .limit(8)
+    .get();
+  const hasRecent = recent.docs.some((d) => Number(d.get("createdAtMs") ?? 0) > dayAgo);
+  if (hasRecent) {
+    throw new HttpsError(
+      "already-exists",
+      "We already received an application from this email today. We'll be in touch soon."
+    );
+  }
+
+  const ref = await db.collection("resellerApplications").add({
+    name,
+    email,
+    phone,
+    country,
+    businessType: businessType || null,
+    message: message || null,
+    status: "new",
+    source: "marketing",
+    createdAtMs: Date.now(),
+    applicantUid: request.auth?.uid ?? null,
+  });
+
+  logger.info(`resellerApply: id=${ref.id} email=${email} country=${country}`);
+  return { ok: true, applicationId: ref.id };
+});
+
+/** Ops: list recent reseller applications from the marketing form. */
+export const adminListResellerApplications = onCall({ cors: true }, async (request) => {
+  assertProjectAdmin(request);
+  const snap = await db
+    .collection("resellerApplications")
+    .orderBy("createdAtMs", "desc")
+    .limit(100)
+    .get();
+  return {
+    ok: true,
+    applications: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+  };
+});
