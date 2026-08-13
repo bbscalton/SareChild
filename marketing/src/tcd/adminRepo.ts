@@ -575,3 +575,23 @@ export async function saveResellerPricing(pricing: Record<string, unknown>): Pro
   const fn = callable<{ pricing: Record<string, unknown> }, { ok: boolean }>('adminSaveResellerPricing')
   await fn({ pricing })
 }
+
+export type ResellerApplicationRow = {
+  id: string
+  name?: string
+  email?: string
+  phone?: string
+  country?: string
+  businessType?: string | null
+  message?: string | null
+  status?: string
+  createdAtMs?: number
+}
+
+export async function listResellerApplications(): Promise<ResellerApplicationRow[]> {
+  const fn = callable<Record<string, never>, { ok: boolean; applications: ResellerApplicationRow[] }>(
+    'adminListResellerApplications',
+  )
+  const res = await fn({})
+  return res.data.applications ?? []
+}
