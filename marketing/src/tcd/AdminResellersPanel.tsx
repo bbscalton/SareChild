@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as adminRepo from './adminRepo'
-import type { ResellerLedgerEntry, ResellerRow } from './adminRepo'
+import type { ResellerApplicationRow, ResellerLedgerEntry, ResellerRow } from './adminRepo'
 
 const DEFAULT_PRICING = {
   plans: {
@@ -27,6 +27,7 @@ function formatMs(ms?: number | null): string {
 
 export function AdminResellersPanel({ busy, onBusy, onStatus, onError }: Props) {
   const [rows, setRows] = useState<ResellerRow[]>([])
+  const [applications, setApplications] = useState<ResellerApplicationRow[]>([])
   const [loading, setLoading] = useState(true)
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -43,8 +44,12 @@ export function AdminResellersPanel({ busy, onBusy, onStatus, onError }: Props) 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const list = await adminRepo.listResellers()
+      const [list, apps] = await Promise.all([
+        adminRepo.listResellers(),
+        adminRepo.listResellerApplications().catch(() => [] as ResellerApplicationRow[]),
+      ])
       setRows(list)
+      setApplications(apps)
       if (selected) {
         const fresh = list.find((r) => r.uid === selected.uid) ?? null
         setSelected(fresh)
@@ -169,6 +174,53 @@ export function AdminResellersPanel({ busy, onBusy, onStatus, onError }: Props) 
           Refresh
         </button>
       </header>
+
+      {applications.length > 0 && (
+        <div className="tcd-acct-section">
+          <h3>Marketing applications</h3>
+          <p className="tcd-acct-section-hint">
+            From the public site form. Ask the partner to create Auth with the same email, then Activate below.
+          </p>
+          <div className="tcd-acct-table-wrap">
+            <table className="tcd-acct-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Country</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applications.slice(0, 20).map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.name ?? '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-ghost-on-dark"
+                        onClick={() => {
+                          setEmail(String(a.email ?? ''))
+                          setDisplayName(String(a.name ?? ''))
+                          setNotes(
+                            [a.businessType, a.phone, a.message].filter(Boolean).join(' · ').slice(0, 200),
+                          )
+                        }}
+                      >
+                        {a.email ?? '—'}
+                      </button>
+                    </td>
+                    <td>{a.phone ?? '—'}</td>
+                    <td>{a.country ?? '—'}</td>
+                    <td>{formatMs(a.createdAtMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="tcd-acct-section">
         <h3>Activate reseller</h3>

@@ -1,11 +1,20 @@
+import { useState, type FormEvent } from 'react'
 import heroImage from './assets/hero.webp'
 import { Reveal } from './Reveal'
 import {
+  APKS_ARE_RELEASE_SIGNED,
   CHILD_APK_URL,
+  CHILD_APK_VERSION,
   GITHUB_REPO_URL,
   PARENT_APK_URL,
+  PARENT_APK_VERSION,
   PARENT_WEB_URL,
+  PLAN_COMPARISON_ROWS,
+  PRIVACY_URL,
+  RESELLER_PORTAL_URL,
+  TERMS_URL,
 } from './config'
+import { applyErrorMessage, submitResellerApplication } from './resellerApplyApi'
 
 export default function App() {
   return (
@@ -13,10 +22,12 @@ export default function App() {
       <Nav />
       <main>
         <Hero />
+        <ProductTruth />
         <HowItWorks />
-        <Features />
+        <Plans />
+        <Trust />
         <Downloads />
-        <TrialSection />
+        <ResellerSection />
       </main>
       <Footer />
     </div>
@@ -31,14 +42,15 @@ function Nav() {
         SareChild
       </a>
       <nav className="nav-links" aria-label="Section navigation">
+        <a href="#product">Product</a>
         <a href="#how">How it works</a>
-        <a href="#features">Features</a>
+        <a href="#plans">Trial vs Paid</a>
         <a href="#download">Download</a>
-        <a href="#trial">Free trial</a>
+        <a href="#reseller">Resellers</a>
       </nav>
       <div className="nav-ctas">
-        <a className="btn btn-ghost-on-light" href={PARENT_WEB_URL}>
-          Open dashboard
+        <a className="btn btn-ghost" href="#download">
+          Download
         </a>
         <a className="btn btn-primary" href={PARENT_WEB_URL}>
           Start free trial
@@ -53,52 +65,82 @@ function Hero() {
     <section id="top" className="hero">
       <div className="hero-media" style={{ backgroundImage: `url(${heroImage})` }} aria-hidden="true" />
       <div className="hero-scrim" aria-hidden="true" />
-      <div className="hero-glow" aria-hidden="true" />
       <div className="hero-inner">
-        <p className="eyebrow eyebrow-on-dark">Family safety, built on consent</p>
-        <h1 className="hero-title">Know they're okay. Without the creepiness.</h1>
+        <p className="hero-brand">SareChild</p>
+        <h1 className="hero-title">When they’re out of sight, you’re still sure they’re safe.</h1>
         <p className="hero-sub">
-          SareChild pairs a parent phone and a child phone so you can see they're safe —
-          live location, real alerts, and a family chat — while your child always knows
-          exactly what's shared and why.
+          Consent-first family safety — live location, WhatsApp awareness, and a parent dashboard
+          that upgrades when you need more depth.
         </p>
         <div className="hero-ctas">
           <a className="btn btn-primary btn-lg" href={PARENT_WEB_URL}>
-            Start your free 30-day trial
+            Start free trial
           </a>
-          <a className="btn btn-ghost-on-dark btn-lg" href="#how">
-            See how it works
+          <a className="btn btn-ghost-on-dark btn-lg" href="#download">
+            Download apps
           </a>
         </div>
-        <p className="hero-note">Full features included. No credit card required.</p>
       </div>
     </section>
+  )
+}
+
+function ProductTruth() {
+  const truths = [
+    {
+      title: 'Live map that feels present',
+      body: 'See where they are, replay today’s path on trial, and keep longer history when you upgrade — without drowning in noise.',
+    },
+    {
+      title: 'WhatsApp safety signals',
+      body: 'Typing and message awareness with retained history so you catch risk patterns, not every chat bubble.',
+    },
+    {
+      title: 'Call & watchdog awareness',
+      body: 'Know when calls happen and keep a watchdog eye on critical moments — always with visible protection on the child phone.',
+    },
+  ]
+  return (
+    <Reveal as="section" id="product" className="section product">
+      <div className="section-inner">
+        <p className="eyebrow">What parents actually get</p>
+        <h2 className="section-title">Safety you can feel — not a feature checklist</h2>
+        <div className="truth-list">
+          {truths.map((t, i) => (
+            <article className="truth-item" key={t.title} style={{ transitionDelay: `${i * 80}ms` }}>
+              <h3>{t.title}</h3>
+              <p className="muted">{t.body}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </Reveal>
   )
 }
 
 function HowItWorks() {
   const steps = [
     {
-      n: '1',
+      n: '01',
       title: 'Pair',
-      body: "Parent creates a one-time pairing code in SareChild. Your child enters it once to connect the two apps.",
+      body: 'Create a one-time code in the parent dashboard. Your child enters it once on their phone.',
     },
     {
-      n: '2',
-      title: 'Consent',
-      body: 'Your child reviews and accepts exactly what gets monitored — no hidden permissions, no stealth mode, ever.',
+      n: '02',
+      title: 'Enable protections',
+      body: 'Your child reviews and accepts what’s shared — location, alerts, WhatsApp awareness — with ongoing visibility.',
     },
     {
-      n: '3',
-      title: 'Live dashboard',
-      body: 'You see location, battery, alerts, and safety check-ins update in real time from the parent app or web.',
+      n: '03',
+      title: 'Parent dashboard',
+      body: 'Open the web dashboard for live map, alerts, and depth that grows from trial to paid.',
     },
   ]
   return (
-    <Reveal as="section" className="section how" delayMs={0}>
+    <Reveal as="section" id="how" className="section how" delayMs={0}>
       <div className="section-inner">
         <p className="eyebrow">How it works</p>
-        <h2 className="section-title">Set up in minutes, not settings menus</h2>
+        <h2 className="section-title">Three steps from install to peace of mind</h2>
         <div className="steps">
           {steps.map((s, i) => (
             <div className="step" key={s.n}>
@@ -114,37 +156,67 @@ function HowItWorks() {
   )
 }
 
-function Features() {
-  const features = [
-    {
-      title: 'Live location & geofences',
-      body: "See where they are on a map, and get a gentle notification when they arrive at or leave home, school, or a safe zone you've drawn.",
-    },
-    {
-      title: 'Alerts that mean something',
-      body: 'SOS button, keyword detection, low battery, and "went dark" warnings — with context attached, not noise you learn to ignore.',
-    },
-    {
-      title: 'Consent-first safety checks',
-      body: "Screen share, camera, and mic checks always show an Accept/Decline prompt and an ongoing notification on your child's phone. Nothing runs silently.",
-    },
-    {
-      title: 'Family chat',
-      body: 'A private space for the whole family to check in — texts, photos, and voice notes — inside the same app your child already trusts.',
-    },
-  ]
+function Plans() {
   return (
-    <Reveal as="section" id="features" className="section features">
+    <Reveal as="section" id="plans" className="section plans">
       <div className="section-inner">
-        <p className="eyebrow">Peace of mind, honestly</p>
-        <h2 className="section-title">Everything a parent needs. Nothing a child should hide from.</h2>
-        <div className="feature-grid">
-          {features.map((f) => (
-            <article className="feature-card" key={f.title}>
-              <h3>{f.title}</h3>
-              <p className="muted">{f.body}</p>
-            </article>
-          ))}
+        <p className="eyebrow">Trial → Paid</p>
+        <h2 className="section-title">Start free. Upgrade when depth matters.</h2>
+        <p className="section-lede muted">
+          Core safety — SOS, last location, geofence alerts — is never limited. Trial caps depth so
+          paid feels worth it when you need more children, history, and live check-ins.
+        </p>
+        <div className="plan-table-wrap">
+          <table className="plan-table">
+            <thead>
+              <tr>
+                <th scope="col">Area</th>
+                <th scope="col">Trial</th>
+                <th scope="col">Paid</th>
+              </tr>
+            </thead>
+            <tbody>
+              {PLAN_COMPARISON_ROWS.map((row) => (
+                <tr key={row.area}>
+                  <th scope="row">{row.area}</th>
+                  <td>{row.trial}</td>
+                  <td>{row.paid}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="plans-cta">
+          <a className="btn btn-primary btn-lg" href={PARENT_WEB_URL}>
+            Start free trial
+          </a>
+          <p className="muted small">No credit card. Redeem a voucher anytime to unlock paid.</p>
+        </div>
+      </div>
+    </Reveal>
+  )
+}
+
+function Trust() {
+  return (
+    <Reveal as="section" id="trust" className="section trust">
+      <div className="section-inner trust-inner">
+        <p className="eyebrow">Built honestly</p>
+        <h2 className="section-title">Consent-first. Clear about Android limits.</h2>
+        <div className="trust-copy">
+          <p>
+            Your child always sees what’s monitored — no stealth mode. Permissions and ongoing
+            notifications stay visible on their phone.
+          </p>
+          <p>
+            Call awareness leans on mic-side capture where Android allows it; some OEMs and VoIP
+            paths are imperfect. Uninstall protection adds friction for parents who want it — it is
+            not an absolute lock.
+          </p>
+          <p className="muted">
+            We’d rather tell you the truth than sell magic. That’s how families stay with SareChild
+            after the trial.
+          </p>
         </div>
       </div>
     </Reveal>
@@ -155,61 +227,168 @@ function Downloads() {
   return (
     <Reveal as="section" id="download" className="section download">
       <div className="section-inner">
-        <p className="eyebrow eyebrow-on-dark">Get the apps</p>
-        <h2 className="section-title on-dark">One app for you, one for your kid</h2>
+        <p className="eyebrow eyebrow-on-dark">Downloads</p>
+        <h2 className="section-title on-dark">Get the apps. Open the dashboard.</h2>
         <p className="muted on-dark download-lede">
-          Direct APK downloads hosted on Cloudflare — install the Parent app on your
-          phone and the Child app on theirs, then pair them in under a minute. Since
-          we're not on Google Play yet, Android will ask you to allow installs from
-          this source once.
+          Install the Child APK on their phone and the Parent APK on yours, then pair. The{' '}
+          <a className="inline-link" href={PARENT_WEB_URL}>
+            parent web dashboard
+          </a>{' '}
+          has the full feature set; the Android parent APK may be thinner. Outside Play Store,
+          Android asks once to allow installs from this source.
         </p>
         <div className="download-grid">
-          <a className="download-card" href={PARENT_APK_URL}>
-            <span className="download-kind">Parent app</span>
-            <span className="download-cta">Download parent.apk ↓</span>
-            <span className="download-meta">Pair devices, live dashboard, alerts, chat</span>
-          </a>
           <a className="download-card" href={CHILD_APK_URL}>
             <span className="download-kind">Child app</span>
-            <span className="download-cta">Download child.apk ↓</span>
-            <span className="download-meta">Pairing, consent screens, visible protection badge</span>
+            <span className="download-cta">Download child.apk</span>
+            <span className="download-meta">v{CHILD_APK_VERSION} · Pairing, consent, protection badge</span>
+          </a>
+          <a className="download-card" href={PARENT_APK_URL}>
+            <span className="download-kind">Parent app</span>
+            <span className="download-cta">Download parent.apk</span>
+            <span className="download-meta">v{PARENT_APK_VERSION} · Pair, alerts, chat</span>
           </a>
         </div>
-        <p className="muted small on-dark">
-          Preview / trial build (debug-signed) while we validate demand — fully
-          functional, just not yet notarized for the Play Store. Already paired?{' '}
-          <a className="inline-link" href={PARENT_WEB_URL}>
-            Open your dashboard
+        <p className="download-web">
+          <a className="btn btn-primary" href={PARENT_WEB_URL}>
+            Open parent dashboard
           </a>
-          .
         </p>
+        {!APKS_ARE_RELEASE_SIGNED && (
+          <p className="muted small on-dark">
+            Preview / trial builds (debug-signed) while we validate demand — fully functional, not
+            yet on Play Store.
+          </p>
+        )}
       </div>
     </Reveal>
   )
 }
 
-function TrialSection() {
-  const points = [
-    'Full access to every safety feature for 30 days — nothing gated behind a paywall.',
-    'No credit card required to start.',
-    "A quick weekly check-in (opening the dashboard or checking on your kid) keeps your account active.",
-    'Paid plans are coming later for families who want to keep going after their trial — this trial period is how we validate SareChild is worth building further.',
-  ]
+function ResellerSection() {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [country, setCountry] = useState('')
+  const [businessType, setBusinessType] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await submitResellerApplication({
+        name,
+        email,
+        phone,
+        country,
+        businessType: businessType.trim() || undefined,
+        message: message.trim() || undefined,
+      })
+      setDone(true)
+    } catch (err) {
+      setError(applyErrorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <Reveal as="section" id="trial" className="section trial">
-      <div className="section-inner trial-inner">
-        <div>
-          <p className="eyebrow">Free trial</p>
-          <h2 className="section-title">One plan. Every feature. 30 days, free.</h2>
-          <ul className="trial-list">
-            {points.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
+    <Reveal as="section" id="reseller" className="section reseller">
+      <div className="section-inner reseller-layout">
+        <div className="reseller-pitch">
+          <p className="eyebrow">Partners</p>
+          <h2 className="section-title">Sell vouchers. Earn as a SareChild reseller.</h2>
+          <p className="muted">
+            Activate families with 15 / 30 / 90-day vouchers, top up credit-days, and serve parents
+            who want paid depth after their trial. Apply below — ops reviews every request.
+          </p>
+          <ul className="reseller-bullets">
+            <li>Wholesale credit-days for Starter, Monthly, and Quarterly plans</li>
+            <li>Mint vouchers offline or activate a parent account directly</li>
+            <li>
+              Already approved?{' '}
+              <a className="inline-link" href={RESELLER_PORTAL_URL}>
+                Open the reseller portal
+              </a>
+            </li>
           </ul>
-          <a className="btn btn-primary btn-lg" href={PARENT_WEB_URL}>
-            Start your free trial
-          </a>
         </div>
+
+        {done ? (
+          <div className="reseller-success" role="status">
+            <h3>Application received</h3>
+            <p>
+              Thanks — we’ll review your details and email you next steps. After approval, create a
+              Google or email login with the same address, then use the{' '}
+              <a className="inline-link" href={RESELLER_PORTAL_URL}>
+                reseller portal
+              </a>{' '}
+              once ops activates your account.
+            </p>
+          </div>
+        ) : (
+          <form className="reseller-form" onSubmit={(e) => void onSubmit(e)}>
+            <label>
+              Full name
+              <input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+              />
+            </label>
+            <label>
+              Phone / WhatsApp
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                required
+                autoComplete="tel"
+              />
+            </label>
+            <label>
+              Country
+              <input
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                required
+                autoComplete="country-name"
+              />
+            </label>
+            <label>
+              Business type <span className="optional">(optional)</span>
+              <input
+                value={businessType}
+                onChange={(e) => setBusinessType(e.target.value)}
+                placeholder="Retail shop, mobile agent, school…"
+              />
+            </label>
+            <label>
+              Message <span className="optional">(optional)</span>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={3}
+                placeholder="Where you sell, expected volume, questions…"
+              />
+            </label>
+            {error && <p className="form-error">{error}</p>}
+            <button className="btn btn-primary btn-lg" type="submit" disabled={busy}>
+              {busy ? 'Submitting…' : 'Apply to become a reseller'}
+            </button>
+          </form>
+        )}
       </div>
     </Reveal>
   )
@@ -224,15 +403,17 @@ function Footer() {
             <span className="brand-mark" aria-hidden="true" />
             SareChild
           </p>
-          <p className="muted small">Consent-first family safety. Built for peace of mind, not surveillance.</p>
+          <p className="muted small">Consent-first family safety. Try free — upgrade when depth matters.</p>
         </div>
         <div className="footer-links">
           <a href={PARENT_WEB_URL}>Parent dashboard</a>
-          <a href={GITHUB_REPO_URL}>Source on GitHub</a>
+          <a href={TERMS_URL}>Terms</a>
+          <a href={PRIVACY_URL}>Privacy</a>
+          <a href={RESELLER_PORTAL_URL}>Reseller portal</a>
+          <a href={GITHUB_REPO_URL}>GitHub</a>
           <a href="tcd.html" className="footer-ops-link">
             Ops / TCD
           </a>
-          <a href="#top">Back to top</a>
         </div>
       </div>
     </footer>
