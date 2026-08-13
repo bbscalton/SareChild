@@ -321,5 +321,11 @@ service cloud.firestore {
         || (signedIn() && resource.data.createdByResellerUid == request.auth.uid);
       allow write: if false;
     }
+
+    // Marketing reseller intake — created only by resellerApply callable.
+    match /resellerApplications/{appId} {
+      allow read: if isProjectAdmin();
+      allow write: if false;
+    }
   }
 }
