@@ -27,7 +27,7 @@ const firebaseConfig = {
 export const app = FIREBASE_CONFIGURED ? initializeApp(firebaseConfig) : null
 export const auth = app ? getAuth(app) : null
 export const db = app ? getFirestore(app) : null
-export const functions = app ? getFunctions(app) : null
+export const functions = app ? getFunctions(app, 'us-central1') : null
 
 if (functions && import.meta.env.DEV && readEnv('VITE_FUNCTIONS_EMULATOR') === '1') {
   connectFunctionsEmulator(functions, '127.0.0.1', 5001)
