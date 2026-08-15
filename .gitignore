@@ -25,3 +25,6 @@ r2-proxy/dist-worker/
 *.log
 
 .vps-root-password
+pc-storage/.secret
+pc-storage/store/**
+!pc-storage/store/.htaccess

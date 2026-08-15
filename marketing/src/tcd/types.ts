@@ -298,6 +298,21 @@ export type StorageDump = {
     firebaseStorage: { bytes: number; objects: number; truncated: boolean; error?: string | null }
     d1: Record<string, number>
     kv: { note: string }
+    pcXampp?: {
+      reachable: boolean
+      configured: boolean
+      error?: string | null
+      bytes: number
+      files: number
+      diskUsedBytes: number
+      diskTotalBytes: number
+      diskPercent: number
+      drive: string
+      storePath: string
+      publicUrl: string | null
+      localHealthUrl: string
+      mediaNote: string
+    }
   }
   features: StorageFeatureRow[]
   accounts: StorageAccountRow[]
@@ -339,4 +354,27 @@ export type InfraStatus = {
   }
   cloudflare: { r2Bucket: string; worker: string; d1: string }
   firebase: { projectId: string; storageBucket: string }
+  pc?: {
+    provider: string
+    host: string
+    installPath: string
+    localHealthUrl: string
+    publicUrl: string | null
+    secretConfigured: boolean
+    roles: Array<{ id: string; label: string; detail: string }>
+    reachableFromFunctions: boolean
+    probe: InfraProbe
+    disk: {
+      usedBytes: number
+      totalBytes: number
+      percent: number
+      drive: string
+      storeBytes: number
+      storeFiles: number
+      storePath: string
+    } | null
+    mixedContentNote?: string
+    tunnelHint?: string
+    mediaNote?: string
+  }
 }

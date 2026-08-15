@@ -105,9 +105,20 @@ Reseller ledger export: template at `/opt/sarechild/backup/reseller-ledger-expor
 
 ## TCD storage dump
 
-The **Storage** tab on TCD (`https://bbscalton.github.io/SareChild/tcd.html`) inventories this droplet (TURN, staging, disk) plus Firebase and Cloudflare usage.
+The **Storage** tab on TCD (`https://bbscalton.github.io/SareChild/tcd.html`) inventories this droplet (TURN, staging, disk) plus Firebase, Cloudflare R2, and **This PC (XAMPP)** when Cloud Functions can reach Apache through a Cloudflare Tunnel.
 
 Refresh dump calls Cloud Functions (`adminGetStorageDump`, `adminGetInfraStatus` in us-central1). R2 or VPS probe failures must not hide Firestore families.
+
+### This PC (XAMPP) local archive
+
+Apache on the Windows PC (`C:\xampp2\htdocs\sarechild-storage`) is a **disk dump + local archive**, not a replacement for R2. GitHub Pages is HTTPS, so the browser cannot call `http://127.0.0.1` (mixed content). Cloud Functions also cannot see the PC loopback. If ISP NAT blocks port 80 (typical), add a public hostname on the existing `net` cloudflared tunnel (or `sarechild-xampp`) pointing at `http://127.0.0.1:80`, then set gitignored `functions/.env`:
+
+```
+XAMPP_STORAGE_URL=https://YOUR-HOST/sarechild-storage
+XAMPP_STORAGE_SECRET=<same as C:\xampp2\htdocs\sarechild-storage\.secret>
+```
+
+Local check on the PC: http://127.0.0.1/sarechild-storage/health.json — then TCD Storage → Refresh dump. Type `CLEAR-PC-STORE` to wipe `store/` only (R2 untouched).
 
 ### Why droplet pills can look “down” from TCD
 
