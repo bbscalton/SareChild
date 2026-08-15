@@ -58,6 +58,8 @@ export function AdminStoragePanel({
   const [infra, setInfra] = useState<InfraStatus | null>(null)
   const [dumpError, setDumpError] = useState<string | null>(null)
   const [infraError, setInfraError] = useState<string | null>(null)
+  const [scanningDump, setScanningDump] = useState(true)
+  const [showLegacyNote, setShowLegacyNote] = useState(false)
   const [featureEdits, setFeatureEdits] = useState<Record<string, string>>({})
   const [globalGb, setGlobalGb] = useState('50')
   const [accountGb, setAccountGb] = useState('2')
@@ -69,34 +71,66 @@ export function AdminStoragePanel({
   const [pcListNote, setPcListNote] = useState<string | null>(null)
 
   const applyDump = (storage: StorageDump) => {
-    setDump(storage)
-    const globalCap = storage.limits.globalBytesMax || 50 * 1024 * 1024 * 1024
-    const accountCap = storage.limits.defaultAccountBytesMax || 2 * 1024 * 1024 * 1024
+    const accounts = Array.isArray(storage?.accounts) ? storage.accounts : []
+    const features = Array.isArray(storage?.features) ? storage.features : []
+    const limits = storage?.limits ?? {
+      globalBytesMax: 50 * 1024 * 1024 * 1024,
+      defaultAccountBytesMax: 2 * 1024 * 1024 * 1024,
+      featureBytesMax: {},
+      updatedAtMs: 0,
+      updatedBy: null,
+    }
+    const normalized: StorageDump = {
+      ...storage,
+      accounts,
+      features,
+      limits,
+      backends: storage?.backends ?? {
+        r2: {
+          reachable: false,
+          error: null,
+          bytes: 0,
+          objects: 0,
+          truncated: false,
+          otherBytes: 0,
+          bucket: 'luscsl-uploads',
+        },
+        firestore: { docs: 0, estimatedBytes: 0, families: 0 },
+        firebaseStorage: { bytes: 0, objects: 0, truncated: false, error: null },
+        d1: {},
+        kv: { note: '' },
+      },
+    }
+    setDump(normalized)
+    const globalCap = normalized.limits.globalBytesMax || 50 * 1024 * 1024 * 1024
+    const accountCap = normalized.limits.defaultAccountBytesMax || 2 * 1024 * 1024 * 1024
     setGlobalGb(String((globalCap / (1024 * 1024 * 1024)).toFixed(0)))
     setAccountGb(String((accountCap / (1024 * 1024 * 1024)).toFixed(2)))
     const edits: Record<string, string> = {}
-    for (const f of storage.features) {
+    for (const f of features) {
       edits[f.id] = String(((f.limitBytes || 0) / (1024 * 1024)).toFixed(0))
     }
     setFeatureEdits(edits)
     setSelectedFamily((prev) => {
-      if (prev && storage.accounts.some((a) => a.familyId === prev)) return prev
-      if (storage.accounts.some((a) => a.familyId === PREFERRED_FAMILY_ID)) return PREFERRED_FAMILY_ID
-      const byEmail = storage.accounts.find((a) => a.email.toLowerCase() === PREFERRED_ADMIN_EMAIL)
-      return byEmail?.familyId || storage.accounts[0]?.familyId || prev || PREFERRED_FAMILY_ID
+      if (prev && accounts.some((a) => a.familyId === prev)) return prev
+      if (accounts.some((a) => a.familyId === PREFERRED_FAMILY_ID)) return PREFERRED_FAMILY_ID
+      const byEmail = accounts.find((a) => (a.email || '').toLowerCase() === PREFERRED_ADMIN_EMAIL)
+      return byEmail?.familyId || accounts[0]?.familyId || prev || PREFERRED_FAMILY_ID
     })
   }
 
   const load = async (label: string) => {
     onBusy(true)
-    onError(null)
+    setScanningDump(true)
     setDumpError(null)
     setInfraError(null)
     let dumpFailed = false
-    let infraFailed = false
-    const storageP = adminRepo.adminGetStorageDump().then(
-      (storage) => {
+    let dumpApplied = false
+    const dumpTask = (async () => {
+      try {
+        const storage = await adminRepo.adminGetStorageDump()
         applyDump(storage)
+        dumpApplied = true
         const issues = [
           storage.error,
           ...(storage.warnings ?? []),
@@ -105,27 +139,26 @@ export function AdminStoragePanel({
         if (issues.length) {
           setDumpError(issues.join(' · '))
           onError(issues[0])
+        } else {
+          onError(null)
         }
-      },
-      (e) => {
+      } catch (e) {
         dumpFailed = true
         const msg = e instanceof Error ? e.message : 'Storage dump failed'
         setDumpError(msg)
         onError(msg)
-      },
-    )
-    const infraP = adminRepo.adminGetInfraStatus().then(
-      (droplet) => {
-        setInfra(droplet)
-      },
-      (e) => {
-        infraFailed = true
-        setInfraError(e instanceof Error ? e.message : 'Infra status failed')
-      },
-    )
-    await Promise.allSettled([storageP, infraP])
-    if (!dumpFailed && !infraFailed) onStatus(label)
-    else if (!dumpFailed) onStatus(`${label} (droplet probe incomplete)`)
+      }
+    })()
+    const infraTask = (async () => {
+      try {
+        setInfra(await adminRepo.adminGetInfraStatus())
+      } catch (e) {
+        setInfraError(e instanceof Error ? e.message : 'PC health / infra status failed')
+      }
+    })()
+    await Promise.allSettled([dumpTask, infraTask])
+    if (dumpApplied && !dumpFailed) onStatus(label)
+    setScanningDump(false)
     onBusy(false)
   }
 
@@ -140,7 +173,7 @@ export function AdminStoragePanel({
     if (!q) return rows
     return rows.filter(
       (a) =>
-        a.email.toLowerCase().includes(q) ||
+        (a.email || '').toLowerCase().includes(q) ||
         a.familyId.toLowerCase().includes(q) ||
         a.childNames.some((n) => String(n).toLowerCase().includes(q)),
     )
@@ -259,13 +292,10 @@ export function AdminStoragePanel({
     }
   }
 
-  const droplet = infra?.droplet
   const pc = infra?.pc
-  const agent = droplet?.probes.opsHealth.body as Record<string, unknown> | undefined
-  const disk = agent?.disk as { usedBytes?: number; totalBytes?: number; percent?: string } | undefined
-  const services = agent?.services as Record<string, boolean> | undefined
   const pcDisk = pc?.disk
-  const pcBackend = dump?.backends.pcXampp
+  const pcBackend = dump?.backends?.pcXampp
+  const dumpScanning = scanningDump || (busy && !dump && !dumpError)
 
   const listPcStore = async () => {
     onBusy(true)
@@ -312,10 +342,19 @@ export function AdminStoragePanel({
         <div>
           <h2>Storage &amp; infrastructure</h2>
           <p className="muted small">
-            Dump of what each backend is storing: Cloudflare R2 (live media), Firestore, Firebase Storage, D1, the
-            DigitalOcean droplet, and this Windows PC (XAMPP local archive). Live child uploads still go to R2 /
-            Firestore — the PC folder is ops health plus an archive you can list and clear.
+            Storage backends: Cloudflare R2 (live media), Firestore (family docs), and this Windows PC (XAMPP
+            archive via Cloudflare Worker). Live child uploads go to R2 / Firestore — the PC folder is ops health plus
+            an archive you can list and clear.
           </p>
+          <label className="muted small" style={{ display: 'block', marginTop: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={showLegacyNote}
+              onChange={(e) => setShowLegacyNote(e.target.checked)}
+            />{' '}
+            Show unused legacy note
+          </label>
+          {showLegacyNote ? <p className="muted small">Legacy droplet unused.</p> : null}
         </div>
         <button className="btn btn-primary compact" type="button" disabled={busy} onClick={() => void load('Dump refreshed.')}>
           {busy ? 'Scanning…' : 'Refresh dump'}
@@ -324,8 +363,15 @@ export function AdminStoragePanel({
 
       {(dumpError || infraError) && (
         <div className="tcd-banner error" style={{ marginBottom: '1rem' }}>
-          {dumpError ? <div>Dump: {dumpError}</div> : null}
-          {infraError ? <div>Droplet: {infraError}</div> : null}
+          {dumpError ? (
+            <div>
+              Cloud dump: {dumpError}
+              {pc?.reachableFromFunctions
+                ? ' PC disk below is XAMPP health only — it does not mean R2 / Firestore loaded.'
+                : ''}
+            </div>
+          ) : null}
+          {infraError ? <div>This PC probe: {infraError}</div> : null}
         </div>
       )}
       {dump?.warnings && dump.warnings.length > 0 && !dumpError && (
@@ -335,34 +381,36 @@ export function AdminStoragePanel({
       <div className="tcd-pulse-grid">
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Platform used</p>
-          <p className="tcd-pulse-value">{fmtBytes(dump?.totals.usedBytes)}</p>
-          <p className="tcd-pulse-meta">of {fmtBytes(dump?.limits.globalBytesMax || 50 * 1024 * 1024 * 1024)} global cap</p>
+          <p className="tcd-pulse-value">{dump ? fmtBytes(dump.totals?.usedBytes) : dumpScanning ? '…' : fmtBytes(0)}</p>
+          <p className="tcd-pulse-meta">of {fmtBytes(dump?.limits?.globalBytesMax || 50 * 1024 * 1024 * 1024)} global cap</p>
         </article>
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Cloudflare R2</p>
-          <p className="tcd-pulse-value">{fmtBytes(dump?.backends.r2.bytes)}</p>
+          <p className="tcd-pulse-value">{dump ? fmtBytes(dump.backends?.r2?.bytes) : dumpScanning ? '…' : fmtBytes(0)}</p>
           <p className="tcd-pulse-meta">
-            {dump?.backends.r2.objects ?? 0} objects · bucket {dump?.backends.r2.bucket || 'luscsl-uploads'}
-            {dump?.backends.r2.error ? ` · ${dump.backends.r2.error}` : ''}
+            {dump?.backends?.r2?.objects ?? 0} objects · bucket {dump?.backends?.r2?.bucket || 'luscsl-uploads'}
+            {dump?.backends?.r2?.error ? ` · ${dump.backends.r2.error}` : ''}
           </p>
         </article>
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Firestore</p>
-          <p className="tcd-pulse-value">{dump?.backends.firestore.docs ?? '—'}</p>
+          <p className="tcd-pulse-value">
+            {dump?.backends?.firestore?.docs ?? (dumpScanning ? '…' : dumpError ? '—' : 0)}
+          </p>
           <p className="tcd-pulse-meta">
-            {fmtBytes(dump?.backends.firestore.estimatedBytes)} estimated · {dump?.backends.firestore.families ?? 0}{' '}
+            {fmtBytes(dump?.backends?.firestore?.estimatedBytes)} estimated · {dump?.backends?.firestore?.families ?? 0}{' '}
             families
           </p>
         </article>
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Accounts over cap</p>
-          <p className={`tcd-pulse-value ${dump && dump.totals.overLimitCount > 0 ? 'fail' : ''}`}>
-            {dump?.totals.overLimitCount ?? 0}
+          <p className={`tcd-pulse-value ${dump && (dump.totals?.overLimitCount ?? 0) > 0 ? 'fail' : ''}`}>
+            {dump?.totals?.overLimitCount ?? 0}
           </p>
-          <p className="tcd-pulse-meta">{dump?.totals.accountCount ?? 0} parent accounts scanned</p>
+          <p className="tcd-pulse-meta">{dump?.totals?.accountCount ?? 0} parent accounts scanned</p>
         </article>
         <article className="tcd-pulse-card">
-          <p className="tcd-pulse-eyebrow">This PC (XAMPP)</p>
+          <p className="tcd-pulse-eyebrow">Cloudflare Tunnel → this PC</p>
           <p className="tcd-pulse-value">
             {pcDisk ? fmtBytes(pcDisk.usedBytes) : pcBackend?.diskUsedBytes ? fmtBytes(pcBackend.diskUsedBytes) : '—'}
           </p>
@@ -376,84 +424,14 @@ export function AdminStoragePanel({
 
       <div className="tcd-card tcd-card-wide">
         <div className="tcd-card-head">
-          <h2>DigitalOcean droplet</h2>
-          <span className="tcd-card-timestamp">{droplet?.host ?? '107.170.15.179'}</span>
-        </div>
-        <p className="muted small">
-          This VPS is not Firebase or Cloudflare — it runs TURN for live viewing, parent-web staging, an APK mirror,
-          ffmpeg, backup templates, and health cron. Set <code>DO_API_TOKEN</code> on Cloud Functions to pull size /
-          region / disk from DigitalOcean.
-        </p>
-        <ul className="tcd-vps-roles">
-          {(droplet?.roles ?? []).map((r) => (
-            <li key={r.id}>
-              <strong>{r.label}</strong>
-              <span>{r.detail}</span>
-            </li>
-          ))}
-        </ul>
-        <div className="tcd-vps-probes">
-          <span className={`pill tcd-${droplet?.probes.turn3478.ok ? 'ok' : droplet?.probes.turn3478.inconclusive ? 'warn' : 'fail'}`}>
-            TURN :3478 {droplet?.probes.turn3478.ok ? 'TCP open from Functions' : 'not confirmed from Functions'}
-          </span>
-          <span className={`pill tcd-${droplet?.probes.staging.ok ? 'ok' : droplet?.probes.staging.inconclusive ? 'warn' : 'fail'}`}>
-            Staging :8080{' '}
-            {droplet?.probes.staging.ok
-              ? `HTTP ${droplet.probes.staging.status}`
-              : droplet?.probes.staging.inconclusive
-                ? 'Functions cannot reach private HTTP'
-                : 'down from Functions'}
-          </span>
-          <span className={`pill tcd-${droplet?.probes.opsHealth.ok ? 'ok' : 'warn'}`}>
-            Ops health {droplet?.probes.opsHealth.ok ? 'JSON' : 'not reachable over HTTP from Functions'}
-          </span>
-          {services && (
-            <>
-              <span className={`pill tcd-${services.coturn ? 'ok' : 'fail'}`}>coturn {services.coturn ? 'up' : 'down'}</span>
-              <span className={`pill tcd-${services.nginx ? 'ok' : 'fail'}`}>nginx {services.nginx ? 'up' : 'down'}</span>
-            </>
-          )}
-        </div>
-        <p className="muted small" style={{ marginTop: '0.75rem' }}>
-          {droplet?.mixedContentNote ||
-            'GitHub Pages is HTTPS, so this tab cannot fetch http://107.170.15.179:8080 (mixed content). TURN is UDP/TCP 3478 — a Functions TCP miss is not proof coturn is down. Confirm staging in a separate HTTP tab or over SSH.'}
-        </p>
-        {droplet?.probes.turn3478.note && <p className="muted small">{droplet.probes.turn3478.note}</p>}
-        {droplet?.probes.staging.note && <p className="muted small">{droplet.probes.staging.note}</p>}
-        {disk && (
-          <p className="muted small" style={{ marginTop: '0.75rem' }}>
-            Droplet disk {fmtBytes(disk.usedBytes)} / {fmtBytes(disk.totalBytes)} ({disk.percent})
-          </p>
-        )}
-        {typeof droplet?.digitalocean === 'object' && droplet.digitalocean && 'name' in droplet.digitalocean && (
-          <p className="muted small">
-            DO droplet {(droplet.digitalocean as { name?: string }).name} · {(droplet.digitalocean as { status?: string }).status}{' '}
-            · {(droplet.digitalocean as { size?: string }).size} · {(droplet.digitalocean as { region?: string }).region}
-          </p>
-        )}
-        {!droplet?.agentInstalled && (
-          <p className="muted small">{droplet?.installHint}</p>
-        )}
-        <p className="muted small">
-          <a href={droplet?.consoleUrl} target="_blank" rel="noreferrer">
-            Open DigitalOcean console
-          </a>
-          {' · '}
-          <a href={droplet?.probes.staging.ok ? `http://${droplet.host}:8080/` : undefined}>
-            Staging site
-          </a>
-        </p>
-      </div>
-
-      <div className="tcd-card tcd-card-wide">
-        <div className="tcd-card-head">
           <h2>This PC (XAMPP)</h2>
-          <span className="tcd-card-timestamp">{pc?.installPath ?? 'C:\\xampp2\\htdocs\\sarechild-storage'}</span>
+          <span className="tcd-card-timestamp">Cloudflare Tunnel (free) → this PC Apache</span>
         </div>
         <p className="muted small">
-          Apache on this Windows PC is a <strong>local archive + disk dump</strong>, not the live media bucket. Child
-          devices still upload to Cloudflare R2 and Firestore. TURN/coturn stays on the DigitalOcean droplet — it was
-          not installed on Windows. Apache can host a staging copy later if you drop parent-web into htdocs.
+          Cloudflare (free) publishes this Windows PC archive at{" "}
+          <code>sarechild-pc-storage.neuereatec.workers.dev</code> → Apache/PHP on this machine
+          (<code>C:\xampp2\htdocs\sarechild-storage</code>). That folder is a <strong>local archive + disk dump</strong>,
+          not the live media bucket — child devices still upload to Cloudflare R2 and Firestore.
         </p>
         <ul className="tcd-vps-roles">
           {(pc?.roles ?? []).map((r) => (
@@ -464,9 +442,9 @@ export function AdminStoragePanel({
           ))}
         </ul>
         <div className="tcd-vps-probes">
-          <span className={`pill tcd-${pc?.reachableFromFunctions ? 'ok' : pc?.probe.inconclusive ? 'warn' : 'fail'}`}>
+          <span className={`pill tcd-${pc?.reachableFromFunctions ? 'ok' : pc?.probe?.inconclusive ? 'warn' : 'fail'}`}>
             {pc?.reachableFromFunctions
-              ? `Functions reached health.json (${pc.probe.latencyMs} ms)`
+              ? `Functions reached health.json (${pc.probe?.latencyMs} ms)`
               : pc?.publicUrl
                 ? 'Functions could not reach the tunnel URL'
                 : 'XAMPP_STORAGE_URL not set on Functions'}
@@ -485,7 +463,7 @@ export function AdminStoragePanel({
           {pc?.mixedContentNote ||
             'GitHub Pages is HTTPS, so this tab cannot fetch http://127.0.0.1/sarechild-storage (mixed content). Open that URL in a separate tab on this PC. Cloud Functions also cannot see the PC loopback — a Cloudflare Tunnel hostname is required.'}
         </p>
-        {pc?.probe.note && <p className="muted small">{pc.probe.note}</p>}
+        {pc?.probe?.note && <p className="muted small">{pc.probe.note}</p>}
         {pc?.tunnelHint && <p className="muted small">{pc.tunnelHint}</p>}
         <p className="muted small">
           Local health (this PC only):{' '}
@@ -677,7 +655,7 @@ export function AdminStoragePanel({
                   <td colSpan={6} className="tcd-empty-note">
                     {dumpError
                       ? 'Dump failed — use Family ID above to Manage / Clear / Reset anyway.'
-                      : busy
+                      : dumpScanning
                         ? 'Scanning families…'
                         : 'No families in this dump yet. Paste a family ID above to manage one.'}
                   </td>
