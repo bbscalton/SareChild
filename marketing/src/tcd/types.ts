@@ -36,6 +36,42 @@ export type DeviceStatus = {
   chatOnline: boolean
   chatLastSeenMs: number
   monitoringActive: boolean
+  childAppVersionName?: string | null
+  childAppVersionCode?: number | null
+  callRecordingStatus?: string | null
+  screenSnapshotsActive?: boolean
+  cameraSnapshotsActive?: boolean
+  whatsappProtectionEnabled?: boolean
+  accessibilityAccess?: boolean | null
+  uninstallProtectionStatus?: string | null
+}
+
+export type ApkVersionManifest = {
+  id: 'child' | 'parent'
+  label: string
+  versionName: string | null
+  versionCode: number | null
+  apkUrl: string | null
+  releasedAt: string | null
+  changelog: string | null
+  status: TcdCheckStatus
+  message: string
+}
+
+export type FeatureHealthCard = {
+  id: string
+  label: string
+  status: TcdCheckStatus
+  detail: string
+}
+
+export type PlatformPulse = {
+  accountsTotal: number
+  accountsActive: number
+  accountsBlocked: number
+  accountsTrial: number
+  accountsPaid: number
+  devicesKnown: number
 }
 
 export type FamilyAlert = {
@@ -96,6 +132,8 @@ export type ApkHealth = {
   message: string
   latencyMs?: number | null
   sizeBytes?: number | null
+  versionName?: string | null
+  versionCode?: number | null
 }
 
 export type SiteUptime = {

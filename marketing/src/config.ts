@@ -5,10 +5,15 @@
 export const PARENT_WEB_URL = 'https://safechild-f34ac.web.app/'
 export const R2_MEDIA_PROXY_BASE_URL = 'https://sarechild-media-proxy.neuereatec.workers.dev'
 /** Bump when uploading new APKs to R2 so browsers/CDN pick up the new file. */
-export const APK_CACHE_BUST = 13
+export const APK_CACHE_BUST = 15
 /** Display versions — keep in sync with parent/child `versionName` in build.gradle.kts. */
-export const PARENT_APK_VERSION = '1.2.1'
-export const CHILD_APK_VERSION = '1.0.15'
+export const PARENT_APK_VERSION = '1.2.2'
+export const PARENT_APK_VERSION_CODE = 5
+export const CHILD_APK_VERSION = '1.0.36'
+export const CHILD_APK_VERSION_CODE = 39
+/** Hosted next to APKs on the media proxy — consumed by in-app update prompts + TCD. */
+export const CHILD_VERSION_MANIFEST_URL = `${R2_MEDIA_PROXY_BASE_URL}/downloads/child-version.json`
+export const PARENT_VERSION_MANIFEST_URL = `${R2_MEDIA_PROXY_BASE_URL}/downloads/parent-version.json`
 export const PARENT_APK_URL = `${R2_MEDIA_PROXY_BASE_URL}/downloads/parent.apk?v=${APK_CACHE_BUST}`
 export const CHILD_APK_URL = `${R2_MEDIA_PROXY_BASE_URL}/downloads/child.apk?v=${APK_CACHE_BUST}`
 export const GITHUB_REPO_URL = 'https://github.com/bbscalton/SareChild'
