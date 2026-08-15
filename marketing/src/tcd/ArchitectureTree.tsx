@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ArchNode, TcdCheck, TcdCheckStatus } from './types'
 
 /** Bump when architecture layout changes — visible in DOM for cache-bust verification */
-export const ARCH_LAYOUT_VERSION = 'arch-map-v5-20260801'
+export const ARCH_LAYOUT_VERSION = 'arch-map-v6-20260815'
 
 type NodeDef = {
   id: string
@@ -190,13 +190,12 @@ const NODES: NodeDef[] = [
     checkIds: ['google-maps'],
   },
   {
-    id: 'do-vps',
-    label: 'DigitalOcean droplet',
-    subtitle: 'TURN, staging, ffmpeg, backups — 107.170.15.179',
+    id: 'pc-xampp',
+    label: 'This PC (XAMPP)',
+    subtitle: 'Local archive via Cloudflare Worker',
     group: 'hosting',
     column: 'ops',
-    url: 'http://107.170.15.179:8080/',
-    checkIds: ['vps-turn', 'vps-staging'],
+    url: 'https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage/health.json',
   },
 ]
 
@@ -283,11 +282,10 @@ const FLOW_META: Record<FlowId, FlowMeta> = {
     hint: 'How parents watch a live camera feed from the child phone.',
     steps: [
       'Parent taps Start live view; a command reaches the child app.',
-      'Child streams camera/mic over WebRTC; restrictive NAT uses TURN on the DigitalOcean droplet.',
-      'Cloudflare Worker helps signaling; frames may archive to R2.',
+      'Child streams camera/mic over WebRTC; Cloudflare Worker helps signaling; frames may archive to R2.',
       'Parent viewer (app or web) connects to watch the stream in real time.',
     ],
-    nodeIds: ['parent-apk', 'parent-web', 'child-apk', 'do-vps', 'cf-worker', 'r2', 'fcm'],
+    nodeIds: ['parent-apk', 'parent-web', 'child-apk', 'cf-worker', 'r2', 'fcm'],
   },
   familyChat: {
     label: 'Family chat',
@@ -318,10 +316,10 @@ const FLOW_META: Record<FlowId, FlowMeta> = {
       'GitHub Actions builds the parent web app on push to main.',
       'Firebase Hosting serves the parent dashboard to browsers.',
       'Marketing site and this TCD console deploy to GitHub Pages.',
-      'DigitalOcean droplet hosts TURN + a staging copy of parent-web on :8080.',
+      'This PC (XAMPP) holds a local archive reached through a Cloudflare Worker.',
       'Hard-refresh after deploy to load the latest architecture map version.',
     ],
-    nodeIds: ['gh-pages', 'tcd', 'firebase-hosting', 'parent-web', 'do-vps'],
+    nodeIds: ['gh-pages', 'tcd', 'firebase-hosting', 'parent-web', 'pc-xampp'],
   },
 }
 

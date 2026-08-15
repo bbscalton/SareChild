@@ -18,7 +18,6 @@ const VPS_HOST = process.env.VPS_HOST?.trim() || "107.170.15.179";
 const VPS_HEALTH_URL =
   process.env.VPS_HEALTH_URL?.trim() || `http://${VPS_HOST}:8080/ops-health.json`;
 const VPS_STAGING_URL = process.env.VPS_STAGING_URL?.trim() || `http://${VPS_HOST}:8080/`;
-const DO_API_TOKEN = process.env.DO_API_TOKEN?.trim() || "";
 const XAMPP_STORAGE_URL = process.env.XAMPP_STORAGE_URL?.trim() || "";
 const XAMPP_STORAGE_SECRET = process.env.XAMPP_STORAGE_SECRET?.trim() || "";
 const XAMPP_LOCAL_HEALTH = "http://127.0.0.1/sarechild-storage/health.json";
@@ -148,7 +147,17 @@ function emptyFeatureMap(): Record<string, { docs: number; estimatedBytes: numbe
 }
 
 function jsonSafe<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  return JSON.parse(
+    JSON.stringify(value, (_key, v) => {
+      if (v === undefined) return null;
+      if (typeof v === "number" && !Number.isFinite(v)) return 0;
+      return v;
+    }),
+  ) as T;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function positiveOrDefault(raw: unknown, fallback: number): number {
@@ -178,7 +187,7 @@ async function r2Fetch(path: string, init: RequestInit = {}): Promise<Response |
   try {
     return await fetch(`${R2_PROXY_BASE}${path}`, {
       ...init,
-      signal: init.signal ?? AbortSignal.timeout(12_000),
+      signal: init.signal ?? AbortSignal.timeout(8_000),
       headers: {
         Authorization: `Bearer ${R2_PURGE_SECRET}`,
         "content-type": "application/json",
@@ -239,26 +248,15 @@ async function fetchFirebaseStorageUsage(): Promise<{
   truncated: boolean;
   error: string | null;
 }> {
-  try {
-    const bucket = admin.storage().bucket();
-    const [files, , api] = await bucket.getFiles({
-      prefix: "families/",
-      autoPaginate: false,
-      maxResults: 4000,
-    });
-    let bytes = 0;
-    for (const f of files) bytes += Number(f.metadata?.size ?? 0);
-    return {
-      bytes,
-      objects: files.length,
-      truncated: Boolean((api as { nextPageToken?: string } | undefined)?.nextPageToken),
-      error: null,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn("Firebase Storage listing failed", err);
-    return { bytes: 0, objects: 0, truncated: false, error: message };
-  }
+  // Media lives in Cloudflare R2. The default GCS bucket
+  // (safechild-f34ac.firebasestorage.app) does not exist — listing it
+  // only slowed dumps and added a 404 warning.
+  return {
+    bytes: 0,
+    objects: 0,
+    truncated: false,
+    error: "unused — child media is on Cloudflare R2, not Firebase Storage",
+  };
 }
 
 function joinXamppUrl(path: string): string {
@@ -408,53 +406,6 @@ async function tcpReachable(host: string, port: number, timeoutMs = 4000): Promi
   });
 }
 
-async function fetchDoDroplet(): Promise<Record<string, unknown>> {
-  if (!DO_API_TOKEN) {
-    return { configured: false, ip: VPS_HOST, message: "Set DO_API_TOKEN on Cloud Functions to load droplet metrics." };
-  }
-  try {
-    const res = await fetch("https://api.digitalocean.com/v2/droplets?per_page=200", {
-      headers: { Authorization: `Bearer ${DO_API_TOKEN}` },
-    });
-    if (!res.ok) {
-      return { configured: true, ip: VPS_HOST, error: `DigitalOcean API HTTP ${res.status}` };
-    }
-    const data = (await res.json()) as {
-      droplets?: Array<{
-        id: number;
-        name: string;
-        status: string;
-        memory: number;
-        vcpus: number;
-        disk: number;
-        region?: { slug?: string; name?: string };
-        size_slug?: string;
-        networks?: { v4?: Array<{ ip_address: string; type: string }>; };
-      }>;
-    };
-    const droplet = (data.droplets ?? []).find((d) =>
-      (d.networks?.v4 ?? []).some((n) => n.ip_address === VPS_HOST),
-    );
-    if (!droplet) {
-      return { configured: true, ip: VPS_HOST, error: `No droplet found with IP ${VPS_HOST}` };
-    }
-    return {
-      configured: true,
-      ip: VPS_HOST,
-      id: droplet.id,
-      name: droplet.name,
-      status: droplet.status,
-      memoryMb: droplet.memory,
-      vcpus: droplet.vcpus,
-      diskGb: droplet.disk,
-      region: droplet.region?.slug ?? droplet.region?.name,
-      size: droplet.size_slug,
-    };
-  } catch (err) {
-    return { configured: true, ip: VPS_HOST, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 async function countColSafe(ref: FirebaseFirestore.CollectionReference): Promise<number> {
   try {
     return await countCol(ref);
@@ -498,7 +449,10 @@ function accountSkeleton(opts: {
 }
 
 const MAX_FAMILIES_IN_DUMP = 80;
-const COUNT_BUDGET_MS = 22_000;
+const COUNT_BUDGET_MS = 12_000;
+const R2_DUMP_BUDGET_MS = 8_000;
+const MAX_DEVICES_COUNTED = 25;
+const PREFERRED_FAMILY_ID = "tS2mTEiFqoY76nq7ei1d";
 
 function emptyDumpShell(limits: StorageLimits, error: string | null, warnings: string[]): Record<string, unknown> {
   return {
@@ -543,23 +497,56 @@ function emptyDumpShell(limits: StorageLimits, error: string | null, warnings: s
   };
 }
 
+function applyR2Features(
+  features: ReturnType<typeof emptyFeatureMap>,
+  r2Fam: { features?: Record<string, { bytes: number; objects: number }> } | undefined,
+) {
+  if (!r2Fam) return;
+  for (const [feat, usage] of Object.entries(r2Fam.features ?? {})) {
+    const slot = features[feat] ?? (features[feat] = { docs: 0, estimatedBytes: 0, r2Bytes: 0, r2Objects: 0 });
+    slot.r2Bytes += Number(usage.bytes ?? 0);
+    slot.r2Objects += Number(usage.objects ?? 0);
+  }
+}
+
 export async function buildStorageDump(): Promise<Record<string, unknown>> {
   const warnings: string[] = [];
-  const [limits, r2Bundle, firebaseStorage, profilesSnap, familiesSnap, pcXampp] = await Promise.all([
+  const r2Started = fetchR2Dump().catch((err) => ({
+    r2: null as R2Dump | null,
+    d1: {} as Record<string, number>,
+    error: err instanceof Error ? err.message : String(err),
+  }));
+
+  const emptyProfiles = { docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] };
+  const emptyFamilies = { docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] };
+
+  // Never wait on R2 before listing families — a Worker timeout used to leave accounts=[].
+  const [limits, firebaseStorage, profilesSnap, familiesSnap, pcXampp] = await Promise.all([
     loadLimits(),
-    fetchR2Dump().catch((err) => ({
-      r2: null as R2Dump | null,
-      d1: {} as Record<string, number>,
-      error: err instanceof Error ? err.message : String(err),
-    })),
     fetchFirebaseStorageUsage(),
-    db.collection("parentProfiles").get(),
-    db.collection("families").get(),
+    db.collection("parentProfiles").limit(400).get().catch((err) => {
+      logger.warn("parentProfiles listing failed", err);
+      warnings.push("Could not list parentProfiles.");
+      return emptyProfiles;
+    }),
+    db.collection("families").limit(MAX_FAMILIES_IN_DUMP).get().catch((err) => {
+      logger.warn("families listing failed", err);
+      warnings.push("Could not list families.");
+      return emptyFamilies;
+    }),
     probeXamppHealth(4000),
   ]);
 
+  const r2Bundle = await Promise.race([
+    r2Started,
+    sleep(R2_DUMP_BUDGET_MS).then(() => ({
+      r2: null as R2Dump | null,
+      d1: {} as Record<string, number>,
+      error: "R2 dump timed out; family list is from Firestore. Refresh to retry R2 bytes.",
+    })),
+  ]);
+
   if (r2Bundle.error) warnings.push(`R2: ${r2Bundle.error}`);
-  if (firebaseStorage.error) warnings.push(`Firebase Storage: ${firebaseStorage.error}`);
   if (pcXampp.configured && pcXampp.error) warnings.push(`This PC (XAMPP): ${pcXampp.error}`);
 
   const emailByFamily = new Map<string, { uid: string; email: string }>();
@@ -569,14 +556,36 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     emailByFamily.set(familyId, { uid: p.id, email: (p.get("email") as string | undefined) || "" });
   }
 
-  const familyDocs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  const familyDocs = new Map<string, FirebaseFirestore.DocumentSnapshot>();
   for (const family of familiesSnap.docs) familyDocs.set(family.id, family);
 
-  const familyIds = [...new Set([...familyDocs.keys(), ...emailByFamily.keys()])];
+  if (!familyDocs.has(PREFERRED_FAMILY_ID) && !emailByFamily.has(PREFERRED_FAMILY_ID)) {
+    try {
+      const preferred = await db.collection("families").doc(PREFERRED_FAMILY_ID).get();
+      if (preferred.exists) familyDocs.set(PREFERRED_FAMILY_ID, preferred);
+    } catch (err) {
+      logger.warn("preferred family fetch failed", err);
+    }
+  }
+
+  let familyIds = [...new Set([...familyDocs.keys(), ...emailByFamily.keys()])];
+  if (!familyIds.includes(PREFERRED_FAMILY_ID) && familyDocs.has(PREFERRED_FAMILY_ID)) {
+    familyIds = [PREFERRED_FAMILY_ID, ...familyIds];
+  }
   if (familyIds.length > MAX_FAMILIES_IN_DUMP) {
     warnings.push(`Truncated to ${MAX_FAMILIES_IN_DUMP} of ${familyIds.length} families for this dump`);
   }
-  const ids = familyIds.slice(0, MAX_FAMILIES_IN_DUMP);
+  const preferredFirst = familyIds.includes(PREFERRED_FAMILY_ID)
+    ? [PREFERRED_FAMILY_ID, ...familyIds.filter((id) => id !== PREFERRED_FAMILY_ID)]
+    : familyIds;
+  const ids = preferredFirst.slice(0, MAX_FAMILIES_IN_DUMP);
+
+  logger.info("buildStorageDump listed families", {
+    familyCount: familyIds.length,
+    profileCount: profilesSnap.docs.length,
+    r2Reachable: Boolean(r2Bundle.r2),
+    r2Error: r2Bundle.error ?? null,
+  });
 
   const r2Families = r2Bundle.r2?.families ?? {};
   const accounts: Array<Record<string, unknown>> = [];
@@ -585,62 +594,67 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
   const countsStarted = Date.now();
 
   for (const familyId of ids) {
-    if (Date.now() - countsStarted > COUNT_BUDGET_MS) {
-      countsTruncated = true;
-      break;
-    }
     const family = familyDocs.get(familyId);
-    const familyRef = family?.ref ?? db.collection("families").doc(familyId);
+    const owner = emailByFamily.get(familyId);
+    const r2Fam = r2Families[familyId];
     const features = emptyFeatureMap();
+    applyR2Features(features, r2Fam);
     let docs = 0;
-    const familyCounts = await Promise.all(FAMILY_COUNT_COLS.map(async (col) => ({ col, n: await countColSafe(familyRef.collection(col)) })));
-    for (const { col, n } of familyCounts) {
-      docs += n;
-      const feat = COL_TO_FEATURE[col] ?? "other";
-      features[feat].docs += n;
-      features[feat].estimatedBytes += n * ESTIMATE_BYTES_PER_DOC;
-    }
-    let devicesSnap: FirebaseFirestore.QuerySnapshot | { docs: FirebaseFirestore.QueryDocumentSnapshot[]; size: number } = {
-      docs: [],
-      size: 0,
-    };
-    try {
-      devicesSnap = await familyRef.collection("devices").get();
-    } catch (err) {
-      logger.warn(`devices listing failed for ${familyId}`, err);
-    }
-    const deviceCounts = await Promise.all(
-      devicesSnap.docs.map(async (device) => {
-        const cols = await Promise.all(DEVICE_COUNT_COLS.map(async (col) => ({ col, n: await countColSafe(device.ref.collection(col)) })));
-        return { device, cols };
-      }),
-    );
-    for (const { cols } of deviceCounts) {
-      for (const { col, n } of cols) {
-        docs += n;
-        const feat = COL_TO_FEATURE[col] ?? "other";
-        features[feat].docs += n;
-        features[feat].estimatedBytes += n * ESTIMATE_BYTES_PER_DOC;
+    let childNames: string[] = [];
+    let deviceCount = 0;
+    const budgetLeft = COUNT_BUDGET_MS - (Date.now() - countsStarted);
+    if (budgetLeft < 400) {
+      countsTruncated = true;
+    } else {
+      const familyRef = family?.ref ?? db.collection("families").doc(familyId);
+      try {
+        const familyCounts = await Promise.all(
+          FAMILY_COUNT_COLS.map(async (col) => ({ col, n: await countColSafe(familyRef.collection(col)) })),
+        );
+        for (const { col, n } of familyCounts) {
+          docs += n;
+          const feat = COL_TO_FEATURE[col] ?? "other";
+          features[feat].docs += n;
+          features[feat].estimatedBytes += n * ESTIMATE_BYTES_PER_DOC;
+        }
+      } catch (err) {
+        logger.warn(`family collection counts failed for ${familyId}`, err);
+      }
+      try {
+        const devicesSnap = await familyRef.collection("devices").limit(MAX_DEVICES_COUNTED).get();
+        deviceCount = devicesSnap.size;
+        childNames = devicesSnap.docs.map((d) => (d.get("childName") as string | undefined) || d.id);
+        if (Date.now() - countsStarted < COUNT_BUDGET_MS) {
+          const deviceCounts = await Promise.all(
+            devicesSnap.docs.map(async (device) => {
+              const cols = await Promise.all(
+                DEVICE_COUNT_COLS.map(async (col) => ({ col, n: await countColSafe(device.ref.collection(col)) })),
+              );
+              return cols;
+            }),
+          );
+          for (const cols of deviceCounts) {
+            for (const { col, n } of cols) {
+              docs += n;
+              const feat = COL_TO_FEATURE[col] ?? "other";
+              features[feat].docs += n;
+              features[feat].estimatedBytes += n * ESTIMATE_BYTES_PER_DOC;
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn(`devices listing failed for ${familyId}`, err);
       }
     }
     firestoreDocs += docs;
-    const r2Fam = r2Families[familyId];
-    if (r2Fam) {
-      for (const [feat, usage] of Object.entries(r2Fam.features ?? {})) {
-        const slot = features[feat] ?? (features[feat] = { docs: 0, estimatedBytes: 0, r2Bytes: 0, r2Objects: 0 });
-        slot.r2Bytes += usage.bytes;
-        slot.r2Objects += usage.objects;
-      }
-    }
-    const owner = emailByFamily.get(familyId);
     const override = Number(family?.get("storageBytesMax") ?? 0);
     accounts.push(
       accountSkeleton({
         familyId,
         parentUid: owner?.uid || (family?.get("parentUid") as string | undefined) || null,
         email: owner?.email || (family?.get("parentEmail") as string | undefined) || "",
-        childNames: devicesSnap.docs.map((d) => (d.get("childName") as string | undefined) || d.id),
-        deviceCount: devicesSnap.size,
+        childNames,
+        deviceCount,
         features,
         firestoreDocs: docs,
         r2Bytes: Number(r2Fam?.bytes ?? 0),
@@ -654,38 +668,6 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
 
   if (countsTruncated) {
     warnings.push("Doc counts timed out; remaining families are listed with R2 bytes only so Clear/Reset still works.");
-    const seen = new Set(accounts.map((a) => String(a.familyId)));
-    for (const familyId of ids) {
-      if (seen.has(familyId)) continue;
-      const family = familyDocs.get(familyId);
-      const owner = emailByFamily.get(familyId);
-      const r2Fam = r2Families[familyId];
-      const features = emptyFeatureMap();
-      if (r2Fam) {
-        for (const [feat, usage] of Object.entries(r2Fam.features ?? {})) {
-          const slot = features[feat] ?? (features[feat] = { docs: 0, estimatedBytes: 0, r2Bytes: 0, r2Objects: 0 });
-          slot.r2Bytes += usage.bytes;
-          slot.r2Objects += usage.objects;
-        }
-      }
-      const override = Number(family?.get("storageBytesMax") ?? 0);
-      accounts.push(
-        accountSkeleton({
-          familyId,
-          parentUid: owner?.uid || (family?.get("parentUid") as string | undefined) || null,
-          email: owner?.email || (family?.get("parentEmail") as string | undefined) || "",
-          childNames: [],
-          deviceCount: 0,
-          features,
-          firestoreDocs: 0,
-          r2Bytes: Number(r2Fam?.bytes ?? 0),
-          r2Objects: Number(r2Fam?.objects ?? 0),
-          estimatedBytes: 0,
-          accountBytesMax: override > 0 ? override : limits.defaultAccountBytesMax,
-          storageBlocked: Boolean(family?.get("storageBlocked")),
-        }),
-      );
-    }
   }
 
   accounts.sort((a, b) => Number(b.usedBytes) - Number(a.usedBytes));
@@ -712,7 +694,7 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     backends: {
       r2: {
         reachable: Boolean(r2Bundle.r2),
-        error: r2Bundle.error,
+        error: r2Bundle.error ?? null,
         bytes: r2Bytes,
         objects: Number(r2Bundle.r2?.objects ?? 0),
         truncated: Boolean(r2Bundle.r2?.truncated),
@@ -728,14 +710,14 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
         bytes: firebaseStorage.bytes,
         objects: firebaseStorage.objects,
         truncated: firebaseStorage.truncated,
-        error: firebaseStorage.error,
+        error: firebaseStorage.error ?? null,
       },
-      d1: r2Bundle.d1,
+      d1: r2Bundle.d1 ?? {},
       kv: { note: "Edge cache flags only — not billed per object." },
       pcXampp: {
         reachable: pcXampp.reachable,
         configured: pcXampp.configured,
-        error: pcXampp.error,
+        error: pcXampp.error ?? null,
         bytes: pcXampp.bytes,
         files: pcXampp.files,
         diskUsedBytes: pcXampp.diskUsedBytes,
@@ -763,14 +745,20 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     },
   };
 
+  logger.info("buildStorageDump complete", {
+    accounts: accounts.length,
+    firestoreDocs,
+    r2Bytes,
+    warningCount: warnings.length,
+  });
+
   const safe = jsonSafe(dump);
   try {
     await db.collection("adminConfig").doc("storageDump").set(safe);
   } catch (err) {
     logger.warn("storageDump persist skipped", err);
     const persistNote = "Could not cache dump in Firestore (response still includes live accounts).";
-    const nextWarnings = [...warnings, persistNote];
-    (safe as { warnings: string[] }).warnings = nextWarnings;
+    (safe as { warnings: string[] }).warnings = [...warnings, persistNote];
   }
   return jsonSafe(safe);
 }
@@ -1035,54 +1023,11 @@ function probeFailureNote(
 
 export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, async (request) => {
   assertProjectAdmin(request);
-  const [health, staging, turn, doMeta, pcHealth] = await Promise.all([
-    probeUrl(VPS_HEALTH_URL, 4000),
-    probeUrl(VPS_STAGING_URL, 4000),
-    tcpReachable(VPS_HOST, 3478, 2500),
-    fetchDoDroplet(),
-    probeXamppHealth(4000),
-  ]);
-  return {
+  const includeLegacyDroplet = Boolean((request.data as { includeLegacyDroplet?: boolean } | undefined)?.includeLegacyDroplet);
+  const pcHealth = await probeXamppHealth(4000);
+  const payload: Record<string, unknown> = {
     takenAtMs: Date.now(),
-    droplet: {
-      provider: "digitalocean",
-      host: VPS_HOST,
-      roles: [
-        { id: "coturn", label: "WebRTC TURN/STUN", detail: `turn:${VPS_HOST}:3478 — live viewing NAT relay (UDP/TCP; GCF TCP is not the only health signal)` },
-        { id: "staging", label: "Parent-web staging", detail: `${VPS_STAGING_URL} — HTTP only; HTTPS TCD cannot probe this URL (mixed content)` },
-        { id: "apk-mirror", label: "APK download mirror", detail: "nginx /downloads → Cloudflare R2 proxy" },
-        { id: "ffmpeg", label: "ffmpeg media worker", detail: "/opt/sarechild/media-worker" },
-        { id: "backups", label: "Firestore backup templates", detail: "/opt/sarechild/backup" },
-        { id: "health-cron", label: "Outbound health cron", detail: "every 5 min → parent-web + R2 /platform-health" },
-        { id: "runner", label: "Optional GitHub Actions runner", detail: "self-hosted label sarechild-vps" },
-        { id: "uptime-kuma", label: "Optional Uptime Kuma", detail: "127.0.0.1:3001 via SSH tunnel" },
-      ],
-      probes: {
-        opsHealth: {
-          ...health,
-          inconclusive: !health.ok && health.status == null,
-          note: probeFailureNote("http-private", health),
-        },
-        staging: {
-          ...staging,
-          inconclusive: !staging.ok && staging.status == null,
-          note: probeFailureNote("http-private", staging),
-        },
-        turn3478: {
-          ...turn,
-          inconclusive: !turn.ok,
-          note: probeFailureNote("tcp-turn", { ok: turn.ok, status: null, body: turn.ok ? undefined : { error: "tcp connect failed" } }),
-        },
-      },
-      mixedContentNote:
-        "TCD on GitHub Pages is served over HTTPS. The droplet staging site and ops-health.json are HTTP on :8080, so the browser blocks those fetches (mixed content). Cloud Functions can use HTTP; if those probes also fail, GCP egress or the droplet firewall is blocking 107.170.15.179:8080/:3478. Confirm staging in a separate HTTP tab or over SSH.",
-      digitalocean: doMeta,
-      agentInstalled: Boolean(health.ok && health.body && typeof health.body === "object"),
-      installHint:
-        "If ops health JSON is missing, run scripts/vps/install-ops-health.sh on the droplet (see docs/VPS_OPS.md). A TCD browser fetch of http://107.170.15.179:8080/ops-health.json will always fail from HTTPS Pages.",
-      docs: "docs/VPS_OPS.md",
-      consoleUrl: "https://cloud.digitalocean.com/droplets",
-    },
+    droplet: null,
     cloudflare: {
       r2Bucket: "luscsl-uploads",
       worker: R2_PROXY_BASE,
@@ -1090,7 +1035,7 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, as
     },
     firebase: {
       projectId: process.env.GCLOUD_PROJECT || "safechild-f34ac",
-      storageBucket: admin.storage().bucket().name,
+      storageBucket: "unused (media is on Cloudflare R2)",
     },
     pc: {
       provider: "xampp",
@@ -1110,20 +1055,15 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, as
           label: "Local archive folder",
           detail: `${XAMPP_INSTALL_PATH}\\store — TCD can list/clear via Functions when a tunnel URL is set`,
         },
-        {
-          id: "optional-staging",
-          label: "Optional Apache staging mirror",
-          detail: "Copy parent-web dist into C:\\xampp2\\htdocs if you want HTTP staging on this PC. TURN/coturn is not installed on Windows.",
-        },
       ],
       reachableFromFunctions: pcHealth.reachable,
       probe: {
         ok: pcHealth.reachable,
         status: pcHealth.reachable ? 200 : null,
         latencyMs: pcHealth.latencyMs ?? 0,
-        body: pcHealth.body,
+        body: pcHealth.body ?? null,
         inconclusive: !pcHealth.reachable && !XAMPP_STORAGE_URL,
-        note: pcHealth.error,
+        note: pcHealth.error ?? null,
       },
       disk: pcHealth.reachable
         ? {
@@ -1137,12 +1077,52 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, as
           }
         : null,
       mixedContentNote:
-        "TCD on GitHub Pages is HTTPS. The browser cannot call http://127.0.0.1 or http://192.168.x.x (mixed content). Cloud Functions also cannot see this PC's localhost. Publish Apache with Cloudflare Tunnel (cloudflared is already running as a Windows service) and set XAMPP_STORAGE_URL to that HTTPS hostname.",
+        "TCD on GitHub Pages is HTTPS. The browser cannot call http://127.0.0.1 (mixed content). Cloud Functions reach this PC through Cloudflare (free) at https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage (Worker → this PC PHP/Apache).",
       tunnelHint:
-        "Zero Trust → Tunnels → add a public hostname on tunnel `sarechild-xampp` (or `net`), service http://127.0.0.1:80 path /sarechild-storage* OR http://127.0.0.1:8787. A trycloudflare.com URL works immediately but changes when that process restarts. Port 80 on the ISP IP is blocked by NAT — never use http://127.0.0.1 in Functions env.",
+        "Cloudflare Tunnel (free) → this PC Apache. Live health: https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage/health.json. Live child media stays on R2.",
       mediaNote: pcHealth.mediaNote,
     },
   };
+
+  // Default OFF. DigitalOcean is unused; do not require DO_API_TOKEN.
+  if (includeLegacyDroplet) {
+    const [health, staging, turn] = await Promise.all([
+      probeUrl(VPS_HEALTH_URL, 2500),
+      probeUrl(VPS_STAGING_URL, 2500),
+      tcpReachable(VPS_HOST, 3478, 1500),
+    ]);
+    payload.droplet = {
+      unused: true,
+      provider: "legacy",
+      host: VPS_HOST,
+      note: "Legacy droplet unused. Not a storage backend.",
+      probes: {
+        opsHealth: {
+          ...health,
+          body: health.body ?? null,
+          inconclusive: !health.ok && health.status == null,
+          note: probeFailureNote("http-private", health),
+        },
+        staging: {
+          ...staging,
+          body: staging.body ?? null,
+          inconclusive: !staging.ok && staging.status == null,
+          note: probeFailureNote("http-private", staging),
+        },
+        turn3478: {
+          ...turn,
+          inconclusive: !turn.ok,
+          note: probeFailureNote("tcp-turn", {
+            ok: turn.ok,
+            status: null,
+            body: turn.ok ? null : { error: "tcp connect failed" },
+          }),
+        },
+      },
+    };
+  }
+
+  return jsonSafe(payload);
 });
 
 export const adminManagePcStorage = onCall({ cors: true, timeoutSeconds: 60 }, async (request) => {

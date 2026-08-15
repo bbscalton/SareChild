@@ -336,22 +336,24 @@ export type InfraProbe = {
 
 export type InfraStatus = {
   takenAtMs: number
-  droplet: {
+  droplet?: {
     provider: string
     host: string
-    roles: Array<{ id: string; label: string; detail: string }>
+    unused?: boolean
+    note?: string
+    roles?: Array<{ id: string; label: string; detail: string }>
     probes: {
       opsHealth: InfraProbe
       staging: InfraProbe
       turn3478: { ok: boolean; latencyMs: number; inconclusive?: boolean; note?: string | null }
     }
     mixedContentNote?: string
-    digitalocean: Record<string, unknown>
-    agentInstalled: boolean
-    installHint: string
-    docs: string
-    consoleUrl: string
-  }
+    digitalocean?: Record<string, unknown>
+    agentInstalled?: boolean
+    installHint?: string
+    docs?: string
+    consoleUrl?: string
+  } | null
   cloudflare: { r2Bucket: string; worker: string; d1: string }
   firebase: { projectId: string; storageBucket: string }
   pc?: {
