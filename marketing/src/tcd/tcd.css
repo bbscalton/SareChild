@@ -1932,3 +1932,53 @@
     grid-template-columns: 1fr;
   }
 }
+
+.tcd-storage {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.tcd-storage-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-top: 0.35rem;
+  min-width: 4.5rem;
+}
+
+.tcd-storage-bar span {
+  display: block;
+  height: 100%;
+  background: #7ec8a3;
+}
+
+.row-blocked .tcd-storage-bar span {
+  background: #d27a62;
+}
+
+.tcd-vps-roles {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.tcd-vps-roles li {
+  display: grid;
+  gap: 0.1rem;
+  font-size: 0.88rem;
+}
+
+.tcd-vps-roles span {
+  color: var(--muted, #8b93a7);
+  font-size: 0.8rem;
+}
+
+.tcd-vps-probes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
