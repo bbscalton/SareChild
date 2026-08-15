@@ -504,14 +504,35 @@ export async function adminSetStorageLimits(payload: {
 }
 
 export async function adminClearStorage(payload: {
-  scope: 'feature' | 'account' | 'platform'
+  scope: 'feature' | 'account' | 'platform' | 'pc-store'
   familyId?: string
   feature?: string
   confirm?: string
-}): Promise<{ docs: number; media: number; families?: number }> {
-  const res = await callable<typeof payload, { docs: number; media: number; families?: number }>('adminClearStorage')(
-    payload,
-  )
+}): Promise<{ docs: number; media: number; families?: number; deletedBytes?: number; storePath?: string }> {
+  const res = await callable<
+    typeof payload,
+    { docs: number; media: number; families?: number; deletedBytes?: number; storePath?: string }
+  >('adminClearStorage')(payload)
+  return res.data
+}
+
+export async function adminManagePcStorage(action: 'health' | 'list' | 'clear', confirm?: string) {
+  const res = await callable<
+    { action: string; confirm?: string },
+    {
+      ok?: boolean
+      files?: Array<{ path: string; bytes: number; mtimeMs: number }>
+      storeBytes?: number
+      storeFiles?: number
+      storePath?: string
+      deletedFiles?: number
+      deletedBytes?: number
+      reachable?: boolean
+      error?: string | null
+      diskUsedBytes?: number
+      diskTotalBytes?: number
+    }
+  >('adminManagePcStorage')({ action, confirm })
   return res.data
 }
 

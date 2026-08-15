@@ -65,6 +65,8 @@ export function AdminStoragePanel({
   const [familyIdInput, setFamilyIdInput] = useState(PREFERRED_FAMILY_ID)
   const [confirmText, setConfirmText] = useState('')
   const [search, setSearch] = useState('')
+  const [pcFiles, setPcFiles] = useState<Array<{ path: string; bytes: number; mtimeMs: number }>>([])
+  const [pcListNote, setPcListNote] = useState<string | null>(null)
 
   const applyDump = (storage: StorageDump) => {
     setDump(storage)
@@ -258,9 +260,51 @@ export function AdminStoragePanel({
   }
 
   const droplet = infra?.droplet
+  const pc = infra?.pc
   const agent = droplet?.probes.opsHealth.body as Record<string, unknown> | undefined
   const disk = agent?.disk as { usedBytes?: number; totalBytes?: number; percent?: string } | undefined
   const services = agent?.services as Record<string, boolean> | undefined
+  const pcDisk = pc?.disk
+  const pcBackend = dump?.backends.pcXampp
+
+  const listPcStore = async () => {
+    onBusy(true)
+    onError(null)
+    setPcListNote(null)
+    try {
+      const result = await adminRepo.adminManagePcStorage('list')
+      setPcFiles(result.files ?? [])
+      setPcListNote(
+        `${result.storeFiles ?? result.files?.length ?? 0} files · ${fmtBytes(result.storeBytes)} in ${result.storePath || 'store/'}`,
+      )
+      onStatus('PC archive listed.')
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not list the PC store')
+    } finally {
+      onBusy(false)
+    }
+  }
+
+  const clearPcStore = async () => {
+    if (confirmText !== 'CLEAR-PC-STORE') {
+      onError('Type CLEAR-PC-STORE to wipe files under C:\\xampp2\\htdocs\\sarechild-storage\\store (R2 is not touched).')
+      return
+    }
+    onBusy(true)
+    onError(null)
+    try {
+      const result = await adminRepo.adminClearStorage({ scope: 'pc-store', confirm: 'CLEAR-PC-STORE' })
+      setConfirmText('')
+      setPcFiles([])
+      onStatus(
+        `PC archive cleared: ${result.media} files (${fmtBytes(result.deletedBytes)}). Path ${result.storePath || 'store/'}.`,
+      )
+      await load('Dump refreshed after PC store clear.')
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'PC store clear failed')
+      onBusy(false)
+    }
+  }
 
   return (
     <div className="tcd-storage">
@@ -268,8 +312,9 @@ export function AdminStoragePanel({
         <div>
           <h2>Storage &amp; infrastructure</h2>
           <p className="muted small">
-            Dump of what each backend is storing: Cloudflare R2, Firestore, Firebase Storage, D1, and the DigitalOcean
-            droplet. Caps stop a single parent account from filling the platform.
+            Dump of what each backend is storing: Cloudflare R2 (live media), Firestore, Firebase Storage, D1, the
+            DigitalOcean droplet, and this Windows PC (XAMPP local archive). Live child uploads still go to R2 /
+            Firestore — the PC folder is ops health plus an archive you can list and clear.
           </p>
         </div>
         <button className="btn btn-primary compact" type="button" disabled={busy} onClick={() => void load('Dump refreshed.')}>
@@ -315,6 +360,17 @@ export function AdminStoragePanel({
             {dump?.totals.overLimitCount ?? 0}
           </p>
           <p className="tcd-pulse-meta">{dump?.totals.accountCount ?? 0} parent accounts scanned</p>
+        </article>
+        <article className="tcd-pulse-card">
+          <p className="tcd-pulse-eyebrow">This PC (XAMPP)</p>
+          <p className="tcd-pulse-value">
+            {pcDisk ? fmtBytes(pcDisk.usedBytes) : pcBackend?.diskUsedBytes ? fmtBytes(pcBackend.diskUsedBytes) : '—'}
+          </p>
+          <p className="tcd-pulse-meta">
+            {pc?.reachableFromFunctions || pcBackend?.reachable
+              ? `of ${fmtBytes(pcDisk?.totalBytes ?? pcBackend?.diskTotalBytes)} on ${pcDisk?.drive ?? pcBackend?.drive ?? 'C:'}`
+              : 'Not reachable from Cloud Functions yet'}
+          </p>
         </article>
       </div>
 
@@ -387,6 +443,89 @@ export function AdminStoragePanel({
             Staging site
           </a>
         </p>
+      </div>
+
+      <div className="tcd-card tcd-card-wide">
+        <div className="tcd-card-head">
+          <h2>This PC (XAMPP)</h2>
+          <span className="tcd-card-timestamp">{pc?.installPath ?? 'C:\\xampp2\\htdocs\\sarechild-storage'}</span>
+        </div>
+        <p className="muted small">
+          Apache on this Windows PC is a <strong>local archive + disk dump</strong>, not the live media bucket. Child
+          devices still upload to Cloudflare R2 and Firestore. TURN/coturn stays on the DigitalOcean droplet — it was
+          not installed on Windows. Apache can host a staging copy later if you drop parent-web into htdocs.
+        </p>
+        <ul className="tcd-vps-roles">
+          {(pc?.roles ?? []).map((r) => (
+            <li key={r.id}>
+              <strong>{r.label}</strong>
+              <span>{r.detail}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="tcd-vps-probes">
+          <span className={`pill tcd-${pc?.reachableFromFunctions ? 'ok' : pc?.probe.inconclusive ? 'warn' : 'fail'}`}>
+            {pc?.reachableFromFunctions
+              ? `Functions reached health.json (${pc.probe.latencyMs} ms)`
+              : pc?.publicUrl
+                ? 'Functions could not reach the tunnel URL'
+                : 'XAMPP_STORAGE_URL not set on Functions'}
+          </span>
+          <span className={`pill tcd-${pc?.secretConfigured ? 'ok' : 'warn'}`}>
+            {pc?.secretConfigured ? 'Clear-store secret configured' : 'Set XAMPP_STORAGE_SECRET to list/clear'}
+          </span>
+        </div>
+        {pcDisk && (
+          <p className="muted small" style={{ marginTop: '0.75rem' }}>
+            Drive {pcDisk.drive} {fmtBytes(pcDisk.usedBytes)} / {fmtBytes(pcDisk.totalBytes)} ({pcDisk.percent}%) ·
+            archive {fmtBytes(pcDisk.storeBytes)} ({pcDisk.storeFiles} files)
+          </p>
+        )}
+        <p className="muted small" style={{ marginTop: '0.75rem' }}>
+          {pc?.mixedContentNote ||
+            'GitHub Pages is HTTPS, so this tab cannot fetch http://127.0.0.1/sarechild-storage (mixed content). Open that URL in a separate tab on this PC. Cloud Functions also cannot see the PC loopback — a Cloudflare Tunnel hostname is required.'}
+        </p>
+        {pc?.probe.note && <p className="muted small">{pc.probe.note}</p>}
+        {pc?.tunnelHint && <p className="muted small">{pc.tunnelHint}</p>}
+        <p className="muted small">
+          Local health (this PC only):{' '}
+          <a href={pc?.localHealthUrl ?? 'http://127.0.0.1/sarechild-storage/health.json'} target="_blank" rel="noreferrer">
+            {pc?.localHealthUrl ?? 'http://127.0.0.1/sarechild-storage/health.json'}
+          </a>
+          {' · '}
+          Folder <code>{pcDisk?.storePath ?? pcBackend?.storePath ?? 'C:\\xampp2\\htdocs\\sarechild-storage\\store'}</code>
+        </p>
+        <div className="tcd-system-actions" style={{ marginTop: '0.75rem' }}>
+          <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void listPcStore()}>
+            List PC archive
+          </button>
+          <button className="btn btn-ghost compact danger" type="button" disabled={busy} onClick={() => void clearPcStore()}>
+            Clear PC archive
+          </button>
+        </div>
+        {pcListNote && <p className="muted small">{pcListNote}</p>}
+        {pcFiles.length > 0 && (
+          <div className="tcd-table-wrap" style={{ marginTop: '0.75rem' }}>
+            <table className="tcd-admin-table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Size</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pcFiles.map((f) => (
+                  <tr key={f.path}>
+                    <td>
+                      <code>{f.path}</code>
+                    </td>
+                    <td>{fmtBytes(f.bytes)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="tcd-card tcd-card-wide">
@@ -577,7 +716,7 @@ export function AdminStoragePanel({
               <input
                 type="text"
                 autoComplete="off"
-                placeholder="CLEAR-ACCOUNT / FACTORY-RESET / RESET-PLATFORM"
+                placeholder="CLEAR-ACCOUNT / FACTORY-RESET / RESET-PLATFORM / CLEAR-PC-STORE"
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
               />

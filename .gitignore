@@ -23,3 +23,8 @@ r2-proxy/.wrangler/
 r2-proxy/dist-worker/
 .wrangler/
 *.log
+
+.vps-root-password
+pc-storage/.secret
+pc-storage/store/**
+!pc-storage/store/.htaccess

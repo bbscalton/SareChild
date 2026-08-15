@@ -1,0 +1,12 @@
+RewriteEngine On
+RewriteRule ^health\.json$ health.php [L]
+
+<Files ".secret">
+  Require all denied
+</Files>
+<Files "secret.php">
+  Require all denied
+</Files>
+<Files "lib.php">
+  Require all denied
+</Files>

@@ -30,6 +30,7 @@ export {
   adminClearStorage,
   adminFactoryResetAccount,
   adminGetInfraStatus,
+  adminManagePcStorage,
   enforceStorageLimits,
 } from "./storageOps";
 export {

@@ -19,6 +19,10 @@ const VPS_HEALTH_URL =
   process.env.VPS_HEALTH_URL?.trim() || `http://${VPS_HOST}:8080/ops-health.json`;
 const VPS_STAGING_URL = process.env.VPS_STAGING_URL?.trim() || `http://${VPS_HOST}:8080/`;
 const DO_API_TOKEN = process.env.DO_API_TOKEN?.trim() || "";
+const XAMPP_STORAGE_URL = process.env.XAMPP_STORAGE_URL?.trim() || "";
+const XAMPP_STORAGE_SECRET = process.env.XAMPP_STORAGE_SECRET?.trim() || "";
+const XAMPP_LOCAL_HEALTH = "http://127.0.0.1/sarechild-storage/health.json";
+const XAMPP_INSTALL_PATH = "C:\\xampp2\\htdocs\\sarechild-storage";
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -257,6 +261,118 @@ async function fetchFirebaseStorageUsage(): Promise<{
   }
 }
 
+function joinXamppUrl(path: string): string {
+  const base = XAMPP_STORAGE_URL.replace(/\/+$/, "");
+  return `${base}/${path.replace(/^\/+/, "")}`;
+}
+
+function gcfCannotReachReason(raw: string): string | null {
+  if (!raw) {
+    return "XAMPP_STORAGE_URL is not set. Cloud Functions cannot see http://127.0.0.1 on this PC.";
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return "XAMPP_STORAGE_URL is not a valid URL.";
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) {
+    return "Cloud Functions run in Google Cloud. localhost is not the Windows PC — use a Cloudflare Tunnel HTTPS hostname.";
+  }
+  const m = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) {
+      return "XAMPP_STORAGE_URL is a private LAN address. GCP cannot reach RFC1918. Publish Apache via Cloudflare Tunnel (cloudflared is already installed).";
+    }
+  }
+  return null;
+}
+
+function emptyPcBackend(error: string | null) {
+  return {
+    reachable: false,
+    configured: Boolean(XAMPP_STORAGE_URL),
+    error,
+    bytes: 0,
+    files: 0,
+    diskUsedBytes: 0,
+    diskTotalBytes: 0,
+    diskPercent: 0,
+    drive: "C:",
+    storePath: XAMPP_INSTALL_PATH + "\\store",
+    publicUrl: XAMPP_STORAGE_URL || null,
+    localHealthUrl: XAMPP_LOCAL_HEALTH,
+    mediaNote:
+      "This PC folder is a local archive. Live child-device media still lives in Cloudflare R2 and Firestore unless you copy files here.",
+  };
+}
+
+async function probeXamppHealth(timeoutMs = 5000): Promise<ReturnType<typeof emptyPcBackend> & { body?: unknown; latencyMs?: number }> {
+  const blocked = gcfCannotReachReason(XAMPP_STORAGE_URL);
+  if (blocked) {
+    return { ...emptyPcBackend(blocked), latencyMs: 0 };
+  }
+  const url = joinXamppUrl("health.json");
+  const probe = await probeUrl(url, timeoutMs);
+  const body = probe.body && typeof probe.body === "object" ? (probe.body as Record<string, unknown>) : null;
+  const disk = (body?.disk as { usedBytes?: number; totalBytes?: number; percent?: number } | undefined) || {};
+  if (!probe.ok || !body) {
+    const err =
+      typeof body?.error === "string"
+        ? body.error
+        : probe.status == null
+          ? `Functions could not reach ${url}`
+          : `HTTP ${probe.status} from XAMPP health`;
+    return { ...emptyPcBackend(err), latencyMs: probe.latencyMs, body: probe.body };
+  }
+  return {
+    reachable: true,
+    configured: true,
+    error: null,
+    bytes: Number(body.storeBytes ?? 0),
+    files: Number(body.storeFiles ?? 0),
+    diskUsedBytes: Number(disk.usedBytes ?? 0),
+    diskTotalBytes: Number(disk.totalBytes ?? 0),
+    diskPercent: Number(disk.percent ?? 0),
+    drive: String((disk as { drive?: string }).drive ?? "C:"),
+    storePath: String(body.storePath ?? XAMPP_INSTALL_PATH + "\\store"),
+    publicUrl: XAMPP_STORAGE_URL,
+    localHealthUrl: XAMPP_LOCAL_HEALTH,
+    mediaNote: String(body.mediaNote ?? emptyPcBackend(null).mediaNote),
+    body,
+    latencyMs: probe.latencyMs,
+  };
+}
+
+async function xamppStorageRequest(action: "list" | "clear", extra?: Record<string, string>): Promise<Record<string, unknown>> {
+  const blocked = gcfCannotReachReason(XAMPP_STORAGE_URL);
+  if (blocked) {
+    throw new HttpsError("failed-precondition", blocked);
+  }
+  if (!XAMPP_STORAGE_SECRET) {
+    throw new HttpsError("failed-precondition", "XAMPP_STORAGE_SECRET is not set on Cloud Functions.");
+  }
+  const url = joinXamppUrl(`api.php?action=${action}`);
+  const res = await fetch(url, {
+    method: action === "clear" ? "POST" : "GET",
+    headers: {
+      "X-SareChild-Storage-Key": XAMPP_STORAGE_SECRET,
+      "Content-Type": "application/json",
+    },
+    body: action === "clear" ? JSON.stringify({ confirm: extra?.confirm ?? "CLEAR-PC-STORE" }) : undefined,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const msg = typeof data.error === "string" ? data.error : `XAMPP API HTTP ${res.status}`;
+    throw new HttpsError(res.status === 401 ? "permission-denied" : "unavailable", msg);
+  }
+  return data;
+}
+
 async function probeUrl(url: string, timeoutMs = 8000): Promise<{ ok: boolean; status: number | null; latencyMs: number; body?: unknown }> {
   const started = Date.now();
   try {
@@ -406,6 +522,7 @@ function emptyDumpShell(limits: StorageLimits, error: string | null, warnings: s
       firebaseStorage: { bytes: 0, objects: 0, truncated: false, error: null },
       d1: {},
       kv: { note: "Edge cache flags only — not billed per object." },
+      pcXampp: emptyPcBackend("Dump ended before the PC probe."),
     },
     features: STORAGE_FEATURES.map((f) => ({
       ...f,
@@ -428,7 +545,7 @@ function emptyDumpShell(limits: StorageLimits, error: string | null, warnings: s
 
 export async function buildStorageDump(): Promise<Record<string, unknown>> {
   const warnings: string[] = [];
-  const [limits, r2Bundle, firebaseStorage, profilesSnap, familiesSnap] = await Promise.all([
+  const [limits, r2Bundle, firebaseStorage, profilesSnap, familiesSnap, pcXampp] = await Promise.all([
     loadLimits(),
     fetchR2Dump().catch((err) => ({
       r2: null as R2Dump | null,
@@ -438,10 +555,12 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     fetchFirebaseStorageUsage(),
     db.collection("parentProfiles").get(),
     db.collection("families").get(),
+    probeXamppHealth(4000),
   ]);
 
   if (r2Bundle.error) warnings.push(`R2: ${r2Bundle.error}`);
   if (firebaseStorage.error) warnings.push(`Firebase Storage: ${firebaseStorage.error}`);
+  if (pcXampp.configured && pcXampp.error) warnings.push(`This PC (XAMPP): ${pcXampp.error}`);
 
   const emailByFamily = new Map<string, { uid: string; email: string }>();
   for (const p of profilesSnap.docs) {
@@ -613,6 +732,21 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
       },
       d1: r2Bundle.d1,
       kv: { note: "Edge cache flags only — not billed per object." },
+      pcXampp: {
+        reachable: pcXampp.reachable,
+        configured: pcXampp.configured,
+        error: pcXampp.error,
+        bytes: pcXampp.bytes,
+        files: pcXampp.files,
+        diskUsedBytes: pcXampp.diskUsedBytes,
+        diskTotalBytes: pcXampp.diskTotalBytes,
+        diskPercent: pcXampp.diskPercent,
+        drive: pcXampp.drive,
+        storePath: pcXampp.storePath,
+        publicUrl: pcXampp.publicUrl,
+        localHealthUrl: pcXampp.localHealthUrl,
+        mediaNote: pcXampp.mediaNote,
+      },
     },
     features: STORAGE_FEATURES.map((f) => ({
       ...f,
@@ -830,7 +964,27 @@ export const adminClearStorage = onCall(
       return { ok: true, docs, media, families: families.size };
     }
 
-    throw new HttpsError("invalid-argument", "scope must be feature, account, or platform.");
+    if (scope === "pc-store") {
+      if (confirm !== "CLEAR-PC-STORE") {
+        throw new HttpsError("failed-precondition", "Type CLEAR-PC-STORE to confirm wiping the Windows PC archive.");
+      }
+      const result = await xamppStorageRequest("clear", { confirm: "CLEAR-PC-STORE" });
+      await writeAuditLog({
+        action: "clear_storage",
+        adminEmail,
+        targetUid: "pc-xampp",
+        detail: `Cleared XAMPP local store: ${Number(result.deletedFiles ?? 0)} files, ${Number(result.deletedBytes ?? 0)} bytes`,
+      });
+      return {
+        ok: true,
+        docs: 0,
+        media: Number(result.deletedFiles ?? 0),
+        deletedBytes: Number(result.deletedBytes ?? 0),
+        storePath: result.storePath,
+      };
+    }
+
+    throw new HttpsError("invalid-argument", "scope must be feature, account, platform, or pc-store.");
   },
 );
 
@@ -881,11 +1035,12 @@ function probeFailureNote(
 
 export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, async (request) => {
   assertProjectAdmin(request);
-  const [health, staging, turn, doMeta] = await Promise.all([
+  const [health, staging, turn, doMeta, pcHealth] = await Promise.all([
     probeUrl(VPS_HEALTH_URL, 4000),
     probeUrl(VPS_STAGING_URL, 4000),
     tcpReachable(VPS_HOST, 3478, 2500),
     fetchDoDroplet(),
+    probeXamppHealth(4000),
   ]);
   return {
     takenAtMs: Date.now(),
@@ -937,7 +1092,76 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, as
       projectId: process.env.GCLOUD_PROJECT || "safechild-f34ac",
       storageBucket: admin.storage().bucket().name,
     },
+    pc: {
+      provider: "xampp",
+      host: "this Windows PC",
+      installPath: XAMPP_INSTALL_PATH,
+      localHealthUrl: XAMPP_LOCAL_HEALTH,
+      publicUrl: XAMPP_STORAGE_URL || null,
+      secretConfigured: Boolean(XAMPP_STORAGE_SECRET),
+      roles: [
+        {
+          id: "ops-health",
+          label: "Ops health + disk dump",
+          detail: `${XAMPP_LOCAL_HEALTH} — drive used/total and bytes under store/`,
+        },
+        {
+          id: "local-archive",
+          label: "Local archive folder",
+          detail: `${XAMPP_INSTALL_PATH}\\store — TCD can list/clear via Functions when a tunnel URL is set`,
+        },
+        {
+          id: "optional-staging",
+          label: "Optional Apache staging mirror",
+          detail: "Copy parent-web dist into C:\\xampp2\\htdocs if you want HTTP staging on this PC. TURN/coturn is not installed on Windows.",
+        },
+      ],
+      reachableFromFunctions: pcHealth.reachable,
+      probe: {
+        ok: pcHealth.reachable,
+        status: pcHealth.reachable ? 200 : null,
+        latencyMs: pcHealth.latencyMs ?? 0,
+        body: pcHealth.body,
+        inconclusive: !pcHealth.reachable && !XAMPP_STORAGE_URL,
+        note: pcHealth.error,
+      },
+      disk: pcHealth.reachable
+        ? {
+            usedBytes: pcHealth.diskUsedBytes,
+            totalBytes: pcHealth.diskTotalBytes,
+            percent: pcHealth.diskPercent,
+            drive: pcHealth.drive,
+            storeBytes: pcHealth.bytes,
+            storeFiles: pcHealth.files,
+            storePath: pcHealth.storePath,
+          }
+        : null,
+      mixedContentNote:
+        "TCD on GitHub Pages is HTTPS. The browser cannot call http://127.0.0.1 or http://192.168.x.x (mixed content). Cloud Functions also cannot see this PC's localhost. Publish Apache with Cloudflare Tunnel (cloudflared is already running as a Windows service) and set XAMPP_STORAGE_URL to that HTTPS hostname.",
+      tunnelHint:
+        "Zero Trust → Tunnels → add a public hostname on tunnel `sarechild-xampp` (or `net`), service http://127.0.0.1:80 path /sarechild-storage* OR http://127.0.0.1:8787. A trycloudflare.com URL works immediately but changes when that process restarts. Port 80 on the ISP IP is blocked by NAT — never use http://127.0.0.1 in Functions env.",
+      mediaNote: pcHealth.mediaNote,
+    },
   };
+});
+
+export const adminManagePcStorage = onCall({ cors: true, timeoutSeconds: 60 }, async (request) => {
+  assertProjectAdmin(request);
+  const action = String(request.data?.action ?? "list").trim();
+  if (action === "health") {
+    return jsonSafe(await probeXamppHealth(8000));
+  }
+  if (action === "list") {
+    return jsonSafe(await xamppStorageRequest("list"));
+  }
+  if (action === "clear") {
+    const confirm = String(request.data?.confirm ?? "").trim();
+    if (confirm !== "CLEAR-PC-STORE") {
+      throw new HttpsError("failed-precondition", "Type CLEAR-PC-STORE to confirm.");
+    }
+    return jsonSafe(await xamppStorageRequest("clear", { confirm }));
+  }
+  throw new HttpsError("invalid-argument", "action must be health, list, or clear.");
 });
 
 export const enforceStorageLimits = onSchedule(
