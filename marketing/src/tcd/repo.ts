@@ -14,9 +14,11 @@ import {
 import { auth, COL, db, FUNCTIONS_HEALTH_URL, MARKETING_URL, PARENT_WEB_URL, PLATFORM_HEALTH_URL, R2_BASE_URL, TCD_URL, WENT_DARK_AFTER_MS } from './firebase'
 import type {
   ApkHealth,
+  ApkVersionManifest,
   ChatActivity,
   DeviceStatus,
   FamilyAlert,
+  FeatureHealthCard,
   GuardianInfo,
   GuardianInviteStats,
   PairingStats,
@@ -56,6 +58,24 @@ export function observeDevices(familyId: string, onData: (rows: DeviceStatus[]) 
           chatOnline: Boolean(data.chatOnline),
           chatLastSeenMs: Number(data.chatLastSeenMs ?? 0),
           monitoringActive: Boolean(data.monitoringActive),
+          childAppVersionName: (data.childAppVersionName as string | undefined) ?? null,
+          childAppVersionCode: data.childAppVersionCode == null ? null : Number(data.childAppVersionCode),
+          callRecordingStatus:
+            typeof data.callRecordingStatus === 'string'
+              ? data.callRecordingStatus
+              : data.callRecordingStatus && typeof data.callRecordingStatus === 'object'
+                ? JSON.stringify(data.callRecordingStatus)
+                : null,
+          screenSnapshotsActive: Boolean(data.screenSnapshotsActive),
+          cameraSnapshotsActive: Boolean(data.cameraSnapshotsActive),
+          whatsappProtectionEnabled: Boolean(data.whatsappProtectionEnabled),
+          accessibilityAccess: data.accessibilityAccess == null ? null : Boolean(data.accessibilityAccess),
+          uninstallProtectionStatus:
+            typeof data.uninstallProtectionStatus === 'string'
+              ? data.uninstallProtectionStatus
+              : data.uninstallProtectionStatus && typeof data.uninstallProtectionStatus === 'object'
+                ? 'configured'
+                : null,
         } satisfies DeviceStatus
       }),
     )
@@ -596,11 +616,134 @@ async function probeApk(id: ApkHealth['id'], label: string, filename: string): P
   }
 }
 
+async function loadVersionManifest(
+  id: ApkVersionManifest['id'],
+  label: string,
+  filename: string,
+): Promise<ApkVersionManifest> {
+  const url = `${R2_BASE_URL.replace(/\/$/, '')}/downloads/${filename}`
+  try {
+    const res = await fetch(url, { method: 'GET', cache: 'no-store' })
+    if (!res.ok) {
+      return {
+        id,
+        label,
+        versionName: null,
+        versionCode: null,
+        apkUrl: null,
+        releasedAt: null,
+        changelog: null,
+        status: 'fail',
+        message: `Manifest HTTP ${res.status}`,
+      }
+    }
+    const data = (await res.json()) as {
+      versionName?: string
+      versionCode?: number
+      apkUrl?: string
+      releasedAt?: string
+      changelog?: string
+    }
+    return {
+      id,
+      label,
+      versionName: data.versionName ?? null,
+      versionCode: data.versionCode ?? null,
+      apkUrl: data.apkUrl ?? null,
+      releasedAt: data.releasedAt ?? null,
+      changelog: data.changelog ?? null,
+      status: data.versionCode && data.versionName ? 'ok' : 'warn',
+      message:
+        data.versionCode && data.versionName
+          ? `Published ${data.versionName} (${data.versionCode})`
+          : 'Manifest missing version fields',
+    }
+  } catch (e) {
+    return {
+      id,
+      label,
+      versionName: null,
+      versionCode: null,
+      apkUrl: null,
+      releasedAt: null,
+      changelog: null,
+      status: 'fail',
+      message: e instanceof Error ? e.message : 'Failed to load version manifest',
+    }
+  }
+}
+
 export async function loadApkHealth(): Promise<ApkHealth[]> {
-  return Promise.all([
+  const [parentApk, childApk, parentManifest, childManifest] = await Promise.all([
     probeApk('parent-apk', 'Parent app APK', 'parent.apk'),
     probeApk('child-apk', 'Child app APK', 'child.apk'),
+    loadVersionManifest('parent', 'Parent', 'parent-version.json'),
+    loadVersionManifest('child', 'Child', 'child-version.json'),
   ])
+  return [
+    {
+      ...parentApk,
+      versionName: parentManifest.versionName,
+      versionCode: parentManifest.versionCode,
+      message:
+        parentManifest.status === 'ok'
+          ? `${parentApk.message} Latest ${parentManifest.versionName} (${parentManifest.versionCode}).`
+          : parentApk.message,
+      status: parentApk.status === 'fail' || parentManifest.status === 'fail' ? 'fail' : parentApk.status,
+    },
+    {
+      ...childApk,
+      versionName: childManifest.versionName,
+      versionCode: childManifest.versionCode,
+      message:
+        childManifest.status === 'ok'
+          ? `${childApk.message} Latest ${childManifest.versionName} (${childManifest.versionCode}).`
+          : childApk.message,
+      status: childApk.status === 'fail' || childManifest.status === 'fail' ? 'fail' : childApk.status,
+    },
+  ]
+}
+
+export async function loadApkVersionManifests(): Promise<ApkVersionManifest[]> {
+  return Promise.all([
+    loadVersionManifest('child', 'Child app', 'child-version.json'),
+    loadVersionManifest('parent', 'Parent app', 'parent-version.json'),
+  ])
+}
+
+export function buildFeatureHealth(devices: DeviceStatus[], nowMs: number): FeatureHealthCard[] {
+  const online = devices.filter((d) => d.lastHeartbeatMs > 0 && nowMs - d.lastHeartbeatMs < WENT_DARK_AFTER_MS)
+  const withMonitoring = online.filter((d) => d.monitoringActive).length
+  const withCall = devices.filter((d) => Boolean(d.callRecordingStatus)).length
+  const withScreen = devices.filter((d) => d.screenSnapshotsActive).length
+  const withCamera = devices.filter((d) => d.cameraSnapshotsActive).length
+  const withWa = devices.filter((d) => d.whatsappProtectionEnabled).length
+  const withA11y = devices.filter((d) => d.accessibilityAccess === true).length
+  const withUninstall = devices.filter((d) => Boolean(d.uninstallProtectionStatus)).length
+
+  const card = (
+    id: string,
+    label: string,
+    active: number,
+    denom: number,
+    emptyDetail: string,
+  ): FeatureHealthCard => {
+    if (devices.length === 0) {
+      return { id, label, status: 'warn', detail: emptyDetail }
+    }
+    const status: FeatureHealthCard['status'] = active > 0 ? 'ok' : 'warn'
+    return { id, label, status, detail: `${active} / ${Math.max(denom, 1)} devices` }
+  }
+
+  return [
+    card('monitoring', 'Monitoring FGS', withMonitoring, Math.max(online.length, 1), 'No devices registered'),
+    card('call-capture', 'Call capture', withCall, devices.length, 'No devices registered'),
+    card('screen-snapshots', 'Screen snapshots', withScreen, devices.length, 'No devices registered'),
+    card('camera-snapshots', 'Camera snapshots', withCamera, devices.length, 'No devices registered'),
+    card('whatsapp', 'WhatsApp protection', withWa, devices.length, 'No devices registered'),
+    card('accessibility', 'Accessibility', withA11y, devices.length, 'No devices registered'),
+    card('uninstall', 'Uninstall protection', withUninstall, devices.length, 'No devices registered'),
+  ]
 }
 
 // ---------- New: marketing / parent-web uptime (opaque no-cors reachability) ----------

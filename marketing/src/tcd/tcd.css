@@ -1,6 +1,16 @@
-/* Standalone TCD ops console. Extends the marketing brand tokens (Fraunces +
-   Space Grotesk, indigo/amber/coral/teal) from ../index.css rather than
-   introducing a new palette — this is the same product, an ops-facing skin. */
+/* Standalone TCD ops console — same SareChild brand as marketing (Syne + Figtree,
+   forest green / gold), with an ops-facing dark hero skin. */
+
+:root {
+  --indigo-deep: #0c2419;
+  --indigo-mid: #0a4a35;
+  --amber: #c9a24a;
+  --coral: #c45c3e;
+  --teal: #1a8f6a;
+  --radius-lg: 18px;
+  --font-display: 'Syne', 'Segoe UI', sans-serif;
+  --font-body: 'Figtree', 'Segoe UI', sans-serif;
+}
 
 .tcd-body {
   background: var(--indigo-deep);
@@ -1726,7 +1736,7 @@
 
 .tcd-admin-panel-head h2 {
   margin: 0 0 0.35rem;
-  font-family: Fraunces, Georgia, serif;
+  font-family: var(--font-display);
 }
 
 .tcd-reseller-ledger {
@@ -1742,4 +1752,183 @@
 
 .tcd-acct-table tr.selected td {
   background: rgba(240, 165, 58, 0.08);
+}
+
+/* ---------- Ops pulse strip + feature / version tiles ---------- */
+.tcd-ops-pulse {
+  margin: 0 0 1.5rem;
+}
+
+.tcd-pulse-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.tcd-pulse-card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  padding: 1.1rem 1.15rem 1.15rem;
+  color: #fff;
+  backdrop-filter: blur(10px);
+  animation: tcd-pulse-in 0.55s ease both;
+}
+
+.tcd-pulse-card:nth-child(2) { animation-delay: 0.05s; }
+.tcd-pulse-card:nth-child(3) { animation-delay: 0.1s; }
+.tcd-pulse-card:nth-child(4) { animation-delay: 0.15s; }
+
+@keyframes tcd-pulse-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.tcd-pulse-eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.tcd-pulse-value {
+  margin: 0.35rem 0 0.2rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 3vw, 2.35rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.tcd-pulse-value.fail { color: #ffb4a8; }
+.tcd-pulse-of {
+  font-size: 0.55em;
+  opacity: 0.7;
+  font-weight: 600;
+}
+
+.tcd-pulse-versions {
+  font-size: clamp(1.15rem, 2.2vw, 1.55rem);
+  letter-spacing: -0.02em;
+}
+
+.tcd-pulse-meta {
+  margin: 0;
+  font-size: 0.84rem;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.35;
+}
+
+.tcd-device-strip {
+  list-style: none;
+  margin: 0.75rem 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tcd-device-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  background: rgba(20, 36, 28, 0.04);
+  border: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.tcd-device-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tcd-device-chip.online .tcd-device-dot { background: var(--teal); box-shadow: 0 0 0 3px rgba(26, 143, 106, 0.2); }
+.tcd-device-chip.offline .tcd-device-dot { background: #b45309; }
+
+.tcd-version-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.tcd-version-tile {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(15, 107, 76, 0.04);
+}
+
+.tcd-version-name {
+  margin: 0.15rem 0;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.tcd-version-change {
+  margin: 0.4rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.tcd-stale-note {
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: rgba(201, 162, 74, 0.12);
+  border: 1px solid rgba(201, 162, 74, 0.28);
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.tcd-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.tcd-feature-tile {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  min-height: 108px;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.tcd-feature-tile:hover {
+  transform: translateY(-2px);
+  border-color: rgba(15, 107, 76, 0.35);
+}
+
+.tcd-feature-tile.status-warn {
+  background: linear-gradient(180deg, rgba(201, 162, 74, 0.08), #fff);
+}
+
+.tcd-feature-tile.status-fail {
+  background: linear-gradient(180deg, rgba(196, 92, 62, 0.08), #fff);
+}
+
+@media (max-width: 960px) {
+  .tcd-pulse-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .tcd-pulse-grid {
+    grid-template-columns: 1fr;
+  }
 }

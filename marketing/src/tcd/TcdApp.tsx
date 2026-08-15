@@ -12,9 +12,11 @@ import { PARENT_WEB_URL, TCD_URL, WENT_DARK_AFTER_MS } from './firebase'
 import type {
   AdminParentAccountRow,
   ApkHealth,
+  ApkVersionManifest,
   ChatActivity,
   DeviceStatus,
   FamilyAlert,
+  FeatureHealthCard,
   GuardianInfo,
   GuardianInviteStats,
   PairingStats,
@@ -205,6 +207,7 @@ function TcdDashboard({
   const [report, setReport] = useState<TcdReport | null>(null)
   const [overview, setOverview] = useState<TcdOverview | null>(null)
   const [apkHealth, setApkHealth] = useState<ApkHealth[]>([])
+  const [apkVersions, setApkVersions] = useState<ApkVersionManifest[]>([])
   const [siteUptime, setSiteUptime] = useState<SiteUptime[]>([])
   const [pairingStats, setPairingStats] = useState<PairingStats | null>(null)
   const [guardianInviteStats, setGuardianInviteStats] = useState<GuardianInviteStats | null>(null)
@@ -254,10 +257,11 @@ function TcdDashboard({
       const invitesPromise = healthFamilyId ? repo.loadGuardianInviteStats(healthFamilyId) : Promise.resolve(null)
       const chatPromise = healthFamilyId ? repo.loadChatActivity(healthFamilyId) : Promise.resolve(null)
 
-      const [nextReport, nextOverview, apk, uptime, pairing, invites, chat] = await Promise.all([
+      const [nextReport, nextOverview, apk, versions, uptime, pairing, invites, chat] = await Promise.all([
         healthPromise,
         overviewPromise,
         repo.loadApkHealth(),
+        repo.loadApkVersionManifests(),
         repo.loadSiteUptime(),
         pairingPromise,
         invitesPromise,
@@ -266,6 +270,7 @@ function TcdDashboard({
       setReport(nextReport)
       setOverview(nextOverview)
       setApkHealth(apk)
+      setApkVersions(versions)
       setSiteUptime(uptime)
       setPairingStats(pairing)
       setGuardianInviteStats(invites)
@@ -325,6 +330,30 @@ function TcdDashboard({
     }
   }, [devices, alerts, commands, guardians, nowTick])
 
+  const featureHealth = useMemo(() => repo.buildFeatureHealth(devices, nowTick), [devices, nowTick])
+
+  const accountPulse = useMemo(() => {
+    if (!isAdmin) return null
+    const total = adminAccounts.length
+    const blocked = adminAccounts.filter((a) => a.adminBlocked || a.status === 'blocked').length
+    const trial = adminAccounts.filter((a) => (a.plan || '').toLowerCase() === 'trial').length
+    const paid = adminAccounts.filter((a) => (a.plan || '').toLowerCase() === 'paid').length
+    const active = adminAccounts.filter((a) => {
+      const last = a.lastActiveAt ?? a.lastLoginAt ?? 0
+      return last > 0 && nowTick - last < 7 * 24 * 60 * 60 * 1000
+    }).length
+    const devicesKnown = adminAccounts.reduce((sum, a) => sum + (a.deviceCount ?? 0), 0)
+    return { total, blocked, trial, paid, active, devicesKnown }
+  }, [isAdmin, adminAccounts, nowTick])
+
+  const criticalAlerts = useMemo(
+    () =>
+      alerts
+        .filter((a) => a.severity.toUpperCase() === 'CRITICAL')
+        .slice(0, 6),
+    [alerts],
+  )
+
   const platformChecks = report?.checks.filter((c) => c.group === 'platform') ?? []
   const fleetChecks = report?.checks.filter((c) => c.group === 'fleet') ?? []
 
@@ -333,10 +362,11 @@ function TcdDashboard({
     const statuses: TcdCheckStatus[] = [
       ...report.checks.map((c) => c.status),
       ...apkHealth.map((a) => a.status),
+      ...apkVersions.map((a) => a.status),
       ...siteUptime.map((s) => s.status),
     ]
     return worst(statuses) ?? 'ok'
-  }, [report, apkHealth, siteUptime])
+  }, [report, apkHealth, apkVersions, siteUptime])
 
   const statusCopy: Record<TcdCheckStatus | 'checking', { title: string; sub: string }> = {
     checking: { title: 'Checking systems…', sub: 'Running the first diagnostic sweep now.' },
@@ -563,8 +593,56 @@ function TcdDashboard({
         )}
 
         {tab === 'overview' && (
+        <>
+        <section className="tcd-ops-pulse" aria-label="Operations pulse">
+          <div className="tcd-pulse-grid">
+            {accountPulse && (
+              <article className="tcd-pulse-card">
+                <p className="tcd-pulse-eyebrow">Accounts</p>
+                <p className="tcd-pulse-value">{accountPulse.total}</p>
+                <p className="tcd-pulse-meta">
+                  {accountPulse.active} active · {accountPulse.trial} trial · {accountPulse.paid} paid
+                  {accountPulse.blocked > 0 ? ` · ${accountPulse.blocked} blocked` : ''}
+                </p>
+              </article>
+            )}
+            <article className="tcd-pulse-card">
+              <p className="tcd-pulse-eyebrow">Fleet</p>
+              <p className="tcd-pulse-value">
+                {liveFleet.onlineDevices}
+                <span className="tcd-pulse-of">/{liveFleet.registeredDevices}</span>
+              </p>
+              <p className="tcd-pulse-meta">
+                Online now · {liveFleet.offlineDevices} offline
+                {accountPulse ? ` · ${accountPulse.devicesKnown} across accounts` : ''}
+              </p>
+            </article>
+            <article className="tcd-pulse-card">
+              <p className="tcd-pulse-eyebrow">Alerts</p>
+              <p className={`tcd-pulse-value ${liveFleet.criticalAlertsLast24h > 0 ? 'fail' : ''}`}>
+                {liveFleet.alertsLast24h}
+              </p>
+              <p className="tcd-pulse-meta">
+                Last 24h · {liveFleet.criticalAlertsLast24h} critical · {liveFleet.pendingCommands} pending cmds
+              </p>
+            </article>
+            <article className="tcd-pulse-card">
+              <p className="tcd-pulse-eyebrow">Published apps</p>
+              <p className="tcd-pulse-value tcd-pulse-versions">
+                {apkVersions.find((v) => v.id === 'child')?.versionName || '—'}
+                <span className="tcd-pulse-of"> / </span>
+                {apkVersions.find((v) => v.id === 'parent')?.versionName || '—'}
+              </p>
+              <p className="tcd-pulse-meta">Child / parent version manifests</p>
+            </article>
+          </div>
+        </section>
+
         <div className="tcd-grid">
-          <FleetCard liveFleet={liveFleet} overview={overview} checks={fleetChecks} chatActivity={chatActivity} nowTick={nowTick} />
+          <FleetCard liveFleet={liveFleet} overview={overview} checks={fleetChecks} chatActivity={chatActivity} nowTick={nowTick} devices={devices} />
+          <AppVersionsCard manifests={apkVersions} devices={devices} />
+          <FeatureHealthGrid cards={featureHealth} />
+          <RecentCriticalCard alerts={criticalAlerts} />
           <PlatformCard checks={platformChecks} generatedAtMs={report?.generatedAtMs} />
           <UptimeCard siteUptime={siteUptime} apkHealth={apkHealth} />
           <TrialCard trialInfo={trialInfo} />
@@ -582,6 +660,7 @@ function TcdDashboard({
             </div>
           )}
         </div>
+        </>
         )}
       </main>
 
@@ -627,6 +706,7 @@ function FleetCard({
   checks,
   chatActivity,
   nowTick,
+  devices,
 }: {
   liveFleet: {
     registeredDevices: number
@@ -641,6 +721,7 @@ function FleetCard({
   checks: TcdCheck[]
   chatActivity: ChatActivity | null
   nowTick: number
+  devices: DeviceStatus[]
 }) {
   const edgeAgeMs = overview ? nowTick - overview.generatedAtMs : null
   return (
@@ -671,6 +752,25 @@ function FleetCard({
           <span className="tcd-stat-label">Pending cmds</span>
         </div>
       </div>
+      {devices.length > 0 && (
+        <ul className="tcd-device-strip">
+          {devices.slice(0, 8).map((d) => {
+            const online = isDeviceOnline(d, nowTick)
+            return (
+              <li key={d.id} className={`tcd-device-chip ${online ? 'online' : 'offline'}`}>
+                <span className="tcd-device-dot" aria-hidden="true" />
+                <span>
+                  <strong>{d.childName}</strong>
+                  <span className="muted small">
+                    {' '}
+                    · {d.childAppVersionName || 'unknown ver'} · {timeAgo(d.lastHeartbeatMs)}
+                  </span>
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
       <CheckList checks={checks} />
       <ul className="tcd-check-list">
         <li className="tcd-check-row">
@@ -686,6 +786,98 @@ function FleetCard({
           </span>
         </li>
       </ul>
+    </div>
+  )
+}
+
+function AppVersionsCard({
+  manifests,
+  devices,
+}: {
+  manifests: ApkVersionManifest[]
+  devices: DeviceStatus[]
+}) {
+  const childManifest = manifests.find((m) => m.id === 'child')
+  const parentManifest = manifests.find((m) => m.id === 'parent')
+  const staleDevices = devices.filter((d) => {
+    const installed = d.childAppVersionCode ?? 0
+    const published = childManifest?.versionCode ?? 0
+    return published > 0 && installed > 0 && installed < published
+  })
+  return (
+    <div className="tcd-card">
+      <div className="tcd-card-head">
+        <h2>App versions</h2>
+        <span className="tcd-card-timestamp">published vs installs</span>
+      </div>
+      <div className="tcd-version-grid">
+        {[childManifest, parentManifest].filter(Boolean).map((m) => (
+          <div key={m!.id} className="tcd-version-tile">
+            <CheckPill status={m!.status} />
+            <div>
+              <strong>{m!.label}</strong>
+              <p className="tcd-version-name">{m!.versionName || '—'}</p>
+              <p className="muted small">
+                code {m!.versionCode ?? '—'}
+                {m!.releasedAt ? ` · ${m!.releasedAt}` : ''}
+              </p>
+              {m!.changelog && <p className="tcd-version-change">{m!.changelog}</p>}
+            </div>
+          </div>
+        ))}
+        {manifests.length === 0 && <p className="tcd-empty-note">Run a health check to load version manifests.</p>}
+      </div>
+      {staleDevices.length > 0 && (
+        <p className="tcd-stale-note">
+          {staleDevices.length} child device(s) behind published {childManifest?.versionName}:{' '}
+          {staleDevices.map((d) => `${d.childName} (${d.childAppVersionName || '?'})`).join(', ')}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function FeatureHealthGrid({ cards }: { cards: FeatureHealthCard[] }) {
+  return (
+    <div className="tcd-card tcd-card-wide">
+      <div className="tcd-card-head">
+        <h2>Feature health</h2>
+        <span className="tcd-card-timestamp">from live device heartbeats</span>
+      </div>
+      <div className="tcd-feature-grid">
+        {cards.map((c) => (
+          <article key={c.id} className={`tcd-feature-tile status-${c.status}`}>
+            <CheckPill status={c.status} />
+            <strong>{c.label}</strong>
+            <span className="muted small">{c.detail}</span>
+          </article>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RecentCriticalCard({ alerts }: { alerts: FamilyAlert[] }) {
+  return (
+    <div className="tcd-card">
+      <div className="tcd-card-head">
+        <h2>Recent critical alerts</h2>
+      </div>
+      {alerts.length === 0 ? (
+        <p className="tcd-empty-note">No critical alerts in the live feed.</p>
+      ) : (
+        <ul className="tcd-check-list">
+          {alerts.map((a) => (
+            <li key={a.id} className="tcd-check-row">
+              <span className="pill tcd-fail">CRITICAL</span>
+              <span>
+                <strong>{a.title}</strong>
+                <span className="muted small"> · {timeAgo(a.createdAtMs)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -724,6 +916,9 @@ function UptimeCard({ siteUptime, apkHealth }: { siteUptime: SiteUptime[]; apkHe
             <CheckPill status={a.status} />
             <span>
               <strong>{a.label}</strong> — {a.message}
+              {a.versionName && (
+                <span className="muted small"> · v{a.versionName}{a.versionCode != null ? ` (${a.versionCode})` : ''}</span>
+              )}
               {a.sizeBytes != null && <span className="muted small"> ({(a.sizeBytes / (1024 * 1024)).toFixed(1)} MB)</span>}
             </span>
           </li>

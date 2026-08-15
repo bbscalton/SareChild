@@ -213,6 +213,9 @@ type RoadPoint = { lat: number; lng: number };
 type SnappedPoint = { lat: number; lng: number; originalIndex: number | null };
 
 const ROADS_API_MAX_POINTS = 100; // Roads API hard limit per snapToRoads request.
+const ROADS_SOFT_MAX_INPUT = 800;
+const ROADS_CHUNK_SIZE = 95;
+const ROADS_CHUNK_OVERLAP = 8;
 
 /** Evenly downsamples to at most `max` points, always keeping the first and last. */
 function downsamplePoints(points: RoadPoint[], max: number): RoadPoint[] {
@@ -225,24 +228,14 @@ function downsamplePoints(points: RoadPoint[], max: number): RoadPoint[] {
   return out;
 }
 
-/**
- * Snaps a raw GPS path to real streets via the Roads API `snapToRoads` endpoint, using a
- * server-side-only key (never exposed to the browser — Roads API also has no CORS headers,
- * so browsers cannot call it directly regardless of key type). Input is downsampled to the
- * API's 100-point cap first; `interpolate=true` still fills in road-following geometry
- * between the kept points. Returns `originalIndex` (into the *downsampled* input) for every
- * snapped point that corresponds 1:1 to an input point, `null` for Google's own interpolated
- * in-between points — the caller uses this to re-attach/interpolate timestamps.
- */
-async function snapToRoads(
+async function snapToRoadsOnce(
   env: Env,
-  rawPoints: RoadPoint[],
-): Promise<{ ok: true; input: RoadPoint[]; snapped: SnappedPoint[] } | { ok: false; error: string }> {
+  input: RoadPoint[],
+): Promise<{ ok: true; snapped: SnappedPoint[] } | { ok: false; error: string }> {
   const key = env.GOOGLE_ROADS_SERVER_KEY?.trim();
   if (!key) return { ok: false, error: "Roads API server key not configured on the Worker." };
-  if (rawPoints.length < 2) return { ok: false, error: "Need at least 2 points to snap." };
+  if (input.length < 2) return { ok: false, error: "Need at least 2 points to snap." };
 
-  const input = downsamplePoints(rawPoints, ROADS_API_MAX_POINTS);
   const path = input.map((p) => `${p.lat},${p.lng}`).join("|");
   const apiUrl = `https://roads.googleapis.com/v1/snapToRoads?interpolate=true&key=${encodeURIComponent(key)}&path=${encodeURIComponent(path)}`;
 
@@ -267,10 +260,80 @@ async function snapToRoads(
       lng: sp.location.longitude,
       originalIndex: typeof sp.originalIndex === "number" ? sp.originalIndex : null,
     }));
-    return { ok: true, input, snapped };
+    return { ok: true, snapped };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Roads API request failed." };
   }
+}
+
+/**
+ * Snaps a raw GPS path to real streets via the Roads API `snapToRoads` endpoint, using a
+ * server-side-only key (never exposed to the browser — Roads API also has no CORS headers,
+ * so browsers cannot call it directly regardless of key type). Long trails are chunked into
+ * overlapping ≤100-point windows (instead of collapsing an entire drive into 100 points) so
+ * highway/bus routes keep road fidelity; `interpolate=true` still fills geometry between
+ * kept points. Returns `originalIndex` into the returned `input` array.
+ */
+async function snapToRoads(
+  env: Env,
+  rawPoints: RoadPoint[],
+): Promise<{ ok: true; input: RoadPoint[]; snapped: SnappedPoint[] } | { ok: false; error: string }> {
+  const key = env.GOOGLE_ROADS_SERVER_KEY?.trim();
+  if (!key) return { ok: false, error: "Roads API server key not configured on the Worker." };
+  if (rawPoints.length < 2) return { ok: false, error: "Need at least 2 points to snap." };
+
+  const prepared = downsamplePoints(rawPoints, ROADS_SOFT_MAX_INPUT);
+  if (prepared.length <= ROADS_API_MAX_POINTS) {
+    const once = await snapToRoadsOnce(env, prepared);
+    if (!once.ok) return once;
+    return { ok: true, input: prepared, snapped: once.snapped };
+  }
+
+  const combinedInput: RoadPoint[] = [];
+  const combinedSnapped: SnappedPoint[] = [];
+  let start = 0;
+  while (start < prepared.length - 1) {
+    const end = Math.min(prepared.length, start + ROADS_CHUNK_SIZE);
+    const chunk = prepared.slice(start, end);
+    if (chunk.length < 2) break;
+    const once = await snapToRoadsOnce(env, chunk);
+    if (!once.ok) return once;
+
+    const inputOffset = combinedInput.length;
+    const skipInput = start === 0 ? 0 : Math.min(ROADS_CHUNK_OVERLAP, chunk.length - 1);
+    for (let i = skipInput; i < chunk.length; i++) combinedInput.push(chunk[i]!);
+
+    let skipSnapped = 0;
+    if (start > 0) {
+      while (
+        skipSnapped < once.snapped.length &&
+        once.snapped[skipSnapped]!.originalIndex != null &&
+        once.snapped[skipSnapped]!.originalIndex! < skipInput
+      ) {
+        skipSnapped++;
+      }
+      while (skipSnapped < once.snapped.length && once.snapped[skipSnapped]!.originalIndex == null) {
+        skipSnapped++;
+      }
+    }
+    for (let i = skipSnapped; i < once.snapped.length; i++) {
+      const sp = once.snapped[i]!;
+      const mapped =
+        sp.originalIndex == null ? null : inputOffset + (sp.originalIndex - skipInput);
+      combinedSnapped.push({
+        lat: sp.lat,
+        lng: sp.lng,
+        originalIndex: mapped != null && mapped >= 0 ? mapped : null,
+      });
+    }
+    if (end >= prepared.length) break;
+    start = Math.max(start + 1, end - ROADS_CHUNK_OVERLAP);
+  }
+
+  if (combinedInput.length < 2 || combinedSnapped.length < 2) {
+    return { ok: false, error: "Roads API chunk stitch produced too few points." };
+  }
+  return { ok: true, input: combinedInput, snapped: combinedSnapped };
 }
 
 export default {
@@ -279,8 +342,8 @@ export default {
     if (request.method === "OPTIONS") return json({ ok: true });
 
     // Snap a raw GPS trail to real streets for the parent Live Map's history playback +
-    // live trail polyline (see parent-web/src/lib/geo.ts `snapToRoads()`, which caches
-    // results client-side so scrubbing/re-renders don't re-call this endpoint).
+    // live trail polyline (see parent-web/src/lib/roadsApi.ts). Long trails are chunked
+    // server-side so road fidelity survives dense adaptive GPS sampling.
     if (request.method === "POST" && url.pathname === "/roads/snap") {
       let body: { points?: unknown };
       try {
@@ -514,25 +577,32 @@ export default {
       });
     }
 
-    // Public APK downloads for the marketing site. Files are uploaded to R2 under
-    // the `downloads/` prefix (e.g. downloads/parent.apk, downloads/child.apk).
+    // Public APK downloads + version manifests for in-app update checks.
+    // Uploaded under `downloads/` (e.g. child.apk, child-version.json).
     if (
       (request.method === "GET" || request.method === "HEAD") &&
       url.pathname.startsWith("/downloads/")
     ) {
       const name = decodeURIComponent(url.pathname.replace("/downloads/", ""));
-      if (!name || name.includes("..") || !name.endsWith(".apk")) {
+      const isApk = name.endsWith(".apk");
+      const isJson = name.endsWith(".json");
+      if (!name || name.includes("..") || name.includes("/") || (!isApk && !isJson)) {
         return new Response("invalid path", { status: 400 });
       }
       const obj = await env.MEDIA_BUCKET.get(`downloads/${name}`);
       if (!obj) return new Response("not found", { status: 404 });
       const headers = new Headers();
       obj.writeHttpMetadata(headers);
-      headers.set("content-type", "application/vnd.android.package-archive");
-      headers.set("content-disposition", `attachment; filename="${name}"`);
+      if (isJson) {
+        headers.set("content-type", "application/json; charset=utf-8");
+        headers.set("cache-control", "public, max-age=60, must-revalidate");
+      } else {
+        headers.set("content-type", "application/vnd.android.package-archive");
+        headers.set("content-disposition", `attachment; filename="${name}"`);
+        headers.set("cache-control", "public, max-age=300, must-revalidate");
+      }
       headers.set("content-length", String(obj.size));
       headers.set("etag", obj.httpEtag);
-      headers.set("cache-control", "public, max-age=300, must-revalidate");
       headers.set("access-control-allow-origin", "*");
       return new Response(request.method === "HEAD" ? null : obj.body, {
         status: 200,
