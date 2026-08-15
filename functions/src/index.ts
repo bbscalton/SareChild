@@ -26,6 +26,14 @@ export { deletePairedDevice } from "./deviceDelete";
 export { clearScreenSnapshots, clearCameraSnapshots } from "./clearDeviceData";
 export { acceptGuardianInvite } from "./guardianInvites";
 export {
+  adminGetStorageDump,
+  adminSetStorageLimits,
+  adminClearStorage,
+  adminFactoryResetAccount,
+  adminGetInfraStatus,
+  enforceStorageLimits,
+} from "./storageOps";
+export {
   adminSetResellerStatus,
   adminTopUpResellerCredits,
   adminSaveResellerPricing,
@@ -95,6 +103,130 @@ async function loadSafetySettings(familyId: string): Promise<SafetySettings> {
     alertRetentionDays: (doc.get("alertRetentionDays") as number | undefined) ?? ALERT_RETENTION_DAYS,
     mediaRetentionDays: (doc.get("mediaRetentionDays") as number | undefined) ?? MEDIA_RETENTION_DAYS,
   };
+}
+
+type NotificationSettings = {
+  parentAlertsMode: "on" | "quiet_hours" | "off";
+  quietHoursStartMinute: number;
+  quietHoursEndMinute: number;
+  types: {
+    location: boolean;
+    whatsapp: boolean;
+    calls: boolean;
+    permissionDrift: boolean;
+    batteryOffline: boolean;
+  };
+};
+
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  parentAlertsMode: "on",
+  quietHoursStartMinute: 22 * 60,
+  quietHoursEndMinute: 7 * 60,
+  types: {
+    location: true,
+    whatsapp: true,
+    calls: true,
+    permissionDrift: true,
+    batteryOffline: true,
+  },
+};
+
+async function loadNotificationSettings(familyId: string): Promise<NotificationSettings> {
+  const doc = await db
+    .collection("families")
+    .doc(familyId)
+    .collection("notificationSettings")
+    .doc("default")
+    .get();
+  if (!doc.exists) return DEFAULT_NOTIFICATION_SETTINGS;
+  const types = (doc.get("types") as Record<string, unknown> | undefined) ?? {};
+  const modeRaw = String(doc.get("parentAlertsMode") ?? "on").toLowerCase();
+  const parentAlertsMode =
+    modeRaw === "off" || modeRaw === "quiet_hours" ? modeRaw : "on";
+  return {
+    parentAlertsMode,
+    quietHoursStartMinute: Number(
+      doc.get("quietHoursStartMinute") ?? DEFAULT_NOTIFICATION_SETTINGS.quietHoursStartMinute
+    ),
+    quietHoursEndMinute: Number(
+      doc.get("quietHoursEndMinute") ?? DEFAULT_NOTIFICATION_SETTINGS.quietHoursEndMinute
+    ),
+    types: {
+      location: types.location !== false,
+      whatsapp: types.whatsapp !== false,
+      calls: types.calls !== false,
+      permissionDrift: types.permissionDrift !== false,
+      batteryOffline: types.batteryOffline !== false,
+    },
+  };
+}
+
+function minuteOfDayUtc(nowMs: number): number {
+  const d = new Date(nowMs);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+function inQuietHours(nowMs: number, start: number, end: number): boolean {
+  const minute = minuteOfDayUtc(nowMs);
+  if (start === end) return true;
+  if (start < end) return minute >= start && minute < end;
+  return minute >= start || minute < end;
+}
+
+function alertTypeBucket(
+  type: string
+): keyof NotificationSettings["types"] | "critical_always" | "other" {
+  switch (type) {
+    case "SOS":
+    case "UNIDENTIFIED_CONTACT":
+      return "critical_always";
+    case "GEOFENCE_ENTER":
+    case "GEOFENCE_EXIT":
+      return "location";
+    case "WHATSAPP_MEDIA":
+    case "WHATSAPP_CALL":
+    case "MESSAGE_PREVIEW":
+    case "TYPING_SAFETY":
+    case "KEYWORD":
+      return "whatsapp";
+    case "CALL_RECORDING":
+    case "CALL_SMS_SYNC":
+    case "LIVE_VIEW":
+      return "calls";
+    case "PERMISSION_REVOKED":
+    case "TAMPER":
+    case "UNINSTALL_ATTEMPT":
+      return "permissionDrift";
+    case "LOW_BATTERY":
+    case "WENT_DARK":
+    case "OFFLINE_EVIDENCE":
+      return "batteryOffline";
+    default:
+      return "other";
+  }
+}
+
+/** Parent push gate: Off mutes routine; Quiet hours mutes routine in window; SOS always sends. */
+function shouldSendParentPush(
+  settings: NotificationSettings,
+  alertType: string,
+  severity: string,
+  nowMs: number,
+  category?: string
+): boolean {
+  // Explicit parent-web Send test must always attempt FCM (tokens permitting).
+  if (String(category ?? "").toLowerCase() === "test") return true;
+  const bucket = alertTypeBucket(alertType);
+  if (bucket === "critical_always" || severity === "CRITICAL") return true;
+  if (settings.parentAlertsMode === "off") return false;
+  if (
+    settings.parentAlertsMode === "quiet_hours" &&
+    inQuietHours(nowMs, settings.quietHoursStartMinute, settings.quietHoursEndMinute)
+  ) {
+    return false;
+  }
+  if (bucket === "other") return true;
+  return settings.types[bucket] !== false;
 }
 
 /**
@@ -194,21 +326,30 @@ export const onAlertCreated = onDocumentCreated(
       return;
     }
 
+    const alertType = String(data.type ?? "");
+    const severity = String(data.severity ?? "LOW");
+    const notifPrefs = await loadNotificationSettings(familyId);
+    if (!shouldSendParentPush(notifPrefs, alertType, severity, now, category)) {
+      logger.info("Parent push suppressed by notificationSettings", familyId, alertType);
+      return;
+    }
+
     const title = (data.title as string) || "SareChild alert";
     const body = (data.snippet as string) || (data.type as string) || "Open SareChild";
 
     await sendToFamily(familyId, parentUid, {
       notification: { title, body },
       data: {
-        type: String(data.type ?? ""),
-        severity: String(data.severity ?? ""),
+        type: alertType,
+        severity,
         familyId,
         alertId: event.params.alertId,
+        deviceId: String(data.deviceId ?? ''),
+        section: String(data.category ?? ''),
       },
     });
 
     const riskScore = Number(data.riskScore ?? 0);
-    const severity = String(data.severity ?? "LOW");
     const shouldEscalate =
       settings.escalationEnabled &&
       (riskScore >= settings.escalationRiskThreshold ||

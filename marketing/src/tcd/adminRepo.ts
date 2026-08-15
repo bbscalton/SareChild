@@ -463,6 +463,47 @@ export async function adminSendTestFcm(familyId: string, deviceId: string): Prom
   return res.data
 }
 
+export async function adminGetStorageDump(): Promise<import('./types').StorageDump> {
+  const res = await callable<object, import('./types').StorageDump>('adminGetStorageDump')({})
+  return res.data
+}
+
+export async function adminGetInfraStatus(): Promise<import('./types').InfraStatus> {
+  const res = await callable<object, import('./types').InfraStatus>('adminGetInfraStatus')({})
+  return res.data
+}
+
+export async function adminSetStorageLimits(payload: {
+  globalBytesMax?: number
+  defaultAccountBytesMax?: number
+  featureBytesMax?: Record<string, number>
+  familyId?: string
+  accountBytesMax?: number | null
+}): Promise<unknown> {
+  const res = await callable<typeof payload, unknown>('adminSetStorageLimits')(payload)
+  return res.data
+}
+
+export async function adminClearStorage(payload: {
+  scope: 'feature' | 'account' | 'platform'
+  familyId?: string
+  feature?: string
+  confirm?: string
+}): Promise<{ docs: number; media: number; families?: number }> {
+  const res = await callable<typeof payload, { docs: number; media: number; families?: number }>('adminClearStorage')(
+    payload,
+  )
+  return res.data
+}
+
+export async function adminFactoryResetAccount(familyId: string, confirm: string): Promise<{ familyId: string }> {
+  const res = await callable<{ familyId: string; confirm: string }, { familyId: string }>('adminFactoryResetAccount')({
+    familyId,
+    confirm,
+  })
+  return res.data
+}
+
 export function exportAccountsCsv(accounts: AdminParentAccountRow[]): string {
   const header = [
     'uid',

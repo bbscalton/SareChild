@@ -39,11 +39,13 @@ export type DeviceStatus = {
   childAppVersionName?: string | null
   childAppVersionCode?: number | null
   callRecordingStatus?: string | null
+  callRecordingEnabled?: boolean
   screenSnapshotsActive?: boolean
   cameraSnapshotsActive?: boolean
   whatsappProtectionEnabled?: boolean
   accessibilityAccess?: boolean | null
   uninstallProtectionStatus?: string | null
+  uninstallProtectionEnabled?: boolean
 }
 
 export type ApkVersionManifest = {
@@ -225,7 +227,7 @@ export type PlatformFault = {
   source: string
 }
 
-export type TcdTab = 'overview' | 'accounts' | 'resellers' | 'features' | 'architecture' | 'system'
+export type TcdTab = 'overview' | 'accounts' | 'resellers' | 'features' | 'storage' | 'architecture' | 'system'
 
 export type AdminAuditLogEntry = {
   id: string
@@ -238,3 +240,91 @@ export type AdminAuditLogEntry = {
 }
 
 export type AdminAccountAction = 'reset' | 'delete' | 'trial' | 'revoke' | null
+
+export type StorageFeatureUsage = {
+  docs: number
+  estimatedBytes: number
+  r2Bytes: number
+  r2Objects: number
+}
+
+export type StorageFeatureRow = StorageFeatureUsage & {
+  id: string
+  label: string
+  limitBytes: number
+}
+
+export type StorageAccountRow = {
+  familyId: string
+  parentUid: string | null
+  email: string
+  childNames: string[]
+  deviceCount: number
+  firestoreDocs: number
+  r2Bytes: number
+  r2Objects: number
+  estimatedFirestoreBytes: number
+  usedBytes: number
+  accountBytesMax: number
+  overLimit: boolean
+  storageBlocked: boolean
+  features: Record<string, StorageFeatureUsage>
+}
+
+export type StorageDump = {
+  takenAtMs: number
+  limits: {
+    globalBytesMax: number
+    defaultAccountBytesMax: number
+    featureBytesMax: Record<string, number>
+    updatedAtMs: number
+    updatedBy: string | null
+  }
+  backends: {
+    r2: {
+      reachable: boolean
+      error?: string
+      bytes: number
+      objects: number
+      truncated: boolean
+      otherBytes: number
+      bucket: string
+    }
+    firestore: { docs: number; estimatedBytes: number; families: number }
+    firebaseStorage: { bytes: number; objects: number; truncated: boolean }
+    d1: Record<string, number>
+    kv: { note: string }
+  }
+  features: StorageFeatureRow[]
+  accounts: StorageAccountRow[]
+  totals: {
+    usedBytes: number
+    r2Bytes: number
+    firebaseStorageBytes: number
+    accountCount: number
+    overLimitCount: number
+  }
+}
+
+export type InfraProbe = { ok: boolean; status: number | null; latencyMs: number; body?: unknown }
+
+export type InfraStatus = {
+  takenAtMs: number
+  droplet: {
+    provider: string
+    host: string
+    roles: Array<{ id: string; label: string; detail: string }>
+    probes: {
+      opsHealth: InfraProbe
+      staging: InfraProbe
+      turn3478: { ok: boolean; latencyMs: number }
+    }
+    digitalocean: Record<string, unknown>
+    agentInstalled: boolean
+    installHint: string
+    docs: string
+    consoleUrl: string
+  }
+  cloudflare: { r2Bucket: string; worker: string; d1: string }
+  firebase: { projectId: string; storageBucket: string }
+}

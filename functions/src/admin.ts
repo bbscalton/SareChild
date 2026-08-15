@@ -60,7 +60,10 @@ export type AdminAuditAction =
   | "set_reseller_status"
   | "topup_reseller_credits"
   | "save_reseller_pricing"
-  | "trigger_expire_paid";
+  | "trigger_expire_paid"
+  | "set_storage_limits"
+  | "clear_storage"
+  | "factory_reset_storage";
 
 export async function deleteCollectionRecursive(
   ref: FirebaseFirestore.CollectionReference,
@@ -312,6 +315,31 @@ export async function adminWipeUserCore(
 
   return { newFamilyId, wipedFamilyId };
 }
+
+/** Parent-initiated factory reset — same data wipe as adminWipeUser, no admin role required. */
+export const factoryResetParentAccount = onCall({ cors: true }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+  const confirmPhrase = String(request.data?.confirmPhrase ?? "").trim();
+  if (confirmPhrase !== "RESET") {
+    throw new HttpsError("failed-precondition", 'Type "RESET" to confirm factory reset.');
+  }
+
+  const { email } = await loadTargetProfile(uid);
+  const result = await adminWipeUserCore(uid, email);
+  await writeAuditLog({
+    action: "wipe_user",
+    adminEmail: email,
+    targetUid: uid,
+    targetEmail: email,
+    detail: `Self factory reset; wiped ${result.wipedFamilyId ?? "none"}; new ${result.newFamilyId}`,
+    meta: { ...result, selfInitiated: true },
+  });
+
+  return { ok: true, ...result };
+});
 
 /** Wipes all user/family data and deletes the Firebase Auth account. */
 export async function adminDeleteUserCore(

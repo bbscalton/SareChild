@@ -189,6 +189,15 @@ const NODES: NodeDef[] = [
     column: 'ops',
     checkIds: ['google-maps'],
   },
+  {
+    id: 'do-vps',
+    label: 'DigitalOcean droplet',
+    subtitle: 'TURN, staging, ffmpeg, backups — 107.170.15.179',
+    group: 'hosting',
+    column: 'ops',
+    url: 'http://107.170.15.179:8080/',
+    checkIds: ['vps-turn', 'vps-staging'],
+  },
 ]
 
 const FLOW_META: Record<FlowId, FlowMeta> = {
@@ -274,11 +283,11 @@ const FLOW_META: Record<FlowId, FlowMeta> = {
     hint: 'How parents watch a live camera feed from the child phone.',
     steps: [
       'Parent taps Start live view; a command reaches the child app.',
-      'Child captures the screen via MediaProjection and streams over WebRTC.',
-      'Cloudflare Worker routes the live session; frames may archive to R2.',
+      'Child streams camera/mic over WebRTC; restrictive NAT uses TURN on the DigitalOcean droplet.',
+      'Cloudflare Worker helps signaling; frames may archive to R2.',
       'Parent viewer (app or web) connects to watch the stream in real time.',
     ],
-    nodeIds: ['parent-apk', 'parent-web', 'child-apk', 'cf-worker', 'r2', 'fcm'],
+    nodeIds: ['parent-apk', 'parent-web', 'child-apk', 'do-vps', 'cf-worker', 'r2', 'fcm'],
   },
   familyChat: {
     label: 'Family chat',
@@ -309,9 +318,10 @@ const FLOW_META: Record<FlowId, FlowMeta> = {
       'GitHub Actions builds the parent web app on push to main.',
       'Firebase Hosting serves the parent dashboard to browsers.',
       'Marketing site and this TCD console deploy to GitHub Pages.',
+      'DigitalOcean droplet hosts TURN + a staging copy of parent-web on :8080.',
       'Hard-refresh after deploy to load the latest architecture map version.',
     ],
-    nodeIds: ['gh-pages', 'tcd', 'firebase-hosting', 'parent-web'],
+    nodeIds: ['gh-pages', 'tcd', 'firebase-hosting', 'parent-web', 'do-vps'],
   },
 }
 

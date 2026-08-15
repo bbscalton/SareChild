@@ -18,6 +18,136 @@ type Env = {
 
 type Status = "ok" | "warn" | "fail";
 
+function requirePurgeAuth(request: Request, env: Env): boolean {
+  const secret = env.MEDIA_PURGE_SECRET?.trim();
+  const auth = request.headers.get("authorization") ?? "";
+  return Boolean(secret) && auth === `Bearer ${secret}`;
+}
+
+function mapMediaFolder(folder: string): string {
+  const aliases: Record<string, string> = {
+    screenSnapshots: "screenSnapshots",
+    cameraSnapshots: "cameraSnapshots",
+    photos: "photos",
+    whatsappMedia: "whatsappMedia",
+    whatsappWatchdog: "whatsappWatchdog",
+    callRecordings: "callRecordings",
+    liveRecordings: "liveRecordings",
+    chat: "chat",
+    camera: "safetyChecks",
+    mic: "safetyChecks",
+    screen: "safetyChecks",
+    offlineEvidence: "offlineEvidence",
+    diagnostics: "diagnostics",
+    downloads: "downloads",
+  };
+  return aliases[folder] || folder || "other";
+}
+
+function parseMediaKey(key: string): {
+  familyId: string | null;
+  deviceId: string | null;
+  feature: string;
+} {
+  const parts = key.split("/").filter(Boolean);
+  if (parts[0] === "downloads") {
+    return { familyId: null, deviceId: null, feature: "downloads" };
+  }
+  if (parts[0] === "families" && parts[2] === "devices" && parts.length >= 4) {
+    return {
+      familyId: parts[1] ?? null,
+      deviceId: parts[3] ?? null,
+      feature: mapMediaFolder(parts[4] || "other"),
+    };
+  }
+  return { familyId: null, deviceId: null, feature: "other" };
+}
+
+function isAllowedOpsPrefix(prefix: string): boolean {
+  return (
+    /^families\/[^/]+\/devices\/[^/]+\/$/.test(prefix) ||
+    /^families\/[^/]+\/devices\/[^/]+\/[^/]+\/$/.test(prefix) ||
+    /^families\/[^/]+\/$/.test(prefix)
+  );
+}
+
+async function ensureStorageTables(env: Env): Promise<void> {
+  await env.DB.exec(`
+    CREATE TABLE IF NOT EXISTS storage_quotas (
+      family_id TEXT PRIMARY KEY,
+      used_bytes INTEGER NOT NULL DEFAULT 0,
+      max_bytes INTEGER,
+      blocked INTEGER NOT NULL DEFAULT 0,
+      updated_at_ms INTEGER NOT NULL
+    );
+  `);
+}
+
+async function listBucketUsage(env: Env): Promise<{
+  objects: number;
+  bytes: number;
+  truncated: boolean;
+  families: Record<
+    string,
+    { bytes: number; objects: number; features: Record<string, { bytes: number; objects: number }> }
+  >;
+  features: Record<string, { bytes: number; objects: number }>;
+  otherBytes: number;
+  otherObjects: number;
+}> {
+  const families: Record<
+    string,
+    { bytes: number; objects: number; features: Record<string, { bytes: number; objects: number }> }
+  > = {};
+  const features: Record<string, { bytes: number; objects: number }> = {};
+  let objects = 0;
+  let bytes = 0;
+  let otherBytes = 0;
+  let otherObjects = 0;
+  let cursor: string | undefined;
+  let pages = 0;
+  const MAX_PAGES = 80;
+  do {
+    const listed = await env.MEDIA_BUCKET.list({ cursor, limit: 1000 });
+    for (const obj of listed.objects) {
+      const size = obj.size || 0;
+      objects += 1;
+      bytes += size;
+      const parsed = parseMediaKey(obj.key);
+      if (!parsed.familyId) {
+        otherBytes += size;
+        otherObjects += 1;
+      } else {
+        const fam =
+          families[parsed.familyId] ??
+          (families[parsed.familyId] = { bytes: 0, objects: 0, features: {} });
+        fam.bytes += size;
+        fam.objects += 1;
+        const feat =
+          fam.features[parsed.feature] ??
+          (fam.features[parsed.feature] = { bytes: 0, objects: 0 });
+        feat.bytes += size;
+        feat.objects += 1;
+      }
+      const featRoll =
+        features[parsed.feature] ?? (features[parsed.feature] = { bytes: 0, objects: 0 });
+      featRoll.bytes += size;
+      featRoll.objects += 1;
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+    pages += 1;
+  } while (cursor && pages < MAX_PAGES);
+  return {
+    objects,
+    bytes,
+    truncated: Boolean(cursor),
+    families,
+    features,
+    otherBytes,
+    otherObjects,
+  };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -570,7 +700,47 @@ export default {
       const contentType = url.searchParams.get("contentType") || "application/octet-stream";
       const body = request.body;
       if (!body) return json({ error: "missing body" }, 400);
+      const familyId = key.match(/^families\/([^/]+)\//)?.[1];
+      const incoming = Number(request.headers.get("content-length") || 0);
+      if (familyId) {
+        try {
+          await ensureStorageTables(env);
+          const row = await env.DB.prepare(
+            `SELECT used_bytes, max_bytes, blocked FROM storage_quotas WHERE family_id = ?`,
+          )
+            .bind(familyId)
+            .first<{ used_bytes: number; max_bytes: number | null; blocked: number }>();
+          if (row?.blocked) {
+            return json({ error: "storage_blocked", familyId }, 507);
+          }
+          if (
+            row &&
+            row.max_bytes != null &&
+            Number(row.max_bytes) > 0 &&
+            Number(row.used_bytes) + incoming > Number(row.max_bytes)
+          ) {
+            return json({ error: "storage_quota", familyId, maxBytes: row.max_bytes }, 507);
+          }
+        } catch {
+          // Quota table may be missing on first deploys — do not block uploads.
+        }
+      }
       await env.MEDIA_BUCKET.put(key, body, { httpMetadata: { contentType } });
+      if (familyId && incoming > 0) {
+        try {
+          await env.DB.prepare(
+            `INSERT INTO storage_quotas (family_id, used_bytes, max_bytes, blocked, updated_at_ms)
+             VALUES (?, ?, NULL, 0, ?)
+             ON CONFLICT(family_id) DO UPDATE SET
+               used_bytes = storage_quotas.used_bytes + excluded.used_bytes,
+               updated_at_ms = excluded.updated_at_ms`,
+          )
+            .bind(familyId, incoming, Date.now())
+            .run();
+        } catch {
+          /* ignore quota bookkeeping errors */
+        }
+      }
       return json({
         path: key,
         url: `${url.origin}/media/${encodeURIComponent(key)}`,
@@ -623,9 +793,7 @@ export default {
     }
 
     if (request.method === "DELETE" && url.pathname.startsWith("/media/")) {
-      const secret = env.MEDIA_PURGE_SECRET?.trim();
-      const auth = request.headers.get("authorization") ?? "";
-      if (!secret || auth !== `Bearer ${secret}`) {
+      if (!requirePurgeAuth(request, env)) {
         return json({ error: "unauthorized" }, 401);
       }
       const key = decodeURIComponent(url.pathname.replace("/media/", ""));
@@ -634,18 +802,72 @@ export default {
       return json({ ok: true, deleted: key });
     }
 
-    // Bulk-deletes every R2 object under a device's media prefix (used by
-    // functions/src/deviceDelete.ts when a parent removes a paired device).
-    // Restricted to the families/{fid}/devices/{did}/ shape so this endpoint can
-    // never be used to wipe an entire family or the whole bucket.
+    if (request.method === "GET" && url.pathname === "/ops/storage-dump") {
+      if (!requirePurgeAuth(request, env)) return json({ error: "unauthorized" }, 401);
+      const usage = await listBucketUsage(env);
+      let d1 = { heartbeatRows: 0, fleetRows: 0, healthRows: 0 };
+      try {
+        const hb = await env.DB.prepare(`SELECT COUNT(*) as n FROM device_heartbeats`).first<{ n: number }>();
+        const fleet = await env.DB.prepare(`SELECT COUNT(*) as n FROM fleet_snapshots`).first<{ n: number }>();
+        const health = await env.DB.prepare(`SELECT COUNT(*) as n FROM health_events`).first<{ n: number }>();
+        d1 = {
+          heartbeatRows: Number(hb?.n ?? 0),
+          fleetRows: Number(fleet?.n ?? 0),
+          healthRows: Number(health?.n ?? 0),
+        };
+      } catch {
+        /* D1 probe is best-effort */
+      }
+      return json({ ok: true, takenAtMs: Date.now(), r2: usage, d1 });
+    }
+
+    if (request.method === "POST" && url.pathname === "/ops/quotas") {
+      if (!requirePurgeAuth(request, env)) return json({ error: "unauthorized" }, 401);
+      await ensureStorageTables(env);
+      const body = (await request.json().catch(() => ({}))) as {
+        families?: Array<{
+          familyId?: string;
+          usedBytes?: number;
+          maxBytes?: number | null;
+          blocked?: boolean;
+        }>;
+      };
+      const now = Date.now();
+      let upserted = 0;
+      for (const row of body.families ?? []) {
+        const familyId = row.familyId?.trim();
+        if (!familyId) continue;
+        await env.DB.prepare(
+          `INSERT INTO storage_quotas (family_id, used_bytes, max_bytes, blocked, updated_at_ms)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(family_id) DO UPDATE SET
+             used_bytes = excluded.used_bytes,
+             max_bytes = excluded.max_bytes,
+             blocked = excluded.blocked,
+             updated_at_ms = excluded.updated_at_ms`,
+        )
+          .bind(
+            familyId,
+            Number(row.usedBytes ?? 0),
+            row.maxBytes == null ? null : Number(row.maxBytes),
+            row.blocked ? 1 : 0,
+            now,
+          )
+          .run();
+        upserted += 1;
+      }
+      return json({ ok: true, upserted });
+    }
+
+    // Bulk-deletes R2 objects under a family, device, or feature prefix. Used by
+    // device delete, retention purge, and TCD storage ops. Never allows wiping
+    // the whole bucket.
     if (request.method === "DELETE" && url.pathname.startsWith("/prefix/")) {
-      const secret = env.MEDIA_PURGE_SECRET?.trim();
-      const auth = request.headers.get("authorization") ?? "";
-      if (!secret || auth !== `Bearer ${secret}`) {
+      if (!requirePurgeAuth(request, env)) {
         return json({ error: "unauthorized" }, 401);
       }
       const prefix = decodeURIComponent(url.pathname.replace("/prefix/", ""));
-      if (!prefix || !/^families\/[^/]+\/devices\/[^/]+\/$/.test(prefix)) {
+      if (!prefix || !isAllowedOpsPrefix(prefix)) {
         return json({ error: "invalid prefix" }, 400);
       }
       let deleted = 0;

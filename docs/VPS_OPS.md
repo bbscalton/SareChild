@@ -103,7 +103,18 @@ See `/opt/sarechild/build/README.md` on the server after bootstrap.
 
 Reseller ledger export: template at `/opt/sarechild/backup/reseller-ledger-export.mjs` (implement with `firebase-admin`).
 
-## Monitoring
+## TCD storage dump
+
+The **Storage** tab on TCD (`https://bbscalton.github.io/SareChild/tcd`) inventories this droplet (TURN, staging, disk, coturn/nginx) plus Firebase and Cloudflare usage.
+
+Install the 1-minute health JSON:
+
+```bash
+scp scripts/vps/install-ops-health.sh root@107.170.15.179:/tmp/
+ssh root@107.170.15.179 bash /tmp/install-ops-health.sh
+```
+
+Then open TCD → Storage. Optional: set `DO_API_TOKEN` on Cloud Functions so droplet size/region come from DigitalOcean.
 
 - Cron: `/opt/sarechild/monitoring/healthcheck.sh` every 5 minutes → `/var/log/sarechild-health.log`
 - Optional: Uptime Kuma Docker on `127.0.0.1:3001` (SSH tunnel to configure)

@@ -34,6 +34,40 @@ function requireDb() {
   return db
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+}
+
+function readWhatsAppEnabled(data: Record<string, unknown>): boolean {
+  if (typeof data.whatsappProtectionEnabled === 'boolean') return data.whatsappProtectionEnabled
+  const wp = asRecord(data.whatsappProtection)
+  if (!wp) return false
+  if (typeof wp.enabled === 'boolean') return wp.enabled
+  return Boolean(wp.consent && wp.notificationAccess)
+}
+
+function readCallRecordingEnabled(data: Record<string, unknown>): boolean {
+  if (typeof data.callRecordingEnabled === 'boolean') return data.callRecordingEnabled
+  const status = asRecord(data.callRecordingStatus)
+  return Boolean(status?.enabled)
+}
+
+function readUninstallEnabled(data: Record<string, unknown>): boolean {
+  const status = asRecord(data.uninstallProtectionStatus)
+  return Boolean(status?.protectionEnabled)
+}
+
+/** Pairing leftover: never sent a versioned FGS heartbeat and is already past the freshness window. */
+export function isPairingLeftover(
+  device: { childAppVersionName?: string | null; monitoringActive?: boolean; lastHeartbeatMs: number },
+  nowMs: number,
+): boolean {
+  const neverVersioned = !device.childAppVersionName
+  const neverMonitored = !device.monitoringActive
+  const stale = device.lastHeartbeatMs <= 0 || nowMs - device.lastHeartbeatMs > WENT_DARK_AFTER_MS
+  return neverVersioned && neverMonitored && stale
+}
+
 export async function getFamilyId(): Promise<string> {
   const uid = auth?.currentUser?.uid
   if (!uid) throw new Error('Not signed in')
@@ -66,9 +100,10 @@ export function observeDevices(familyId: string, onData: (rows: DeviceStatus[]) 
               : data.callRecordingStatus && typeof data.callRecordingStatus === 'object'
                 ? JSON.stringify(data.callRecordingStatus)
                 : null,
+          callRecordingEnabled: readCallRecordingEnabled(data),
           screenSnapshotsActive: Boolean(data.screenSnapshotsActive),
           cameraSnapshotsActive: Boolean(data.cameraSnapshotsActive),
-          whatsappProtectionEnabled: Boolean(data.whatsappProtectionEnabled),
+          whatsappProtectionEnabled: readWhatsAppEnabled(data),
           accessibilityAccess: data.accessibilityAccess == null ? null : Boolean(data.accessibilityAccess),
           uninstallProtectionStatus:
             typeof data.uninstallProtectionStatus === 'string'
@@ -76,6 +111,7 @@ export function observeDevices(familyId: string, onData: (rows: DeviceStatus[]) 
               : data.uninstallProtectionStatus && typeof data.uninstallProtectionStatus === 'object'
                 ? 'configured'
                 : null,
+          uninstallProtectionEnabled: readUninstallEnabled(data),
         } satisfies DeviceStatus
       }),
     )
@@ -332,18 +368,43 @@ export async function runTcdHealthCheck(familyId: string): Promise<TcdReport> {
   try {
     const started = performance.now()
     const devicesSnap = await getDocs(collection(database, COL.families, familyId, COL.devices))
-    const staleCount = devicesSnap.docs.filter((d) => now - Number(d.get('lastHeartbeatMs') ?? 0) > WENT_DARK_AFTER_MS).length
+    const leftoverCount = devicesSnap.docs.filter((d) =>
+      isPairingLeftover(
+        {
+          childAppVersionName: (d.get('childAppVersionName') as string | undefined) ?? null,
+          monitoringActive: Boolean(d.get('monitoringActive')),
+          lastHeartbeatMs: Number(d.get('lastHeartbeatMs') ?? 0),
+        },
+        now,
+      ),
+    ).length
+    const liveCount = devicesSnap.size - leftoverCount
+    const staleLiveCount = devicesSnap.docs.filter((d) => {
+      const lastHb = Number(d.get('lastHeartbeatMs') ?? 0)
+      const leftover = isPairingLeftover(
+        {
+          childAppVersionName: (d.get('childAppVersionName') as string | undefined) ?? null,
+          monitoringActive: Boolean(d.get('monitoringActive')),
+          lastHeartbeatMs: lastHb,
+        },
+        now,
+      )
+      return !leftover && (lastHb <= 0 || now - lastHb > WENT_DARK_AFTER_MS)
+    }).length
+    const leftoverNote = leftoverCount > 0 ? ` ${leftoverCount} pairing leftover(s) excluded.` : ''
     checks.push({
       id: 'child-heartbeats',
       label: 'Child heartbeat freshness',
       group: 'fleet',
-      status: devicesSnap.size === 0 ? 'warn' : staleCount === 0 ? 'ok' : 'warn',
+      status: liveCount === 0 ? 'warn' : staleLiveCount === 0 ? 'ok' : 'warn',
       message:
         devicesSnap.size === 0
           ? 'No child devices registered yet.'
-          : staleCount === 0
-            ? `${devicesSnap.size}/${devicesSnap.size} device(s) online and reporting.`
-            : `${staleCount}/${devicesSnap.size} device(s) offline or stale.`,
+          : liveCount === 0
+            ? `No devices have started protection yet.${leftoverNote}`
+            : staleLiveCount === 0
+              ? `${liveCount}/${liveCount} live device(s) online and reporting.${leftoverNote}`
+              : `${staleLiveCount}/${liveCount} live device(s) offline or stale.${leftoverNote}`,
       latencyMs: Math.round(performance.now() - started),
     })
   } catch (e) {
@@ -712,37 +773,70 @@ export async function loadApkVersionManifests(): Promise<ApkVersionManifest[]> {
 }
 
 export function buildFeatureHealth(devices: DeviceStatus[], nowMs: number): FeatureHealthCard[] {
-  const online = devices.filter((d) => d.lastHeartbeatMs > 0 && nowMs - d.lastHeartbeatMs < WENT_DARK_AFTER_MS)
+  const live = devices.filter((d) => !isPairingLeftover(d, nowMs))
+  const online = live.filter((d) => d.lastHeartbeatMs > 0 && nowMs - d.lastHeartbeatMs < WENT_DARK_AFTER_MS)
   const withMonitoring = online.filter((d) => d.monitoringActive).length
-  const withCall = devices.filter((d) => Boolean(d.callRecordingStatus)).length
-  const withScreen = devices.filter((d) => d.screenSnapshotsActive).length
-  const withCamera = devices.filter((d) => d.cameraSnapshotsActive).length
-  const withWa = devices.filter((d) => d.whatsappProtectionEnabled).length
-  const withA11y = devices.filter((d) => d.accessibilityAccess === true).length
-  const withUninstall = devices.filter((d) => Boolean(d.uninstallProtectionStatus)).length
+  const withCall = live.filter((d) => d.callRecordingEnabled).length
+  const withScreen = live.filter((d) => d.screenSnapshotsActive).length
+  const withCamera = live.filter((d) => d.cameraSnapshotsActive).length
+  const withWa = live.filter((d) => d.whatsappProtectionEnabled).length
+  const withA11y = live.filter((d) => d.accessibilityAccess === true).length
+  const withUninstall = live.filter((d) => d.uninstallProtectionEnabled).length
 
-  const card = (
+  const alwaysOn = (
     id: string,
     label: string,
     active: number,
-    denom: number,
     emptyDetail: string,
   ): FeatureHealthCard => {
-    if (devices.length === 0) {
+    if (live.length === 0) {
       return { id, label, status: 'warn', detail: emptyDetail }
     }
-    const status: FeatureHealthCard['status'] = active > 0 ? 'ok' : 'warn'
-    return { id, label, status, detail: `${active} / ${Math.max(denom, 1)} devices` }
+    return {
+      id,
+      label,
+      status: active > 0 ? 'ok' : 'warn',
+      detail: `${active} / ${live.length} live devices`,
+    }
   }
 
+  const onDemand = (id: string, label: string, active: number): FeatureHealthCard => {
+    if (live.length === 0) {
+      return { id, label, status: 'warn', detail: 'No live devices registered' }
+    }
+    return {
+      id,
+      label,
+      status: 'ok',
+      detail: active > 0 ? `${active} / ${live.length} capturing` : `idle (0 / ${live.length})`,
+    }
+  }
+
+  const monitoring: FeatureHealthCard =
+    live.length === 0
+      ? { id: 'monitoring', label: 'Monitoring FGS', status: 'warn', detail: 'No live devices registered' }
+      : online.length === 0
+        ? {
+            id: 'monitoring',
+            label: 'Monitoring FGS',
+            status: 'warn',
+            detail: 'No live heartbeat — cannot confirm FGS',
+          }
+        : {
+            id: 'monitoring',
+            label: 'Monitoring FGS',
+            status: withMonitoring > 0 ? 'ok' : 'warn',
+            detail: `${withMonitoring} / ${online.length} live devices`,
+          }
+
   return [
-    card('monitoring', 'Monitoring FGS', withMonitoring, Math.max(online.length, 1), 'No devices registered'),
-    card('call-capture', 'Call capture', withCall, devices.length, 'No devices registered'),
-    card('screen-snapshots', 'Screen snapshots', withScreen, devices.length, 'No devices registered'),
-    card('camera-snapshots', 'Camera snapshots', withCamera, devices.length, 'No devices registered'),
-    card('whatsapp', 'WhatsApp protection', withWa, devices.length, 'No devices registered'),
-    card('accessibility', 'Accessibility', withA11y, devices.length, 'No devices registered'),
-    card('uninstall', 'Uninstall protection', withUninstall, devices.length, 'No devices registered'),
+    monitoring,
+    alwaysOn('call-capture', 'Call capture', withCall, 'No live devices registered'),
+    onDemand('screen-snapshots', 'Screen snapshots', withScreen),
+    onDemand('camera-snapshots', 'Camera snapshots', withCamera),
+    alwaysOn('whatsapp', 'WhatsApp protection', withWa, 'No live devices registered'),
+    alwaysOn('accessibility', 'Accessibility', withA11y, 'No live devices registered'),
+    alwaysOn('uninstall', 'Uninstall protection', withUninstall, 'No live devices registered'),
   ]
 }
 

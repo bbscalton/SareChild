@@ -6,6 +6,7 @@ import * as adminRepo from './adminRepo'
 import { AdminAccountsPanel } from './AdminAccountsPanel'
 import { AdminResellersPanel } from './AdminResellersPanel'
 import { AdminFeaturesPanel } from './AdminFeaturesPanel'
+import { AdminStoragePanel } from './AdminStoragePanel'
 import { AdminSystemPanel } from './AdminSystemPanel'
 import { ArchitectureTree, buildArchNodes } from './ArchitectureTree'
 import { PARENT_WEB_URL, TCD_URL, WENT_DARK_AFTER_MS } from './firebase'
@@ -315,14 +316,18 @@ function TcdDashboard({
 
   const liveFleet = useMemo(() => {
     const cutoff24h = nowTick - 24 * 60 * 60 * 1000
-    const onlineDevices = devices.filter((d) => isDeviceOnline(d, nowTick)).length
+    const leftovers = devices.filter((d) => repo.isPairingLeftover(d, nowTick))
+    const liveDevices = devices.filter((d) => !repo.isPairingLeftover(d, nowTick))
+    const onlineDevices = liveDevices.filter((d) => isDeviceOnline(d, nowTick)).length
     const alertsLast24h = alerts.filter((a) => a.createdAtMs >= cutoff24h).length
     const criticalAlertsLast24h = alerts.filter((a) => a.createdAtMs >= cutoff24h && a.severity.toUpperCase() === 'CRITICAL').length
     const pendingCommands = commands.filter((c) => c.status === 'PENDING').length
     return {
-      registeredDevices: devices.length,
+      registeredDevices: liveDevices.length,
       onlineDevices,
-      offlineDevices: Math.max(0, devices.length - onlineDevices),
+      offlineDevices: Math.max(0, liveDevices.length - onlineDevices),
+      leftoverDevices: leftovers.length,
+      leftoverNames: leftovers.map((d) => d.childName),
       guardians: guardians.length,
       alertsLast24h,
       criticalAlertsLast24h,
@@ -423,6 +428,11 @@ function TcdDashboard({
         `${liveFleet.offlineDevices} child device(s) offline — open the SareChild child app, tap Start protection, and confirm permissions.`,
       )
     }
+    if (liveFleet.leftoverDevices > 0) {
+      items.push(
+        `${liveFleet.leftoverDevices} pairing leftover(s) (${liveFleet.leftoverNames.join(', ')}) — never started protection. Remove from the parent dashboard if unused.`,
+      )
+    }
     if (liveFleet.guardians === 0) {
       items.push('No guardians in family record — run Auto-repair to restore the owner guardian entry.')
     }
@@ -472,6 +482,7 @@ function TcdDashboard({
                 ['accounts', 'Accounts'],
                 ['resellers', 'Resellers'],
                 ['features', 'Features'],
+                ['storage', 'Storage'],
                 ['system', 'System'],
                 ['architecture', 'Architecture'],
               ] as const
@@ -573,6 +584,10 @@ function TcdDashboard({
           <AdminSystemPanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
         )}
 
+        {tab === 'storage' && isAdmin && (
+          <AdminStoragePanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
+        )}
+
         {tab === 'features' && isAdmin && (
           <AdminFeaturesPanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
         )}
@@ -614,6 +629,7 @@ function TcdDashboard({
               </p>
               <p className="tcd-pulse-meta">
                 Online now · {liveFleet.offlineDevices} offline
+                {liveFleet.leftoverDevices > 0 ? ` · ${liveFleet.leftoverDevices} leftover` : ''}
                 {accountPulse ? ` · ${accountPulse.devicesKnown} across accounts` : ''}
               </p>
             </article>
@@ -712,6 +728,8 @@ function FleetCard({
     registeredDevices: number
     onlineDevices: number
     offlineDevices: number
+    leftoverDevices: number
+    leftoverNames: string[]
     guardians: number
     alertsLast24h: number
     criticalAlertsLast24h: number
@@ -755,7 +773,8 @@ function FleetCard({
       {devices.length > 0 && (
         <ul className="tcd-device-strip">
           {devices.slice(0, 8).map((d) => {
-            const online = isDeviceOnline(d, nowTick)
+            const leftover = repo.isPairingLeftover(d, nowTick)
+            const online = !leftover && isDeviceOnline(d, nowTick)
             return (
               <li key={d.id} className={`tcd-device-chip ${online ? 'online' : 'offline'}`}>
                 <span className="tcd-device-dot" aria-hidden="true" />
@@ -763,7 +782,7 @@ function FleetCard({
                   <strong>{d.childName}</strong>
                   <span className="muted small">
                     {' '}
-                    · {d.childAppVersionName || 'unknown ver'} · {timeAgo(d.lastHeartbeatMs)}
+                    · {leftover ? 'pairing leftover' : d.childAppVersionName || 'unknown ver'} · {timeAgo(d.lastHeartbeatMs)}
                   </span>
                 </span>
               </li>
