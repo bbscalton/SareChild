@@ -273,6 +273,10 @@ export type StorageAccountRow = {
 
 export type StorageDump = {
   takenAtMs: number
+  error?: string | null
+  warnings?: string[]
+  countsTruncated?: boolean
+  stale?: boolean
   limits: {
     globalBytesMax: number
     defaultAccountBytesMax: number
@@ -283,7 +287,7 @@ export type StorageDump = {
   backends: {
     r2: {
       reachable: boolean
-      error?: string
+      error?: string | null
       bytes: number
       objects: number
       truncated: boolean
@@ -291,7 +295,7 @@ export type StorageDump = {
       bucket: string
     }
     firestore: { docs: number; estimatedBytes: number; families: number }
-    firebaseStorage: { bytes: number; objects: number; truncated: boolean }
+    firebaseStorage: { bytes: number; objects: number; truncated: boolean; error?: string | null }
     d1: Record<string, number>
     kv: { note: string }
   }
@@ -306,7 +310,14 @@ export type StorageDump = {
   }
 }
 
-export type InfraProbe = { ok: boolean; status: number | null; latencyMs: number; body?: unknown }
+export type InfraProbe = {
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  body?: unknown
+  inconclusive?: boolean
+  note?: string | null
+}
 
 export type InfraStatus = {
   takenAtMs: number
@@ -317,8 +328,9 @@ export type InfraStatus = {
     probes: {
       opsHealth: InfraProbe
       staging: InfraProbe
-      turn3478: { ok: boolean; latencyMs: number }
+      turn3478: { ok: boolean; latencyMs: number; inconclusive?: boolean; note?: string | null }
     }
+    mixedContentNote?: string
     digitalocean: Record<string, unknown>
     agentInstalled: boolean
     installHint: string

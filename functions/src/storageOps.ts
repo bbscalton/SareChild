@@ -143,6 +143,16 @@ function emptyFeatureMap(): Record<string, { docs: number; estimatedBytes: numbe
   return out;
 }
 
+function jsonSafe<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function positiveOrDefault(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
 async function loadLimits(): Promise<StorageLimits> {
   const snap = await db.collection("adminConfig").doc("storageLimits").get();
   const data = snap.data() ?? {};
@@ -151,8 +161,8 @@ async function loadLimits(): Promise<StorageLimits> {
     ...((data.featureBytesMax as Record<string, number> | undefined) ?? {}),
   };
   return {
-    globalBytesMax: Number(data.globalBytesMax ?? DEFAULT_LIMITS.globalBytesMax),
-    defaultAccountBytesMax: Number(data.defaultAccountBytesMax ?? DEFAULT_LIMITS.defaultAccountBytesMax),
+    globalBytesMax: positiveOrDefault(data.globalBytesMax, DEFAULT_LIMITS.globalBytesMax),
+    defaultAccountBytesMax: positiveOrDefault(data.defaultAccountBytesMax, DEFAULT_LIMITS.defaultAccountBytesMax),
     featureBytesMax,
     updatedAtMs: Number(data.updatedAtMs ?? 0),
     updatedBy: (data.updatedBy as string | undefined) ?? null,
@@ -164,6 +174,7 @@ async function r2Fetch(path: string, init: RequestInit = {}): Promise<Response |
   try {
     return await fetch(`${R2_PROXY_BASE}${path}`, {
       ...init,
+      signal: init.signal ?? AbortSignal.timeout(12_000),
       headers: {
         Authorization: `Bearer ${R2_PURGE_SECRET}`,
         "content-type": "application/json",
@@ -200,15 +211,30 @@ type R2Dump = {
   otherObjects: number;
 };
 
-async function fetchR2Dump(): Promise<{ r2: R2Dump | null; d1: Record<string, number>; error?: string }> {
+async function fetchR2Dump(): Promise<{ r2: R2Dump | null; d1: Record<string, number>; error: string | null }> {
   const res = await r2Fetch("/ops/storage-dump");
-  if (!res) return { r2: null, d1: {}, error: "R2_MEDIA_PURGE_SECRET not set" };
+  if (!res) {
+    return {
+      r2: null,
+      d1: {},
+      error: R2_PURGE_SECRET ? "R2 dump request failed (timeout or network)" : "R2_MEDIA_PURGE_SECRET not set",
+    };
+  }
   if (!res.ok) return { r2: null, d1: {}, error: `R2 dump HTTP ${res.status}` };
   const body = (await res.json()) as { r2?: R2Dump; d1?: Record<string, number> };
-  return { r2: body.r2 ?? null, d1: body.d1 ?? {} };
+  return {
+    r2: body.r2 ?? null,
+    d1: body.d1 ?? {},
+    error: body.r2 ? null : "R2 dump missing r2 payload",
+  };
 }
 
-async function fetchFirebaseStorageUsage(): Promise<{ bytes: number; objects: number; truncated: boolean }> {
+async function fetchFirebaseStorageUsage(): Promise<{
+  bytes: number;
+  objects: number;
+  truncated: boolean;
+  error: string | null;
+}> {
   try {
     const bucket = admin.storage().bucket();
     const [files, , api] = await bucket.getFiles({
@@ -222,10 +248,12 @@ async function fetchFirebaseStorageUsage(): Promise<{ bytes: number; objects: nu
       bytes,
       objects: files.length,
       truncated: Boolean((api as { nextPageToken?: string } | undefined)?.nextPageToken),
+      error: null,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     logger.warn("Firebase Storage listing failed", err);
-    return { bytes: 0, objects: 0, truncated: false };
+    return { bytes: 0, objects: 0, truncated: false, error: message };
   }
 }
 
@@ -311,14 +339,109 @@ async function fetchDoDroplet(): Promise<Record<string, unknown>> {
   }
 }
 
+async function countColSafe(ref: FirebaseFirestore.CollectionReference): Promise<number> {
+  try {
+    return await countCol(ref);
+  } catch (err) {
+    logger.warn(`count() failed for ${ref.path}`, err);
+    return 0;
+  }
+}
+
+function accountSkeleton(opts: {
+  familyId: string;
+  parentUid: string | null;
+  email: string;
+  childNames: string[];
+  deviceCount: number;
+  features: ReturnType<typeof emptyFeatureMap>;
+  firestoreDocs: number;
+  r2Bytes: number;
+  r2Objects: number;
+  estimatedBytes: number;
+  accountBytesMax: number;
+  storageBlocked: boolean;
+}): Record<string, unknown> {
+  const usedBytes = opts.r2Bytes + opts.estimatedBytes;
+  return {
+    familyId: opts.familyId,
+    parentUid: opts.parentUid,
+    email: opts.email,
+    childNames: opts.childNames,
+    deviceCount: opts.deviceCount,
+    firestoreDocs: opts.firestoreDocs,
+    r2Bytes: opts.r2Bytes,
+    r2Objects: opts.r2Objects,
+    estimatedFirestoreBytes: opts.estimatedBytes,
+    usedBytes,
+    accountBytesMax: opts.accountBytesMax,
+    overLimit: usedBytes > opts.accountBytesMax,
+    storageBlocked: opts.storageBlocked,
+    features: opts.features,
+  };
+}
+
+const MAX_FAMILIES_IN_DUMP = 80;
+const COUNT_BUDGET_MS = 22_000;
+
+function emptyDumpShell(limits: StorageLimits, error: string | null, warnings: string[]): Record<string, unknown> {
+  return {
+    takenAtMs: Date.now(),
+    error,
+    warnings,
+    countsTruncated: false,
+    stale: false,
+    limits,
+    backends: {
+      r2: {
+        reachable: false,
+        error: null,
+        bytes: 0,
+        objects: 0,
+        truncated: false,
+        otherBytes: 0,
+        bucket: "luscsl-uploads",
+      },
+      firestore: { docs: 0, estimatedBytes: 0, families: 0 },
+      firebaseStorage: { bytes: 0, objects: 0, truncated: false, error: null },
+      d1: {},
+      kv: { note: "Edge cache flags only — not billed per object." },
+    },
+    features: STORAGE_FEATURES.map((f) => ({
+      ...f,
+      docs: 0,
+      estimatedBytes: 0,
+      r2Bytes: 0,
+      r2Objects: 0,
+      limitBytes: limits.featureBytesMax[f.id] ?? 0,
+    })),
+    accounts: [],
+    totals: {
+      usedBytes: 0,
+      r2Bytes: 0,
+      firebaseStorageBytes: 0,
+      accountCount: 0,
+      overLimitCount: 0,
+    },
+  };
+}
+
 export async function buildStorageDump(): Promise<Record<string, unknown>> {
+  const warnings: string[] = [];
   const [limits, r2Bundle, firebaseStorage, profilesSnap, familiesSnap] = await Promise.all([
     loadLimits(),
-    fetchR2Dump(),
+    fetchR2Dump().catch((err) => ({
+      r2: null as R2Dump | null,
+      d1: {} as Record<string, number>,
+      error: err instanceof Error ? err.message : String(err),
+    })),
     fetchFirebaseStorageUsage(),
     db.collection("parentProfiles").get(),
     db.collection("families").get(),
   ]);
+
+  if (r2Bundle.error) warnings.push(`R2: ${r2Bundle.error}`);
+  if (firebaseStorage.error) warnings.push(`Firebase Storage: ${firebaseStorage.error}`);
 
   const emailByFamily = new Map<string, { uid: string; email: string }>();
   for (const p of profilesSnap.docs) {
@@ -327,24 +450,54 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     emailByFamily.set(familyId, { uid: p.id, email: (p.get("email") as string | undefined) || "" });
   }
 
+  const familyDocs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  for (const family of familiesSnap.docs) familyDocs.set(family.id, family);
+
+  const familyIds = [...new Set([...familyDocs.keys(), ...emailByFamily.keys()])];
+  if (familyIds.length > MAX_FAMILIES_IN_DUMP) {
+    warnings.push(`Truncated to ${MAX_FAMILIES_IN_DUMP} of ${familyIds.length} families for this dump`);
+  }
+  const ids = familyIds.slice(0, MAX_FAMILIES_IN_DUMP);
+
   const r2Families = r2Bundle.r2?.families ?? {};
   const accounts: Array<Record<string, unknown>> = [];
   let firestoreDocs = 0;
+  let countsTruncated = false;
+  const countsStarted = Date.now();
 
-  for (const family of familiesSnap.docs) {
+  for (const familyId of ids) {
+    if (Date.now() - countsStarted > COUNT_BUDGET_MS) {
+      countsTruncated = true;
+      break;
+    }
+    const family = familyDocs.get(familyId);
+    const familyRef = family?.ref ?? db.collection("families").doc(familyId);
     const features = emptyFeatureMap();
     let docs = 0;
-    for (const col of FAMILY_COUNT_COLS) {
-      const n = await countCol(family.ref.collection(col));
+    const familyCounts = await Promise.all(FAMILY_COUNT_COLS.map(async (col) => ({ col, n: await countColSafe(familyRef.collection(col)) })));
+    for (const { col, n } of familyCounts) {
       docs += n;
       const feat = COL_TO_FEATURE[col] ?? "other";
       features[feat].docs += n;
       features[feat].estimatedBytes += n * ESTIMATE_BYTES_PER_DOC;
     }
-    const devicesSnap = await family.ref.collection("devices").get();
-    for (const device of devicesSnap.docs) {
-      for (const col of DEVICE_COUNT_COLS) {
-        const n = await countCol(device.ref.collection(col));
+    let devicesSnap: FirebaseFirestore.QuerySnapshot | { docs: FirebaseFirestore.QueryDocumentSnapshot[]; size: number } = {
+      docs: [],
+      size: 0,
+    };
+    try {
+      devicesSnap = await familyRef.collection("devices").get();
+    } catch (err) {
+      logger.warn(`devices listing failed for ${familyId}`, err);
+    }
+    const deviceCounts = await Promise.all(
+      devicesSnap.docs.map(async (device) => {
+        const cols = await Promise.all(DEVICE_COUNT_COLS.map(async (col) => ({ col, n: await countColSafe(device.ref.collection(col)) })));
+        return { device, cols };
+      }),
+    );
+    for (const { cols } of deviceCounts) {
+      for (const { col, n } of cols) {
         docs += n;
         const feat = COL_TO_FEATURE[col] ?? "other";
         features[feat].docs += n;
@@ -352,7 +505,7 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
       }
     }
     firestoreDocs += docs;
-    const r2Fam = r2Families[family.id];
+    const r2Fam = r2Families[familyId];
     if (r2Fam) {
       for (const [feat, usage] of Object.entries(r2Fam.features ?? {})) {
         const slot = features[feat] ?? (features[feat] = { docs: 0, estimatedBytes: 0, r2Bytes: 0, r2Objects: 0 });
@@ -360,28 +513,60 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
         slot.r2Objects += usage.objects;
       }
     }
-    const r2Bytes = Number(r2Fam?.bytes ?? 0);
-    const estimatedBytes = Object.values(features).reduce((s, f) => s + f.estimatedBytes, 0);
-    const usedBytes = r2Bytes + estimatedBytes;
-    const override = Number(family.get("storageBytesMax") ?? 0);
-    const accountMax = override > 0 ? override : limits.defaultAccountBytesMax;
-    const owner = emailByFamily.get(family.id);
-    accounts.push({
-      familyId: family.id,
-      parentUid: owner?.uid || family.get("parentUid") || null,
-      email: owner?.email || family.get("parentEmail") || "",
-      childNames: devicesSnap.docs.map((d) => d.get("childName") || d.id),
-      deviceCount: devicesSnap.size,
-      firestoreDocs: docs,
-      r2Bytes,
-      r2Objects: Number(r2Fam?.objects ?? 0),
-      estimatedFirestoreBytes: estimatedBytes,
-      usedBytes,
-      accountBytesMax: accountMax,
-      overLimit: usedBytes > accountMax,
-      storageBlocked: Boolean(family.get("storageBlocked")),
-      features,
-    });
+    const owner = emailByFamily.get(familyId);
+    const override = Number(family?.get("storageBytesMax") ?? 0);
+    accounts.push(
+      accountSkeleton({
+        familyId,
+        parentUid: owner?.uid || (family?.get("parentUid") as string | undefined) || null,
+        email: owner?.email || (family?.get("parentEmail") as string | undefined) || "",
+        childNames: devicesSnap.docs.map((d) => (d.get("childName") as string | undefined) || d.id),
+        deviceCount: devicesSnap.size,
+        features,
+        firestoreDocs: docs,
+        r2Bytes: Number(r2Fam?.bytes ?? 0),
+        r2Objects: Number(r2Fam?.objects ?? 0),
+        estimatedBytes: Object.values(features).reduce((s, f) => s + f.estimatedBytes, 0),
+        accountBytesMax: override > 0 ? override : limits.defaultAccountBytesMax,
+        storageBlocked: Boolean(family?.get("storageBlocked")),
+      }),
+    );
+  }
+
+  if (countsTruncated) {
+    warnings.push("Doc counts timed out; remaining families are listed with R2 bytes only so Clear/Reset still works.");
+    const seen = new Set(accounts.map((a) => String(a.familyId)));
+    for (const familyId of ids) {
+      if (seen.has(familyId)) continue;
+      const family = familyDocs.get(familyId);
+      const owner = emailByFamily.get(familyId);
+      const r2Fam = r2Families[familyId];
+      const features = emptyFeatureMap();
+      if (r2Fam) {
+        for (const [feat, usage] of Object.entries(r2Fam.features ?? {})) {
+          const slot = features[feat] ?? (features[feat] = { docs: 0, estimatedBytes: 0, r2Bytes: 0, r2Objects: 0 });
+          slot.r2Bytes += usage.bytes;
+          slot.r2Objects += usage.objects;
+        }
+      }
+      const override = Number(family?.get("storageBytesMax") ?? 0);
+      accounts.push(
+        accountSkeleton({
+          familyId,
+          parentUid: owner?.uid || (family?.get("parentUid") as string | undefined) || null,
+          email: owner?.email || (family?.get("parentEmail") as string | undefined) || "",
+          childNames: [],
+          deviceCount: 0,
+          features,
+          firestoreDocs: 0,
+          r2Bytes: Number(r2Fam?.bytes ?? 0),
+          r2Objects: Number(r2Fam?.objects ?? 0),
+          estimatedBytes: 0,
+          accountBytesMax: override > 0 ? override : limits.defaultAccountBytesMax,
+          storageBlocked: Boolean(family?.get("storageBlocked")),
+        }),
+      );
+    }
   }
 
   accounts.sort((a, b) => Number(b.usedBytes) - Number(a.usedBytes));
@@ -400,6 +585,10 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
   const r2Bytes = Number(r2Bundle.r2?.bytes ?? 0);
   const dump = {
     takenAtMs: Date.now(),
+    error: null as string | null,
+    warnings,
+    countsTruncated,
+    stale: false,
     limits,
     backends: {
       r2: {
@@ -411,8 +600,17 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
         otherBytes: Number(r2Bundle.r2?.otherBytes ?? 0),
         bucket: "luscsl-uploads",
       },
-      firestore: { docs: firestoreDocs, estimatedBytes: firestoreDocs * ESTIMATE_BYTES_PER_DOC, families: familiesSnap.size },
-      firebaseStorage: firebaseStorage,
+      firestore: {
+        docs: firestoreDocs,
+        estimatedBytes: firestoreDocs * ESTIMATE_BYTES_PER_DOC,
+        families: familyIds.length,
+      },
+      firebaseStorage: {
+        bytes: firebaseStorage.bytes,
+        objects: firebaseStorage.objects,
+        truncated: firebaseStorage.truncated,
+        error: firebaseStorage.error,
+      },
       d1: r2Bundle.d1,
       kv: { note: "Edge cache flags only — not billed per object." },
     },
@@ -431,15 +629,42 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     },
   };
 
-  await db.collection("adminConfig").doc("storageDump").set(dump, { merge: true });
-  return dump;
+  const safe = jsonSafe(dump);
+  try {
+    await db.collection("adminConfig").doc("storageDump").set(safe);
+  } catch (err) {
+    logger.warn("storageDump persist skipped", err);
+    const persistNote = "Could not cache dump in Firestore (response still includes live accounts).";
+    const nextWarnings = [...warnings, persistNote];
+    (safe as { warnings: string[] }).warnings = nextWarnings;
+  }
+  return jsonSafe(safe);
 }
 
 export const adminGetStorageDump = onCall(
-  { cors: true, timeoutSeconds: 300, memory: "1GiB" },
+  { cors: true, timeoutSeconds: 120, memory: "1GiB" },
   async (request) => {
     assertProjectAdmin(request);
-    return buildStorageDump();
+    try {
+      return await buildStorageDump();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("buildStorageDump failed", err);
+      const cached = await db.collection("adminConfig").doc("storageDump").get();
+      if (cached.exists) {
+        return jsonSafe({
+          ...cached.data(),
+          stale: true,
+          error: message,
+        });
+      }
+      const limits: StorageLimits = {
+        ...DEFAULT_LIMITS,
+        updatedAtMs: 0,
+        updatedBy: null,
+      };
+      return jsonSafe(emptyDumpShell(limits, message, ["Live dump failed before accounts were collected."]));
+    }
   },
 );
 
@@ -634,12 +859,32 @@ export const adminFactoryResetAccount = onCall({ cors: true, timeoutSeconds: 180
   return { ok: true, familyId };
 });
 
-export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 30 }, async (request) => {
+function probeFailureNote(
+  kind: "http-private" | "tcp-turn",
+  probe: { ok: boolean; status: number | null; body?: unknown },
+): string | null {
+  if (probe.ok) return null;
+  const err =
+    typeof probe.body === "object" && probe.body && "error" in probe.body
+      ? String((probe.body as { error: unknown }).error)
+      : "";
+  if (kind === "tcp-turn") {
+    return "Cloud Functions TCP to :3478 is not a TURN health check (coturn is UDP/TCP). A failed connect from GCF often means GCP egress or droplet firewall — not that live viewing is down.";
+  }
+  const mixed =
+    "GitHub Pages is HTTPS, so the TCD browser cannot fetch http://107.170.15.179:8080 (mixed content).";
+  if (probe.status == null) {
+    return `Cloud Functions could not reach this private HTTP port${err ? ` (${err})` : ""}. ${mixed}`;
+  }
+  return mixed;
+}
+
+export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, async (request) => {
   assertProjectAdmin(request);
   const [health, staging, turn, doMeta] = await Promise.all([
-    probeUrl(VPS_HEALTH_URL),
-    probeUrl(VPS_STAGING_URL),
-    tcpReachable(VPS_HOST, 3478),
+    probeUrl(VPS_HEALTH_URL, 4000),
+    probeUrl(VPS_STAGING_URL, 4000),
+    tcpReachable(VPS_HOST, 3478, 2500),
     fetchDoDroplet(),
   ]);
   return {
@@ -648,8 +893,8 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 30 }, as
       provider: "digitalocean",
       host: VPS_HOST,
       roles: [
-        { id: "coturn", label: "WebRTC TURN/STUN", detail: `turn:${VPS_HOST}:3478 — live viewing NAT relay` },
-        { id: "staging", label: "Parent-web staging", detail: `${VPS_STAGING_URL}` },
+        { id: "coturn", label: "WebRTC TURN/STUN", detail: `turn:${VPS_HOST}:3478 — live viewing NAT relay (UDP/TCP; GCF TCP is not the only health signal)` },
+        { id: "staging", label: "Parent-web staging", detail: `${VPS_STAGING_URL} — HTTP only; HTTPS TCD cannot probe this URL (mixed content)` },
         { id: "apk-mirror", label: "APK download mirror", detail: "nginx /downloads → Cloudflare R2 proxy" },
         { id: "ffmpeg", label: "ffmpeg media worker", detail: "/opt/sarechild/media-worker" },
         { id: "backups", label: "Firestore backup templates", detail: "/opt/sarechild/backup" },
@@ -658,14 +903,28 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 30 }, as
         { id: "uptime-kuma", label: "Optional Uptime Kuma", detail: "127.0.0.1:3001 via SSH tunnel" },
       ],
       probes: {
-        opsHealth: health,
-        staging,
-        turn3478: turn,
+        opsHealth: {
+          ...health,
+          inconclusive: !health.ok && health.status == null,
+          note: probeFailureNote("http-private", health),
+        },
+        staging: {
+          ...staging,
+          inconclusive: !staging.ok && staging.status == null,
+          note: probeFailureNote("http-private", staging),
+        },
+        turn3478: {
+          ...turn,
+          inconclusive: !turn.ok,
+          note: probeFailureNote("tcp-turn", { ok: turn.ok, status: null, body: turn.ok ? undefined : { error: "tcp connect failed" } }),
+        },
       },
+      mixedContentNote:
+        "TCD on GitHub Pages is served over HTTPS. The droplet staging site and ops-health.json are HTTP on :8080, so the browser blocks those fetches (mixed content). Cloud Functions can use HTTP; if those probes also fail, GCP egress or the droplet firewall is blocking 107.170.15.179:8080/:3478. Confirm staging in a separate HTTP tab or over SSH.",
       digitalocean: doMeta,
       agentInstalled: Boolean(health.ok && health.body && typeof health.body === "object"),
       installHint:
-        "If ops health JSON is missing, run scripts/vps/install-ops-health.sh on the droplet (see docs/VPS_OPS.md).",
+        "If ops health JSON is missing, run scripts/vps/install-ops-health.sh on the droplet (see docs/VPS_OPS.md). A TCD browser fetch of http://107.170.15.179:8080/ops-health.json will always fail from HTTPS Pages.",
       docs: "docs/VPS_OPS.md",
       consoleUrl: "https://cloud.digitalocean.com/droplets",
     },

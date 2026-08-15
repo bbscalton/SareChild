@@ -21,6 +21,28 @@ function parseMb(raw: string, fallbackMb: number): number {
   return Math.round(n * 1024 * 1024)
 }
 
+const PREFERRED_FAMILY_ID = 'tS2mTEiFqoY76nq7ei1d'
+const PREFERRED_ADMIN_EMAIL = 'neuereatec@gmail.com'
+
+function emptyAccount(familyId: string): StorageAccountRow {
+  return {
+    familyId,
+    parentUid: null,
+    email: '',
+    childNames: [],
+    deviceCount: 0,
+    firestoreDocs: 0,
+    r2Bytes: 0,
+    r2Objects: 0,
+    estimatedFirestoreBytes: 0,
+    usedBytes: 0,
+    accountBytesMax: 2 * 1024 * 1024 * 1024,
+    overLimit: false,
+    storageBlocked: false,
+    features: {},
+  }
+}
+
 export function AdminStoragePanel({
   busy,
   onBusy,
@@ -34,33 +56,75 @@ export function AdminStoragePanel({
 }) {
   const [dump, setDump] = useState<StorageDump | null>(null)
   const [infra, setInfra] = useState<InfraStatus | null>(null)
+  const [dumpError, setDumpError] = useState<string | null>(null)
+  const [infraError, setInfraError] = useState<string | null>(null)
   const [featureEdits, setFeatureEdits] = useState<Record<string, string>>({})
   const [globalGb, setGlobalGb] = useState('50')
   const [accountGb, setAccountGb] = useState('2')
-  const [selectedFamily, setSelectedFamily] = useState('')
+  const [selectedFamily, setSelectedFamily] = useState(PREFERRED_FAMILY_ID)
+  const [familyIdInput, setFamilyIdInput] = useState(PREFERRED_FAMILY_ID)
   const [confirmText, setConfirmText] = useState('')
   const [search, setSearch] = useState('')
+
+  const applyDump = (storage: StorageDump) => {
+    setDump(storage)
+    const globalCap = storage.limits.globalBytesMax || 50 * 1024 * 1024 * 1024
+    const accountCap = storage.limits.defaultAccountBytesMax || 2 * 1024 * 1024 * 1024
+    setGlobalGb(String((globalCap / (1024 * 1024 * 1024)).toFixed(0)))
+    setAccountGb(String((accountCap / (1024 * 1024 * 1024)).toFixed(2)))
+    const edits: Record<string, string> = {}
+    for (const f of storage.features) {
+      edits[f.id] = String(((f.limitBytes || 0) / (1024 * 1024)).toFixed(0))
+    }
+    setFeatureEdits(edits)
+    setSelectedFamily((prev) => {
+      if (prev && storage.accounts.some((a) => a.familyId === prev)) return prev
+      if (storage.accounts.some((a) => a.familyId === PREFERRED_FAMILY_ID)) return PREFERRED_FAMILY_ID
+      const byEmail = storage.accounts.find((a) => a.email.toLowerCase() === PREFERRED_ADMIN_EMAIL)
+      return byEmail?.familyId || storage.accounts[0]?.familyId || prev || PREFERRED_FAMILY_ID
+    })
+  }
 
   const load = async (label: string) => {
     onBusy(true)
     onError(null)
-    try {
-      const [storage, droplet] = await Promise.all([adminRepo.adminGetStorageDump(), adminRepo.adminGetInfraStatus()])
-      setDump(storage)
-      setInfra(droplet)
-      setGlobalGb(String(((storage.limits.globalBytesMax || 0) / (1024 * 1024 * 1024)).toFixed(0)))
-      setAccountGb(String(((storage.limits.defaultAccountBytesMax || 0) / (1024 * 1024 * 1024)).toFixed(2)))
-      const edits: Record<string, string> = {}
-      for (const f of storage.features) {
-        edits[f.id] = String(((f.limitBytes || 0) / (1024 * 1024)).toFixed(0))
-      }
-      setFeatureEdits(edits)
-      onStatus(label)
-    } catch (e) {
-      onError(e instanceof Error ? e.message : 'Storage dump failed')
-    } finally {
-      onBusy(false)
-    }
+    setDumpError(null)
+    setInfraError(null)
+    let dumpFailed = false
+    let infraFailed = false
+    const storageP = adminRepo.adminGetStorageDump().then(
+      (storage) => {
+        applyDump(storage)
+        const issues = [
+          storage.error,
+          ...(storage.warnings ?? []),
+          storage.stale ? 'Showing a cached dump; live scan failed or was incomplete.' : null,
+        ].filter(Boolean) as string[]
+        if (issues.length) {
+          setDumpError(issues.join(' · '))
+          onError(issues[0])
+        }
+      },
+      (e) => {
+        dumpFailed = true
+        const msg = e instanceof Error ? e.message : 'Storage dump failed'
+        setDumpError(msg)
+        onError(msg)
+      },
+    )
+    const infraP = adminRepo.adminGetInfraStatus().then(
+      (droplet) => {
+        setInfra(droplet)
+      },
+      (e) => {
+        infraFailed = true
+        setInfraError(e instanceof Error ? e.message : 'Infra status failed')
+      },
+    )
+    await Promise.allSettled([storageP, infraP])
+    if (!dumpFailed && !infraFailed) onStatus(label)
+    else if (!dumpFailed) onStatus(`${label} (droplet probe incomplete)`)
+    onBusy(false)
   }
 
   useEffect(() => {
@@ -80,7 +144,9 @@ export function AdminStoragePanel({
     )
   }, [dump, search])
 
-  const selected: StorageAccountRow | undefined = dump?.accounts.find((a) => a.familyId === selectedFamily)
+  const selected: StorageAccountRow | undefined =
+    dump?.accounts.find((a) => a.familyId === selectedFamily) ??
+    (selectedFamily.trim() ? emptyAccount(selectedFamily.trim()) : undefined)
 
   const saveLimits = async () => {
     onBusy(true)
@@ -211,17 +277,27 @@ export function AdminStoragePanel({
         </button>
       </div>
 
+      {(dumpError || infraError) && (
+        <div className="tcd-banner error" style={{ marginBottom: '1rem' }}>
+          {dumpError ? <div>Dump: {dumpError}</div> : null}
+          {infraError ? <div>Droplet: {infraError}</div> : null}
+        </div>
+      )}
+      {dump?.warnings && dump.warnings.length > 0 && !dumpError && (
+        <p className="muted small">Partial dump: {dump.warnings.join(' · ')}</p>
+      )}
+
       <div className="tcd-pulse-grid">
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Platform used</p>
           <p className="tcd-pulse-value">{fmtBytes(dump?.totals.usedBytes)}</p>
-          <p className="tcd-pulse-meta">of {fmtBytes(dump?.limits.globalBytesMax)} global cap</p>
+          <p className="tcd-pulse-meta">of {fmtBytes(dump?.limits.globalBytesMax || 50 * 1024 * 1024 * 1024)} global cap</p>
         </article>
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Cloudflare R2</p>
           <p className="tcd-pulse-value">{fmtBytes(dump?.backends.r2.bytes)}</p>
           <p className="tcd-pulse-meta">
-            {dump?.backends.r2.objects ?? 0} objects · bucket {dump?.backends.r2.bucket}
+            {dump?.backends.r2.objects ?? 0} objects · bucket {dump?.backends.r2.bucket || 'luscsl-uploads'}
             {dump?.backends.r2.error ? ` · ${dump.backends.r2.error}` : ''}
           </p>
         </article>
@@ -261,14 +337,19 @@ export function AdminStoragePanel({
           ))}
         </ul>
         <div className="tcd-vps-probes">
-          <span className={`pill tcd-${droplet?.probes.turn3478.ok ? 'ok' : 'fail'}`}>
-            TURN :3478 {droplet?.probes.turn3478.ok ? 'open' : 'unreachable'}
+          <span className={`pill tcd-${droplet?.probes.turn3478.ok ? 'ok' : droplet?.probes.turn3478.inconclusive ? 'warn' : 'fail'}`}>
+            TURN :3478 {droplet?.probes.turn3478.ok ? 'TCP open from Functions' : 'not confirmed from Functions'}
           </span>
-          <span className={`pill tcd-${droplet?.probes.staging.ok ? 'ok' : 'fail'}`}>
-            Staging :8080 {droplet?.probes.staging.ok ? `HTTP ${droplet.probes.staging.status}` : 'down'}
+          <span className={`pill tcd-${droplet?.probes.staging.ok ? 'ok' : droplet?.probes.staging.inconclusive ? 'warn' : 'fail'}`}>
+            Staging :8080{' '}
+            {droplet?.probes.staging.ok
+              ? `HTTP ${droplet.probes.staging.status}`
+              : droplet?.probes.staging.inconclusive
+                ? 'Functions cannot reach private HTTP'
+                : 'down from Functions'}
           </span>
           <span className={`pill tcd-${droplet?.probes.opsHealth.ok ? 'ok' : 'warn'}`}>
-            Ops health {droplet?.probes.opsHealth.ok ? 'JSON' : 'not installed'}
+            Ops health {droplet?.probes.opsHealth.ok ? 'JSON' : 'not reachable over HTTP from Functions'}
           </span>
           {services && (
             <>
@@ -277,6 +358,12 @@ export function AdminStoragePanel({
             </>
           )}
         </div>
+        <p className="muted small" style={{ marginTop: '0.75rem' }}>
+          {droplet?.mixedContentNote ||
+            'GitHub Pages is HTTPS, so this tab cannot fetch http://107.170.15.179:8080 (mixed content). TURN is UDP/TCP 3478 — a Functions TCP miss is not proof coturn is down. Confirm staging in a separate HTTP tab or over SSH.'}
+        </p>
+        {droplet?.probes.turn3478.note && <p className="muted small">{droplet.probes.turn3478.note}</p>}
+        {droplet?.probes.staging.note && <p className="muted small">{droplet.probes.staging.note}</p>}
         {disk && (
           <p className="muted small" style={{ marginTop: '0.75rem' }}>
             Droplet disk {fmtBytes(disk.usedBytes)} / {fmtBytes(disk.totalBytes)} ({disk.percent})
@@ -385,6 +472,30 @@ export function AdminStoragePanel({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <div className="tcd-form-grid" style={{ marginBottom: '0.75rem' }}>
+          <label>
+            Family ID to manage
+            <input
+              type="text"
+              value={familyIdInput}
+              onChange={(e) => setFamilyIdInput(e.target.value)}
+              placeholder={PREFERRED_FAMILY_ID}
+            />
+          </label>
+          <div style={{ alignSelf: 'end' }}>
+            <button
+              className="btn btn-primary compact"
+              type="button"
+              onClick={() => {
+                const id = familyIdInput.trim() || PREFERRED_FAMILY_ID
+                setFamilyIdInput(id)
+                setSelectedFamily(id)
+              }}
+            >
+              Manage this family
+            </button>
+          </div>
+        </div>
         <div className="tcd-table-wrap">
           <table className="tcd-admin-table">
             <thead>
@@ -425,7 +536,11 @@ export function AdminStoragePanel({
               {accounts.length === 0 && (
                 <tr>
                   <td colSpan={6} className="tcd-empty-note">
-                    No families in this dump yet.
+                    {dumpError
+                      ? 'Dump failed — use Family ID above to Manage / Clear / Reset anyway.'
+                      : busy
+                        ? 'Scanning families…'
+                        : 'No families in this dump yet. Paste a family ID above to manage one.'}
                   </td>
                 </tr>
               )}

@@ -47,8 +47,8 @@ async function writeClientAuditLog(entry: {
   })
 }
 
-function callable<TReq, TRes>(name: string) {
-  return httpsCallable<TReq, TRes>(requireFunctions(), name)
+function callable<TReq, TRes>(name: string, timeout = 70_000) {
+  return httpsCallable<TReq, TRes>(requireFunctions(), name, { timeout })
 }
 
 const DEFAULT_FEATURES: Record<FeatureKey, boolean> = {
@@ -463,14 +463,33 @@ export async function adminSendTestFcm(familyId: string, deviceId: string): Prom
   return res.data
 }
 
+function callableErrorMessage(e: unknown, fallback: string): string {
+  if (e && typeof e === 'object' && 'code' in e) {
+    const code = String((e as { code?: string }).code ?? '')
+    const message = String((e as { message?: string }).message ?? fallback)
+    const details = (e as { details?: unknown }).details
+    const extra = typeof details === 'string' ? details : details != null ? JSON.stringify(details) : ''
+    return [code, message, extra].filter(Boolean).join(' — ')
+  }
+  return e instanceof Error ? e.message : fallback
+}
+
 export async function adminGetStorageDump(): Promise<import('./types').StorageDump> {
-  const res = await callable<object, import('./types').StorageDump>('adminGetStorageDump')({})
-  return res.data
+  try {
+    const res = await callable<object, import('./types').StorageDump>('adminGetStorageDump', 120_000)({})
+    return res.data
+  } catch (e) {
+    throw new Error(callableErrorMessage(e, 'Storage dump failed'))
+  }
 }
 
 export async function adminGetInfraStatus(): Promise<import('./types').InfraStatus> {
-  const res = await callable<object, import('./types').InfraStatus>('adminGetInfraStatus')({})
-  return res.data
+  try {
+    const res = await callable<object, import('./types').InfraStatus>('adminGetInfraStatus', 20_000)({})
+    return res.data
+  } catch (e) {
+    throw new Error(callableErrorMessage(e, 'Infra status failed'))
+  }
 }
 
 export async function adminSetStorageLimits(payload: {

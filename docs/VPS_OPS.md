@@ -105,16 +105,24 @@ Reseller ledger export: template at `/opt/sarechild/backup/reseller-ledger-expor
 
 ## TCD storage dump
 
-The **Storage** tab on TCD (`https://bbscalton.github.io/SareChild/tcd`) inventories this droplet (TURN, staging, disk, coturn/nginx) plus Firebase and Cloudflare usage.
+The **Storage** tab on TCD (`https://bbscalton.github.io/SareChild/tcd.html`) inventories this droplet (TURN, staging, disk) plus Firebase and Cloudflare usage.
 
-Install the 1-minute health JSON:
+Refresh dump calls Cloud Functions (`adminGetStorageDump`, `adminGetInfraStatus` in us-central1). R2 or VPS probe failures must not hide Firestore families.
+
+### Why droplet pills can look “down” from TCD
+
+TCD is served from **GitHub Pages over HTTPS**. Staging and ops-health are **HTTP** on `http://107.170.15.179:8080/`. Browsers block that as **mixed content**, so the Storage tab cannot load `/ops-health.json` or the staging homepage itself. That is expected — it is not proof nginx is down.
+
+Cloud Functions *can* use HTTP, but GCP egress or the droplet firewall often blocks **non-HTTPS ports** (`:8080`, TURN TCP `:3478`). TURN for live viewing is **UDP/TCP 3478**; a failed Functions TCP connect is **not** the only health signal. Confirm from SSH or by opening `http://107.170.15.179:8080/` in a **separate HTTP tab** (not inside the HTTPS TCD page).
+
+Install the 1-minute health JSON (then Functions can read it **if** :8080 is reachable from GCP):
 
 ```bash
 scp scripts/vps/install-ops-health.sh root@107.170.15.179:/tmp/
 ssh root@107.170.15.179 bash /tmp/install-ops-health.sh
 ```
 
-Then open TCD → Storage. Optional: set `DO_API_TOKEN` on Cloud Functions so droplet size/region come from DigitalOcean.
+Then open TCD → Storage → **Refresh dump**. Optional: set `DO_API_TOKEN` on Cloud Functions so droplet size/region come from DigitalOcean.
 
 - Cron: `/opt/sarechild/monitoring/healthcheck.sh` every 5 minutes → `/var/log/sarechild-health.log`
 - Optional: Uptime Kuma Docker on `127.0.0.1:3001` (SSH tunnel to configure)
