@@ -111,20 +111,32 @@ service cloud.firestore {
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         }
 
+        // Diagnostics exports are uploaded via R2/Storage; device fields
+        // lastDiagnosticsAtMs / lastDiagnosticsUrl are covered by the parent
+        // device document update rule above (no subcollection required).
+
         match /activityEvents/{eventId} {
           allow read: if isFamilyGuardian(familyId);
           allow create, update: if isDeviceMember(familyId, deviceId);
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         }
 
+        // Device must read its own snapshots to purge stale docs. Guardian-only
+        // read made every 12th upload look like PERMISSION_DENIED after a success.
         match /screenSnapshots/{snapshotId} {
-          allow read: if isFamilyGuardian(familyId);
+          allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
           allow create, update: if isDeviceMember(familyId, deviceId);
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         }
 
         match /cameraSnapshots/{snapshotId} {
-          allow read: if isFamilyGuardian(familyId);
+          allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+          allow create, update: if isDeviceMember(familyId, deviceId);
+          allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
+        }
+
+        match /whatsappWatchdogSnapshots/{snapshotId} {
+          allow read: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
           allow create, update: if isDeviceMember(familyId, deviceId);
           allow delete: if isFamilyGuardian(familyId) || isDeviceMember(familyId, deviceId);
         }
@@ -139,7 +151,7 @@ service cloud.firestore {
       }
 
       match /alerts/{alertId} {
-        allow read, update, delete: if isFamilyGuardian(familyId);
+        allow read, update, delete: if isFamilyGuardian(familyId) || isProjectAdmin();
         allow create: if signedIn();
       }
 
@@ -181,12 +193,13 @@ service cloud.firestore {
 
       match /callSmsPreviews/{previewId} {
         allow read, delete: if isFamilyGuardian(familyId);
-        allow create: if signedIn();
+        allow create, update: if signedIn();
       }
 
+      // beginCallRecordingSession creates; finalizeCallRecordingSession merges the same doc.
       match /callRecordings/{recordingId} {
         allow read, delete: if isFamilyGuardian(familyId);
-        allow create: if signedIn();
+        allow create, update: if signedIn();
       }
 
       match /whatsappEvents/{eventId} {
@@ -220,6 +233,21 @@ service cloud.firestore {
       }
 
       match /safetySettings/{docId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      // Parent-managed uninstall PIN hash/salt + enabled flag. Child devices must
+      // read this (signedIn) so SET_UNINSTALL_PROTECTION and the settings listener
+      // can sync the hash locally. Without this match, Firestore denies by default
+      // and protection never arms (PIN stays empty; heartbeat logs disable).
+      match /uninstallProtectionSettings/{docId} {
+        allow read: if isFamilyGuardian(familyId) || signedIn();
+        allow write: if isFamilyGuardian(familyId);
+      }
+
+      // Parent alert master switch, quiet hours, and per-type toggles.
+      match /notificationSettings/{docId} {
         allow read: if isFamilyGuardian(familyId) || signedIn();
         allow write: if isFamilyGuardian(familyId);
       }
