@@ -3,6 +3,7 @@ import { FirebaseError } from 'firebase/app'
 import { useAuth } from './authContext'
 import * as repo from './repo'
 import * as adminRepo from './adminRepo'
+import { ADMIN_EMAIL } from './admin'
 import { AdminAccountsPanel } from './AdminAccountsPanel'
 import { AdminResellersPanel } from './AdminResellersPanel'
 import { AdminFeaturesPanel } from './AdminFeaturesPanel'
@@ -88,6 +89,24 @@ export function TcdApp() {
           <p className="eyebrow eyebrow-on-dark">SareChild Ops</p>
           <h1>Account suspended</h1>
           <p className="muted on-dark">{blockedMessage}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="tcd-auth-wrap">
+        <div className="tcd-auth-card">
+          <p className="eyebrow eyebrow-on-dark">SareChild Ops</p>
+          <h1>Access restricted</h1>
+          <p className="muted on-dark">
+            TCD is limited to the project administrator ({ADMIN_EMAIL}). Signed in as{' '}
+            <strong>{user.email || 'unknown'}</strong>.
+          </p>
+          <button className="btn btn-ghost-on-dark" type="button" onClick={() => void signOut()}>
+            Sign out
+          </button>
         </div>
       </div>
     )
@@ -225,6 +244,7 @@ function TcdDashboard({
   const [repairLog, setRepairLog] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [lastRunMs, setLastRunMs] = useState<number | null>(null)
+  const [viewFamilyId, setViewFamilyId] = useState<string | null>(familyId)
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 15_000)
@@ -232,15 +252,38 @@ function TcdDashboard({
   }, [])
 
   useEffect(() => {
-    if (!familyId) return
+    if (!isAdmin) {
+      setViewFamilyId(familyId)
+      return
+    }
+    setViewFamilyId((prev) => {
+      if (prev && adminAccounts.some((a) => a.familyId === prev)) return prev
+      if (familyId) return familyId
+      const first = adminAccounts.find((a) => a.familyId)?.familyId ?? null
+      return first
+    })
+  }, [isAdmin, familyId, adminAccounts])
+
+  useEffect(() => {
+    if (!viewFamilyId) {
+      setDevices([])
+      setAlerts([])
+      setGuardians([])
+      setCommands([])
+      return
+    }
+    setDevices([])
+    setAlerts([])
+    setGuardians([])
+    setCommands([])
     const unsubs = [
-      repo.observeDevices(familyId, setDevices),
-      repo.observeAlerts(familyId, setAlerts),
-      repo.observeGuardians(familyId, setGuardians),
-      repo.observeCommands(familyId, setCommands),
+      repo.observeDevices(viewFamilyId, setDevices),
+      repo.observeAlerts(viewFamilyId, setAlerts),
+      repo.observeGuardians(viewFamilyId, setGuardians),
+      repo.observeCommands(viewFamilyId, setCommands),
     ]
     return () => unsubs.forEach((u) => u())
-  }, [familyId])
+  }, [viewFamilyId])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -251,7 +294,8 @@ function TcdDashboard({
     setBusy(true)
     setError(null)
     try {
-      const healthFamilyId = familyId ?? adminAccounts.find((a) => a.familyId)?.familyId
+      const healthFamilyId =
+        viewFamilyId ?? familyId ?? adminAccounts.find((a) => a.familyId)?.familyId ?? null
       const healthPromise = healthFamilyId ? repo.runTcdHealthCheck(healthFamilyId) : Promise.resolve({ generatedAtMs: Date.now(), checks: [] as TcdCheck[] })
       const overviewPromise = healthFamilyId ? repo.loadTcdOverview(healthFamilyId) : Promise.resolve(null)
       const pairingPromise = healthFamilyId ? repo.loadPairingStats(healthFamilyId) : Promise.resolve(null)
@@ -290,8 +334,9 @@ function TcdDashboard({
     setStatusMsg(null)
     try {
       const logs: string[] = []
-      if (familyId) {
-        logs.push(...(await repo.runTcdAutoRepair(familyId)))
+      const repairFamilyId = viewFamilyId ?? familyId
+      if (repairFamilyId) {
+        logs.push(...(await repo.runTcdAutoRepair(repairFamilyId)))
       }
       if (isAdmin) {
         logs.push(...(await adminRepo.runPlatformAutoRepair()))
@@ -307,12 +352,32 @@ function TcdDashboard({
   }
 
   useEffect(() => {
-    if (!familyId && !isAdmin) return
+    if (!viewFamilyId && !isAdmin) return
     void run()
     const id = window.setInterval(() => void run(), 60_000)
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [familyId, isAdmin])
+  }, [viewFamilyId, isAdmin])
+
+  const accountOptions = useMemo(() => {
+    return adminAccounts
+      .filter((a) => a.familyId)
+      .map((a) => ({
+        familyId: a.familyId as string,
+        email: a.email || 'no email',
+        label: `${a.email || 'no email'} · ${String(a.familyId).slice(0, 8)}…`,
+        childHint: a.deviceCount != null ? `${a.deviceCount} device(s)` : '',
+      }))
+      .sort((a, b) => a.email.localeCompare(b.email))
+  }, [adminAccounts])
+
+  const selectedAccountLabel = useMemo(() => {
+    if (!viewFamilyId) return 'No account selected'
+    const row = adminAccounts.find((a) => a.familyId === viewFamilyId)
+    if (row) return row.email || viewFamilyId
+    if (viewFamilyId === familyId) return email
+    return viewFamilyId
+  }, [viewFamilyId, adminAccounts, familyId, email])
 
   const liveFleet = useMemo(() => {
     const cutoff24h = nowTick - 24 * 60 * 60 * 1000
@@ -470,7 +535,14 @@ function TcdDashboard({
               Signed in as <strong>{email}</strong>
               {isAdmin && <span className="tcd-admin-badge">ADMIN</span>}
             </p>
-            <p>Family: {familyId || 'not linked yet'}</p>
+            <p>
+              Viewing account: <strong>{selectedAccountLabel}</strong>
+              {viewFamilyId ? (
+                <span className="muted"> · {viewFamilyId.slice(0, 10)}…</span>
+              ) : (
+                <span className="muted"> · no family linked</span>
+              )}
+            </p>
           </div>
         </div>
 
@@ -655,7 +727,17 @@ function TcdDashboard({
         </section>
 
         <div className="tcd-grid">
-          <FleetCard liveFleet={liveFleet} overview={overview} checks={fleetChecks} chatActivity={chatActivity} nowTick={nowTick} devices={devices} />
+          <FleetCard
+            liveFleet={liveFleet}
+            overview={overview}
+            checks={fleetChecks}
+            chatActivity={chatActivity}
+            nowTick={nowTick}
+            devices={devices}
+            viewFamilyId={viewFamilyId}
+            accountOptions={accountOptions}
+            onSelectAccount={setViewFamilyId}
+          />
           <AppVersionsCard manifests={apkVersions} devices={devices} />
           <FeatureHealthGrid cards={featureHealth} />
           <RecentCriticalCard alerts={criticalAlerts} />
@@ -723,6 +805,9 @@ function FleetCard({
   chatActivity,
   nowTick,
   devices,
+  viewFamilyId,
+  accountOptions,
+  onSelectAccount,
 }: {
   liveFleet: {
     registeredDevices: number
@@ -740,6 +825,9 @@ function FleetCard({
   chatActivity: ChatActivity | null
   nowTick: number
   devices: DeviceStatus[]
+  viewFamilyId: string | null
+  accountOptions: Array<{ familyId: string; email: string; label: string; childHint: string }>
+  onSelectAccount: (familyId: string) => void
 }) {
   const edgeAgeMs = overview ? nowTick - overview.generatedAtMs : null
   return (
@@ -748,6 +836,32 @@ function FleetCard({
         <h2>Live fleet status</h2>
         <span className="tcd-card-timestamp">real-time</span>
       </div>
+      <label className="tcd-fleet-account-picker">
+        <span className="tcd-fleet-account-label">Account</span>
+        <select
+          className="tcd-admin-select tcd-fleet-account-select"
+          value={viewFamilyId ?? ''}
+          onChange={(e) => {
+            const next = e.target.value
+            if (next) onSelectAccount(next)
+          }}
+          aria-label="Select customer account for live fleet status"
+        >
+          {!viewFamilyId && <option value="">Select an account…</option>}
+          {accountOptions.map((opt) => (
+            <option key={opt.familyId} value={opt.familyId}>
+              {opt.label}
+              {opt.childHint ? ` · ${opt.childHint}` : ''}
+            </option>
+          ))}
+          {viewFamilyId && !accountOptions.some((o) => o.familyId === viewFamilyId) && (
+            <option value={viewFamilyId}>{viewFamilyId} (current)</option>
+          )}
+        </select>
+      </label>
+      <p className="muted small" style={{ marginTop: '0.35rem' }}>
+        Devices, heartbeats, and alerts for the selected customer family.
+      </p>
       <div className="tcd-stat-row">
         <div className="tcd-stat">
           <span className="tcd-stat-value ok">{liveFleet.onlineDevices}</span>
@@ -789,6 +903,9 @@ function FleetCard({
             )
           })}
         </ul>
+      )}
+      {viewFamilyId && devices.length === 0 && (
+        <p className="tcd-empty-note">No devices registered for this account yet.</p>
       )}
       <CheckList checks={checks} />
       <ul className="tcd-check-list">

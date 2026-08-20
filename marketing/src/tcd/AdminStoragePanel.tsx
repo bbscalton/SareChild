@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as adminRepo from './adminRepo'
 import type { InfraStatus, StorageAccountRow, StorageDump, StorageFeatureRow } from './types'
 
@@ -22,7 +22,6 @@ function parseMb(raw: string, fallbackMb: number): number {
 }
 
 const PREFERRED_FAMILY_ID = 'tS2mTEiFqoY76nq7ei1d'
-const PREFERRED_ADMIN_EMAIL = 'neuereatec@gmail.com'
 
 function emptyAccount(familyId: string): StorageAccountRow {
   return {
@@ -63,12 +62,24 @@ export function AdminStoragePanel({
   const [featureEdits, setFeatureEdits] = useState<Record<string, string>>({})
   const [globalGb, setGlobalGb] = useState('50')
   const [accountGb, setAccountGb] = useState('2')
-  const [selectedFamily, setSelectedFamily] = useState(PREFERRED_FAMILY_ID)
+  const [selectedFamily, setSelectedFamily] = useState('')
   const [familyIdInput, setFamilyIdInput] = useState(PREFERRED_FAMILY_ID)
   const [confirmText, setConfirmText] = useState('')
   const [search, setSearch] = useState('')
   const [pcFiles, setPcFiles] = useState<Array<{ path: string; bytes: number; mtimeMs: number }>>([])
   const [pcListNote, setPcListNote] = useState<string | null>(null)
+  const managePanelRef = useRef<HTMLDivElement | null>(null)
+
+  const openManage = (familyId: string) => {
+    const id = familyId.trim()
+    if (!id) return
+    setSelectedFamily(id)
+    setFamilyIdInput(id)
+    setConfirmText('')
+    window.requestAnimationFrame(() => {
+      managePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
 
   const applyDump = (storage: StorageDump) => {
     const accounts = Array.isArray(storage?.accounts) ? storage.accounts : []
@@ -112,10 +123,9 @@ export function AdminStoragePanel({
     }
     setFeatureEdits(edits)
     setSelectedFamily((prev) => {
-      if (prev && accounts.some((a) => a.familyId === prev)) return prev
-      if (accounts.some((a) => a.familyId === PREFERRED_FAMILY_ID)) return PREFERRED_FAMILY_ID
-      const byEmail = accounts.find((a) => (a.email || '').toLowerCase() === PREFERRED_ADMIN_EMAIL)
-      return byEmail?.familyId || accounts[0]?.familyId || prev || PREFERRED_FAMILY_ID
+      if (!prev) return prev
+      if (accounts.some((a) => a.familyId === prev)) return prev
+      return prev
     })
   }
 
@@ -603,11 +613,7 @@ export function AdminStoragePanel({
             <button
               className="btn btn-primary compact"
               type="button"
-              onClick={() => {
-                const id = familyIdInput.trim() || PREFERRED_FAMILY_ID
-                setFamilyIdInput(id)
-                setSelectedFamily(id)
-              }}
+              onClick={() => openManage(familyIdInput.trim() || PREFERRED_FAMILY_ID)}
             >
               Manage this family
             </button>
@@ -627,7 +633,12 @@ export function AdminStoragePanel({
             </thead>
             <tbody>
               {accounts.map((a) => (
-                <tr key={a.familyId} className={a.overLimit ? 'row-blocked' : ''}>
+                <tr
+                  key={a.familyId}
+                  className={[a.overLimit ? 'row-blocked' : '', selectedFamily === a.familyId ? 'row-selected' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                >
                   <td>
                     <div className="tcd-cell-main">{a.email || 'no email'}</div>
                     <div className="tcd-cell-sub">
@@ -644,7 +655,11 @@ export function AdminStoragePanel({
                   <td>{fmtBytes(a.r2Bytes)}</td>
                   <td>{a.firestoreDocs}</td>
                   <td>
-                    <button className="btn btn-ghost compact" type="button" onClick={() => setSelectedFamily(a.familyId)}>
+                    <button
+                      className="btn btn-ghost compact"
+                      type="button"
+                      onClick={() => openManage(a.familyId)}
+                    >
                       Manage
                     </button>
                   </td>
@@ -667,14 +682,23 @@ export function AdminStoragePanel({
       </div>
 
       {selected && (
-        <div className="tcd-card tcd-card-wide">
+        <div className="tcd-card tcd-card-wide" ref={managePanelRef} key={selected.familyId} id="tcd-storage-manage">
           <div className="tcd-card-head">
             <h2>Manage {selected.email || selected.familyId}</h2>
-            <button className="btn btn-ghost compact" type="button" onClick={() => setSelectedFamily('')}>
+            <button
+              className="btn btn-ghost compact"
+              type="button"
+              onClick={() => {
+                setSelectedFamily('')
+                setConfirmText('')
+              }}
+            >
               Close
             </button>
           </div>
           <p className="muted small">
+            Family ID: <code>{selected.familyId}</code>
+            {' · '}
             Children: {selected.childNames.join(', ') || 'none'}. Over limit: {selected.overLimit ? 'yes' : 'no'}
             {selected.storageBlocked ? ' · uploads blocked' : ''}.
           </p>
@@ -685,6 +709,7 @@ export function AdminStoragePanel({
                 type="number"
                 min={0.25}
                 step={0.25}
+                key={`cap-${selected.familyId}-${selected.accountBytesMax}`}
                 defaultValue={(selected.accountBytesMax / (1024 * 1024 * 1024)).toFixed(2)}
                 onBlur={(e) => void saveAccountCap(selected.familyId, e.target.value)}
               />
@@ -736,6 +761,13 @@ export function AdminStoragePanel({
                     </td>
                   </tr>
                 ))}
+                {Object.keys(selected.features).length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="tcd-empty-note">
+                      No per-feature usage rows for this account yet (or dump missing detail). Limits / clear / reset still work above.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
