@@ -1,0 +1,7 @@
+{
+  "name": "sarechild-pc-storage",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "account_id": "2aba2de5418ac0812383b628b6cb0f77",
+  "workers_dev": true
+}

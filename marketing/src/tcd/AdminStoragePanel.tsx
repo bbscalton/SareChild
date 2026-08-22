@@ -42,16 +42,33 @@ function emptyAccount(familyId: string): StorageAccountRow {
   }
 }
 
+/** Empty pairing shells / leftover family docs with no devices and no stored docs. */
+function isEmptyLeftover(a: StorageAccountRow, r2Ok: boolean): boolean {
+  if (a.familyId === PREFERRED_FAMILY_ID) return false
+  if (a.deviceCount > 0 || a.firestoreDocs > 0) return false
+  if (r2Ok && (a.r2Bytes > 0 || a.r2Objects > 0)) return false
+  return true
+}
+
+function fmtR2Cell(bytes: number, objects: number, r2Ok: boolean): string {
+  if (!r2Ok) return 'R2 unavailable'
+  return `${fmtBytes(bytes)} (${objects})`
+}
+
 export function AdminStoragePanel({
   busy,
   onBusy,
   onStatus,
   onError,
+  viewFamilyId,
+  onSelectAccount,
 }: {
   busy: boolean
   onBusy: (v: boolean) => void
   onStatus: (msg: string) => void
   onError: (msg: string | null) => void
+  viewFamilyId: string | null
+  onSelectAccount: (familyId: string) => void
 }) {
   const [dump, setDump] = useState<StorageDump | null>(null)
   const [infra, setInfra] = useState<InfraStatus | null>(null)
@@ -59,6 +76,7 @@ export function AdminStoragePanel({
   const [infraError, setInfraError] = useState<string | null>(null)
   const [scanningDump, setScanningDump] = useState(true)
   const [showLegacyNote, setShowLegacyNote] = useState(false)
+  const [showEmptyLeftovers, setShowEmptyLeftovers] = useState(false)
   const [featureEdits, setFeatureEdits] = useState<Record<string, string>>({})
   const [globalGb, setGlobalGb] = useState('50')
   const [accountGb, setAccountGb] = useState('2')
@@ -66,9 +84,12 @@ export function AdminStoragePanel({
   const [familyIdInput, setFamilyIdInput] = useState(PREFERRED_FAMILY_ID)
   const [confirmText, setConfirmText] = useState('')
   const [search, setSearch] = useState('')
+  const [manageFlash, setManageFlash] = useState(false)
   const [pcFiles, setPcFiles] = useState<Array<{ path: string; bytes: number; mtimeMs: number }>>([])
   const [pcListNote, setPcListNote] = useState<string | null>(null)
   const managePanelRef = useRef<HTMLDivElement | null>(null)
+
+  const r2Ok = dump?.backends?.r2?.reachable === true
 
   const openManage = (familyId: string) => {
     const id = familyId.trim()
@@ -76,8 +97,11 @@ export function AdminStoragePanel({
     setSelectedFamily(id)
     setFamilyIdInput(id)
     setConfirmText('')
+    onSelectAccount(id)
+    setManageFlash(true)
+    window.setTimeout(() => setManageFlash(false), 1600)
     window.requestAnimationFrame(() => {
-      managePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      managePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     })
   }
 
@@ -177,9 +201,23 @@ export function AdminStoragePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    if (!viewFamilyId) return
+    setSelectedFamily((prev) => prev || viewFamilyId)
+    setFamilyIdInput((prev) => (prev === PREFERRED_FAMILY_ID || !prev ? viewFamilyId : prev))
+  }, [viewFamilyId])
+
+  const emptyLeftoverCount = useMemo(() => {
+    const rows = dump?.accounts ?? []
+    return rows.filter((a) => isEmptyLeftover(a, r2Ok)).length
+  }, [dump, r2Ok])
+
   const accounts = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const rows = dump?.accounts ?? []
+    let rows = dump?.accounts ?? []
+    if (!showEmptyLeftovers) {
+      rows = rows.filter((a) => !isEmptyLeftover(a, r2Ok))
+    }
     if (!q) return rows
     return rows.filter(
       (a) =>
@@ -187,11 +225,33 @@ export function AdminStoragePanel({
         a.familyId.toLowerCase().includes(q) ||
         a.childNames.some((n) => String(n).toLowerCase().includes(q)),
     )
-  }, [dump, search])
+  }, [dump, search, showEmptyLeftovers, r2Ok])
+
+  const customerPickerOptions = useMemo(() => {
+    const rows = (dump?.accounts ?? [])
+      .filter((a) => a.deviceCount > 0 || (a.email && !isEmptyLeftover(a, r2Ok)))
+      .slice()
+      .sort((a, b) => {
+        if (b.deviceCount !== a.deviceCount) return b.deviceCount - a.deviceCount
+        return (a.email || a.familyId).localeCompare(b.email || b.familyId)
+      })
+    return rows
+  }, [dump, r2Ok])
 
   const selected: StorageAccountRow | undefined =
     dump?.accounts.find((a) => a.familyId === selectedFamily) ??
     (selectedFamily.trim() ? emptyAccount(selectedFamily.trim()) : undefined)
+
+  const jumpFromFilter = () => {
+    const q = search.trim().toLowerCase()
+    if (!q) return
+    const match =
+      accounts.find((a) => (a.email || '').toLowerCase() === q) ||
+      accounts.find((a) => (a.email || '').toLowerCase().includes(q)) ||
+      accounts.find((a) => a.familyId.toLowerCase().includes(q)) ||
+      accounts[0]
+    if (match) openManage(match.familyId)
+  }
 
   const saveLimits = async () => {
     onBusy(true)
@@ -302,10 +362,56 @@ export function AdminStoragePanel({
     }
   }
 
+  const deleteEmptyLeftovers = async () => {
+    const candidates = (dump?.accounts ?? [])
+      .filter((a) => isEmptyLeftover(a, r2Ok))
+      .map((a) => a.familyId)
+      .filter((id) => id !== PREFERRED_FAMILY_ID)
+    if (candidates.length === 0) {
+      onError('No empty leftover families in this dump.')
+      return
+    }
+    const ok = window.confirm(
+      `Delete ${candidates.length} empty leftover families (0 devices, 0 docs${r2Ok ? ', 0 R2' : ''})?\n\n` +
+        `Protected family ${PREFERRED_FAMILY_ID.slice(0, 10)}… is never deleted.\n` +
+        `Each candidate is re-checked server-side before wipe.`,
+    )
+    if (!ok) return
+    if (confirmText !== 'DELETE-EMPTY-LEFTOVERS') {
+      onError('Type DELETE-EMPTY-LEFTOVERS in the confirm box, then click again.')
+      return
+    }
+    onBusy(true)
+    onError(null)
+    try {
+      const result = await adminRepo.adminClearStorage({
+        scope: 'empty-leftovers',
+        confirm: 'DELETE-EMPTY-LEFTOVERS',
+        familyIds: candidates,
+      })
+      setConfirmText('')
+      onStatus(
+        `Deleted ${result.families ?? result.deletedFamilyIds?.length ?? 0} empty leftover families` +
+          (result.skipped?.length ? ` · skipped ${result.skipped.length}` : ''),
+      )
+      await load('Dump refreshed after leftover cleanup.')
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Empty leftover delete failed')
+      onBusy(false)
+    }
+  }
+
   const pc = infra?.pc
   const pcDisk = pc?.disk
   const pcBackend = dump?.backends?.pcXampp
   const dumpScanning = scanningDump || (busy && !dump && !dumpError)
+  const pcOffline =
+    Boolean(pc?.publicUrl || pcBackend?.configured) &&
+    !(pc?.reachableFromFunctions || pcBackend?.reachable)
+  const pcOfflineMsg =
+    pc?.probe?.note ||
+    pcBackend?.error ||
+    'PC tunnel offline — Cloudflare could not reach this PC’s Apache. Live R2 media is unaffected.'
 
   const listPcStore = async () => {
     onBusy(true)
@@ -345,6 +451,104 @@ export function AdminStoragePanel({
       onBusy(false)
     }
   }
+
+  const managePanel = selected ? (
+    <div
+      className={`tcd-card tcd-card-wide tcd-storage-manage ${manageFlash ? 'is-flash' : ''}`}
+      ref={managePanelRef}
+      key={selected.familyId}
+      id="tcd-storage-manage"
+    >
+      <div className="tcd-card-head">
+        <h2>Manage {selected.email || selected.familyId}</h2>
+        <button
+          className="btn btn-ghost compact"
+          type="button"
+          onClick={() => {
+            setSelectedFamily('')
+            setConfirmText('')
+          }}
+        >
+          Close
+        </button>
+      </div>
+      <p className="muted small">
+        Family ID: <code>{selected.familyId}</code>
+        {' · '}
+        Viewing account + live fleet switch to this family when you open Manage.
+        {' · '}
+        Children: {selected.childNames.join(', ') || 'none'}. Over limit: {selected.overLimit ? 'yes' : 'no'}
+        {selected.storageBlocked ? ' · uploads blocked' : ''}.
+      </p>
+      <div className="tcd-form-grid">
+        <label>
+          This account cap (GB)
+          <input
+            type="number"
+            min={0.25}
+            step={0.25}
+            key={`cap-${selected.familyId}-${selected.accountBytesMax}`}
+            defaultValue={(selected.accountBytesMax / (1024 * 1024 * 1024)).toFixed(2)}
+            onBlur={(e) => void saveAccountCap(selected.familyId, e.target.value)}
+          />
+        </label>
+        <label>
+          Confirm destructive action
+          <input
+            type="text"
+            autoComplete="off"
+            placeholder="CLEAR-ACCOUNT / FACTORY-RESET / DELETE-EMPTY-LEFTOVERS / CLEAR-PC-STORE"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+          />
+        </label>
+      </div>
+      <div className="tcd-system-actions" style={{ marginTop: '0.75rem' }}>
+        <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void clearAccount()}>
+          Clear stored data (keep pairing)
+        </button>
+        <button className="btn btn-ghost compact danger" type="button" disabled={busy} onClick={() => void factoryResetAccount()}>
+          Factory reset this family
+        </button>
+        <button className="btn btn-ghost compact danger" type="button" disabled={busy} onClick={() => void factoryResetPlatform()}>
+          Factory reset ALL operational data
+        </button>
+      </div>
+      <div className="tcd-table-wrap" style={{ marginTop: '1rem' }}>
+        <table className="tcd-admin-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>R2</th>
+              <th>Docs</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(selected.features).map(([id, usage]) => (
+              <tr key={id}>
+                <td>{id}</td>
+                <td>{fmtR2Cell(usage.r2Bytes, usage.r2Objects, r2Ok)}</td>
+                <td>{usage.docs}</td>
+                <td>
+                  <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void clearFeature(selected.familyId, id)}>
+                    Clear
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {Object.keys(selected.features).length === 0 && (
+              <tr>
+                <td colSpan={4} className="tcd-empty-note">
+                  No per-feature usage rows for this account yet (or dump missing detail). Limits / clear / reset still work above.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ) : null
 
   return (
     <div className="tcd-storage">
@@ -387,6 +591,12 @@ export function AdminStoragePanel({
       {dump?.warnings && dump.warnings.length > 0 && !dumpError && (
         <p className="muted small">Partial dump: {dump.warnings.join(' · ')}</p>
       )}
+      {!r2Ok && dump && (
+        <div className="tcd-banner warn" style={{ marginBottom: '1rem' }}>
+          R2 dump unavailable{dump.backends?.r2?.error ? `: ${dump.backends.r2.error}` : ''}. Per-account R2 columns show
+          “R2 unavailable” — not 0 B.
+        </div>
+      )}
 
       <div className="tcd-pulse-grid">
         <article className="tcd-pulse-card">
@@ -396,10 +606,13 @@ export function AdminStoragePanel({
         </article>
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Cloudflare R2</p>
-          <p className="tcd-pulse-value">{dump ? fmtBytes(dump.backends?.r2?.bytes) : dumpScanning ? '…' : fmtBytes(0)}</p>
+          <p className="tcd-pulse-value">
+            {dumpScanning && !dump ? '…' : r2Ok ? fmtBytes(dump?.backends?.r2?.bytes) : '—'}
+          </p>
           <p className="tcd-pulse-meta">
-            {dump?.backends?.r2?.objects ?? 0} objects · bucket {dump?.backends?.r2?.bucket || 'luscsl-uploads'}
-            {dump?.backends?.r2?.error ? ` · ${dump.backends.r2.error}` : ''}
+            {r2Ok
+              ? `${dump?.backends?.r2?.objects ?? 0} objects · bucket ${dump?.backends?.r2?.bucket || 'luscsl-uploads'}`
+              : dump?.backends?.r2?.error || 'R2 unavailable (timeout or network)'}
           </p>
         </article>
         <article className="tcd-pulse-card">
@@ -421,13 +634,21 @@ export function AdminStoragePanel({
         </article>
         <article className="tcd-pulse-card">
           <p className="tcd-pulse-eyebrow">Cloudflare Tunnel → this PC</p>
-          <p className="tcd-pulse-value">
-            {pcDisk ? fmtBytes(pcDisk.usedBytes) : pcBackend?.diskUsedBytes ? fmtBytes(pcBackend.diskUsedBytes) : '—'}
+          <p className={`tcd-pulse-value ${pcOffline ? 'fail' : ''}`}>
+            {pcOffline
+              ? 'Offline'
+              : pcDisk
+                ? fmtBytes(pcDisk.usedBytes)
+                : pcBackend?.diskUsedBytes
+                  ? fmtBytes(pcBackend.diskUsedBytes)
+                  : '—'}
           </p>
           <p className="tcd-pulse-meta">
-            {pc?.reachableFromFunctions || pcBackend?.reachable
-              ? `of ${fmtBytes(pcDisk?.totalBytes ?? pcBackend?.diskTotalBytes)} on ${pcDisk?.drive ?? pcBackend?.drive ?? 'C:'}`
-              : 'Not reachable from Cloud Functions yet'}
+            {pcOffline
+              ? 'PC tunnel offline'
+              : pc?.reachableFromFunctions || pcBackend?.reachable
+                ? `of ${fmtBytes(pcDisk?.totalBytes ?? pcBackend?.diskTotalBytes)} on ${pcDisk?.drive ?? pcBackend?.drive ?? 'C:'}`
+                : 'Not reachable from Cloud Functions yet'}
           </p>
         </article>
       </div>
@@ -437,6 +658,11 @@ export function AdminStoragePanel({
           <h2>This PC (XAMPP)</h2>
           <span className="tcd-card-timestamp">Cloudflare Tunnel (free) → this PC Apache</span>
         </div>
+        {pcOffline && (
+          <div className="tcd-banner warn" style={{ marginBottom: '0.75rem' }}>
+            <strong>PC tunnel offline.</strong> {pcOfflineMsg}
+          </div>
+        )}
         <p className="muted small">
           Cloudflare (free) publishes this Windows PC archive at{" "}
           <code>sarechild-pc-storage.neuereatec.workers.dev</code> → Apache/PHP on this machine
@@ -455,9 +681,11 @@ export function AdminStoragePanel({
           <span className={`pill tcd-${pc?.reachableFromFunctions ? 'ok' : pc?.probe?.inconclusive ? 'warn' : 'fail'}`}>
             {pc?.reachableFromFunctions
               ? `Functions reached health.json (${pc.probe?.latencyMs} ms)`
-              : pc?.publicUrl
-                ? 'Functions could not reach the tunnel URL'
-                : 'XAMPP_STORAGE_URL not set on Functions'}
+              : pcOffline
+                ? `PC tunnel offline${pc?.probe?.status ? ` (HTTP ${pc.probe.status})` : ''}`
+                : pc?.publicUrl
+                  ? 'Functions could not reach the tunnel URL'
+                  : 'XAMPP_STORAGE_URL not set on Functions'}
           </span>
           <span className={`pill tcd-${pc?.secretConfigured ? 'ok' : 'warn'}`}>
             {pc?.secretConfigured ? 'Clear-store secret configured' : 'Set XAMPP_STORAGE_SECRET to list/clear'}
@@ -554,9 +782,7 @@ export function AdminStoragePanel({
                     <div className="tcd-cell-main">{f.label}</div>
                     <div className="tcd-cell-sub">{f.id}</div>
                   </td>
-                  <td>
-                    {fmtBytes(f.r2Bytes)} ({f.r2Objects})
-                  </td>
+                  <td>{fmtR2Cell(f.r2Bytes, f.r2Objects, r2Ok)}</td>
                   <td>
                     {f.docs} docs · {fmtBytes(f.estimatedBytes)}
                   </td>
@@ -591,35 +817,91 @@ export function AdminStoragePanel({
       <div className="tcd-card tcd-card-wide">
         <div className="tcd-card-head">
           <h2>Per-account usage</h2>
-          <input
-            className="tcd-admin-search"
-            type="search"
-            placeholder="Filter email / family / child"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
         </div>
-        <div className="tcd-form-grid" style={{ marginBottom: '0.75rem' }}>
-          <label>
-            Family ID to manage
-            <input
-              type="text"
-              value={familyIdInput}
-              onChange={(e) => setFamilyIdInput(e.target.value)}
-              placeholder={PREFERRED_FAMILY_ID}
-            />
-          </label>
-          <div style={{ alignSelf: 'end' }}>
-            <button
-              className="btn btn-primary compact"
-              type="button"
-              onClick={() => openManage(familyIdInput.trim() || PREFERRED_FAMILY_ID)}
+        <div className="tcd-storage-account-toolbar">
+          <label className="tcd-fleet-account-picker">
+            <span className="tcd-fleet-account-label">Customer account</span>
+            <select
+              className="tcd-admin-select tcd-fleet-account-select"
+              value={selectedFamily || viewFamilyId || ''}
+              onChange={(e) => {
+                const next = e.target.value
+                if (next) openManage(next)
+              }}
+              aria-label="Select customer account by email"
             >
-              Manage this family
+              <option value="">Select a real customer account…</option>
+              {customerPickerOptions.map((a) => (
+                <option key={a.familyId} value={a.familyId}>
+                  {(a.email || 'no email') + ` · ${a.deviceCount} device(s) · ${a.familyId.slice(0, 8)}…`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="tcd-form-grid" style={{ marginBottom: 0 }}>
+            <label>
+              Family ID to manage
+              <input
+                type="text"
+                value={familyIdInput}
+                onChange={(e) => setFamilyIdInput(e.target.value)}
+                placeholder={PREFERRED_FAMILY_ID}
+              />
+            </label>
+            <div style={{ alignSelf: 'end' }}>
+              <button
+                className="btn btn-primary compact"
+                type="button"
+                onClick={() => openManage(familyIdInput.trim() || PREFERRED_FAMILY_ID)}
+              >
+                Manage this family
+              </button>
+            </div>
+          </div>
+          <div className="tcd-storage-filter-row">
+            <input
+              className="tcd-admin-search"
+              type="search"
+              placeholder="Filter email / family / child — Enter jumps to match"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  jumpFromFilter()
+                }
+              }}
+            />
+            <button className="btn btn-ghost compact" type="button" onClick={jumpFromFilter}>
+              Jump to match
             </button>
           </div>
+          <label className="muted small">
+            <input
+              type="checkbox"
+              checked={showEmptyLeftovers}
+              onChange={(e) => setShowEmptyLeftovers(e.target.checked)}
+            />{' '}
+            Show empty leftover families ({emptyLeftoverCount} hidden by default)
+          </label>
+          <div className="tcd-system-actions">
+            <button
+              className="btn btn-ghost compact danger"
+              type="button"
+              disabled={busy || emptyLeftoverCount === 0}
+              onClick={() => void deleteEmptyLeftovers()}
+            >
+              Delete empty leftover families
+            </button>
+            <span className="muted small">
+              Requires confirm text DELETE-EMPTY-LEFTOVERS · never deletes {PREFERRED_FAMILY_ID.slice(0, 10)}…
+            </span>
+          </div>
         </div>
-        <div className="tcd-table-wrap">
+
+        {managePanel}
+
+        <div className="tcd-table-wrap" style={{ marginTop: '1rem' }}>
           <table className="tcd-admin-table">
             <thead>
               <tr>
@@ -643,6 +925,7 @@ export function AdminStoragePanel({
                     <div className="tcd-cell-main">{a.email || 'no email'}</div>
                     <div className="tcd-cell-sub">
                       {a.familyId.slice(0, 10)}… · {a.deviceCount} device(s)
+                      {isEmptyLeftover(a, r2Ok) ? ' · empty leftover' : ''}
                     </div>
                   </td>
                   <td>{fmtBytes(a.usedBytes)}</td>
@@ -652,7 +935,7 @@ export function AdminStoragePanel({
                       <span style={{ width: `${pct(a.usedBytes, a.accountBytesMax)}%` }} />
                     </div>
                   </td>
-                  <td>{fmtBytes(a.r2Bytes)}</td>
+                  <td>{r2Ok ? fmtBytes(a.r2Bytes) : 'R2 unavailable'}</td>
                   <td>{a.firestoreDocs}</td>
                   <td>
                     <button
@@ -672,7 +955,11 @@ export function AdminStoragePanel({
                       ? 'Dump failed — use Family ID above to Manage / Clear / Reset anyway.'
                       : dumpScanning
                         ? 'Scanning families…'
-                        : 'No families in this dump yet. Paste a family ID above to manage one.'}
+                        : showEmptyLeftovers
+                          ? 'No families in this dump yet. Paste a family ID above to manage one.'
+                          : emptyLeftoverCount > 0
+                            ? `No non-empty families match. Turn on “Show empty leftover families” to see ${emptyLeftoverCount} shells.`
+                            : 'No families in this dump yet. Paste a family ID above to manage one.'}
                   </td>
                 </tr>
               )}
@@ -680,99 +967,6 @@ export function AdminStoragePanel({
           </table>
         </div>
       </div>
-
-      {selected && (
-        <div className="tcd-card tcd-card-wide" ref={managePanelRef} key={selected.familyId} id="tcd-storage-manage">
-          <div className="tcd-card-head">
-            <h2>Manage {selected.email || selected.familyId}</h2>
-            <button
-              className="btn btn-ghost compact"
-              type="button"
-              onClick={() => {
-                setSelectedFamily('')
-                setConfirmText('')
-              }}
-            >
-              Close
-            </button>
-          </div>
-          <p className="muted small">
-            Family ID: <code>{selected.familyId}</code>
-            {' · '}
-            Children: {selected.childNames.join(', ') || 'none'}. Over limit: {selected.overLimit ? 'yes' : 'no'}
-            {selected.storageBlocked ? ' · uploads blocked' : ''}.
-          </p>
-          <div className="tcd-form-grid">
-            <label>
-              This account cap (GB)
-              <input
-                type="number"
-                min={0.25}
-                step={0.25}
-                key={`cap-${selected.familyId}-${selected.accountBytesMax}`}
-                defaultValue={(selected.accountBytesMax / (1024 * 1024 * 1024)).toFixed(2)}
-                onBlur={(e) => void saveAccountCap(selected.familyId, e.target.value)}
-              />
-            </label>
-            <label>
-              Confirm destructive action
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder="CLEAR-ACCOUNT / FACTORY-RESET / RESET-PLATFORM / CLEAR-PC-STORE"
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-              />
-            </label>
-          </div>
-          <div className="tcd-system-actions" style={{ marginTop: '0.75rem' }}>
-            <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void clearAccount()}>
-              Clear stored data (keep pairing)
-            </button>
-            <button className="btn btn-ghost compact danger" type="button" disabled={busy} onClick={() => void factoryResetAccount()}>
-              Factory reset this family
-            </button>
-            <button className="btn btn-ghost compact danger" type="button" disabled={busy} onClick={() => void factoryResetPlatform()}>
-              Factory reset ALL operational data
-            </button>
-          </div>
-          <div className="tcd-table-wrap" style={{ marginTop: '1rem' }}>
-            <table className="tcd-admin-table">
-              <thead>
-                <tr>
-                  <th>Feature</th>
-                  <th>R2</th>
-                  <th>Docs</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(selected.features).map(([id, usage]) => (
-                  <tr key={id}>
-                    <td>{id}</td>
-                    <td>
-                      {fmtBytes(usage.r2Bytes)} ({usage.r2Objects})
-                    </td>
-                    <td>{usage.docs}</td>
-                    <td>
-                      <button className="btn btn-ghost compact" type="button" disabled={busy} onClick={() => void clearFeature(selected.familyId, id)}>
-                        Clear
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {Object.keys(selected.features).length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="tcd-empty-note">
-                      No per-feature usage rows for this account yet (or dump missing detail). Limits / clear / reset still work above.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
