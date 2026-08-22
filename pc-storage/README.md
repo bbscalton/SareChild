@@ -12,18 +12,17 @@ GitHub Pages TCD is **HTTPS**, so the browser **cannot** fetch these HTTP URLs (
 
 ## Make TCD see this disk
 
-Public `:80` on the ISP IP is typically blocked by NAT. Use the existing Cloudflare named tunnel (cloudflared is already a Windows service) **or** a dedicated tunnel:
+Public `:80` on the ISP IP is typically blocked by NAT. The free Cloudflare Worker `sarechild-pc-storage.neuereatec.workers.dev` publishes Apache/PHP on this machine (`pc-tunnel-proxy/` → quick/named tunnel → `http://127.0.0.1:80`).
 
-1. Cloudflare Zero Trust → Networks → Tunnels → `net` (or create `sarechild-xampp`).
-2. Public hostname, HTTPS, service `http://127.0.0.1:80`, path `/sarechild-storage*`.
-3. Set Functions env (gitignored `functions/.env`, then `firebase deploy --only functions`):
+- Health: https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage/health.json
 
-```
-XAMPP_STORAGE_URL=https://YOUR-HOSTNAME/sarechild-storage
-XAMPP_STORAGE_SECRET=<same value as pc-storage/.secret>
-```
+**HTTP 530 / “PC tunnel offline”** means the Worker origin tunnel URL is dead (ephemeral trycloudflare hostnames expire) or cloudflared is not running. Local Apache can still be fine at http://127.0.0.1/sarechild-storage/health.json. Live child media on R2 is unaffected.
 
-4. Open TCD Storage → Refresh dump. The **This PC (XAMPP)** card shows drive used/total when Functions can reach the tunnel.
+Fix: start a tunnel to this PC (`scripts/run-xampp-storage-tunnel.ps1` or a quick tunnel), update `pc-tunnel-proxy/src/index.ts` `PHP_ORIGIN`, then `npx wrangler deploy` from `pc-tunnel-proxy/`.
+
+Set gitignored `functions/.env` (`XAMPP_STORAGE_URL=https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage`) then `firebase deploy --only functions:adminGetStorageDump,functions:adminGetInfraStatus,functions:adminManagePcStorage --project safechild-f34ac`.
+
+Open TCD Storage → Refresh dump. The **This PC (XAMPP)** card shows drive used/total when Functions can reach the tunnel.
 
 ## Clear the local store
 
