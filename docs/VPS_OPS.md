@@ -111,10 +111,10 @@ Refresh dump calls Cloud Functions (`adminGetStorageDump`, `adminGetInfraStatus`
 
 ### This PC (XAMPP) local archive
 
-Apache on the Windows PC (`C:\xampp2\htdocs\sarechild-storage`) is a **disk dump + local archive**, not a replacement for R2. GitHub Pages is HTTPS, so the browser cannot call `http://127.0.0.1` (mixed content). Cloud Functions also cannot see the PC loopback. If ISP NAT blocks port 80 (typical), add a public hostname on the existing `net` cloudflared tunnel (or `sarechild-xampp`) pointing at `http://127.0.0.1:80`, then set gitignored `functions/.env`:
+Apache on the Windows PC (`C:\xampp2\htdocs\sarechild-storage`) is a **disk dump + local archive**, not a replacement for R2. Cloud Functions reach it through Cloudflare (free) Worker `https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage`. **HTTP 530** means the Worker’s tunnel origin is offline (TCD shows “PC tunnel offline”); live R2 media is unaffected. Named tunnel `sarechild-xampp` is reserved for `storage.neuereatec.com` once that zone's nameservers are Cloudflare (`ned.ns.cloudflare.com` / `zelda.ns.cloudflare.com`). Gitignored `functions/.env`:
 
 ```
-XAMPP_STORAGE_URL=https://YOUR-HOST/sarechild-storage
+XAMPP_STORAGE_URL=https://sarechild-pc-storage.neuereatec.workers.dev/sarechild-storage
 XAMPP_STORAGE_SECRET=<same as C:\xampp2\htdocs\sarechild-storage\.secret>
 ```
 

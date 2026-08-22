@@ -365,10 +365,14 @@ function TcdDashboard({
       .map((a) => ({
         familyId: a.familyId as string,
         email: a.email || 'no email',
+        deviceCount: a.deviceCount ?? 0,
         label: `${a.email || 'no email'} · ${String(a.familyId).slice(0, 8)}…`,
         childHint: a.deviceCount != null ? `${a.deviceCount} device(s)` : '',
       }))
-      .sort((a, b) => a.email.localeCompare(b.email))
+      .sort((a, b) => {
+        if (b.deviceCount !== a.deviceCount) return b.deviceCount - a.deviceCount
+        return a.email.localeCompare(b.email)
+      })
   }, [adminAccounts])
 
   const selectedAccountLabel = useMemo(() => {
@@ -657,7 +661,14 @@ function TcdDashboard({
         )}
 
         {tab === 'storage' && isAdmin && (
-          <AdminStoragePanel busy={busy} onBusy={setBusy} onStatus={setStatusMsg} onError={setError} />
+          <AdminStoragePanel
+            busy={busy}
+            onBusy={setBusy}
+            onStatus={setStatusMsg}
+            onError={setError}
+            viewFamilyId={viewFamilyId}
+            onSelectAccount={setViewFamilyId}
+          />
         )}
 
         {tab === 'features' && isAdmin && (

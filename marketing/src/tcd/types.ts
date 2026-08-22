@@ -263,6 +263,7 @@ export type StorageAccountRow = {
   firestoreDocs: number
   r2Bytes: number
   r2Objects: number
+  r2Available?: boolean
   estimatedFirestoreBytes: number
   usedBytes: number
   accountBytesMax: number
@@ -302,6 +303,7 @@ export type StorageDump = {
       reachable: boolean
       configured: boolean
       error?: string | null
+      httpStatus?: number | null
       bytes: number
       files: number
       diskUsedBytes: number

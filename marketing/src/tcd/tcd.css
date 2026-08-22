@@ -249,6 +249,12 @@
   color: #c9f3e3;
 }
 
+.tcd-banner.warn {
+  background: rgba(240, 165, 58, 0.12);
+  border: 1px solid rgba(240, 165, 58, 0.35);
+  color: #ffe4b8;
+}
+
 .tcd-action-items {
   background: rgba(240, 165, 58, 0.1);
   border: 1px solid rgba(240, 165, 58, 0.35);
@@ -2009,4 +2015,40 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+}
+
+.tcd-storage-account-toolbar {
+  display: grid;
+  gap: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.tcd-storage-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.tcd-storage-filter-row .tcd-admin-search {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+}
+
+.tcd-storage-manage {
+  border-color: rgba(240, 165, 58, 0.45);
+  box-shadow: 0 0 0 1px rgba(240, 165, 58, 0.2);
+}
+
+.tcd-storage-manage.is-flash {
+  animation: tcd-manage-flash 1.4s ease;
+}
+
+@keyframes tcd-manage-flash {
+  0% {
+    box-shadow: 0 0 0 2px rgba(240, 165, 58, 0.75);
+  }
+  100% {
+    box-shadow: 0 0 0 1px rgba(240, 165, 58, 0.2);
+  }
 }

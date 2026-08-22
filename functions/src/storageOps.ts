@@ -182,12 +182,12 @@ async function loadLimits(): Promise<StorageLimits> {
   };
 }
 
-async function r2Fetch(path: string, init: RequestInit = {}): Promise<Response | null> {
+async function r2Fetch(path: string, init: RequestInit = {}, timeoutMs = 8_000): Promise<Response | null> {
   if (!R2_PURGE_SECRET) return null;
   try {
     return await fetch(`${R2_PROXY_BASE}${path}`, {
       ...init,
-      signal: init.signal ?? AbortSignal.timeout(8_000),
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
       headers: {
         Authorization: `Bearer ${R2_PURGE_SECRET}`,
         "content-type": "application/json",
@@ -225,20 +225,25 @@ type R2Dump = {
 };
 
 async function fetchR2Dump(): Promise<{ r2: R2Dump | null; d1: Record<string, number>; error: string | null }> {
-  const res = await r2Fetch("/ops/storage-dump");
+  // Full bucket listing can take 20–50s; keep this well under the callable's 120s budget.
+  const res = await r2Fetch("/ops/storage-dump", {}, 55_000);
   if (!res) {
     return {
       r2: null,
       d1: {},
-      error: R2_PURGE_SECRET ? "R2 dump request failed (timeout or network)" : "R2_MEDIA_PURGE_SECRET not set",
+      error: R2_PURGE_SECRET ? "R2 dump timed out or network failed — per-family R2 bytes are unavailable" : "R2_MEDIA_PURGE_SECRET not set",
     };
   }
   if (!res.ok) return { r2: null, d1: {}, error: `R2 dump HTTP ${res.status}` };
-  const body = (await res.json()) as { r2?: R2Dump; d1?: Record<string, number> };
+  const body = (await res.json()) as { r2?: R2Dump; d1?: Record<string, number>; error?: string };
+  if (!body.r2) {
+    return { r2: null, d1: body.d1 ?? {}, error: body.error || "R2 dump missing r2 payload" };
+  }
+  const truncatedNote = body.r2.truncated ? "R2 listing truncated (partial bytes)" : null;
   return {
-    r2: body.r2 ?? null,
+    r2: body.r2,
     d1: body.d1 ?? {},
-    error: body.r2 ? null : "R2 dump missing r2 payload",
+    error: truncatedNote,
   };
 }
 
@@ -289,11 +294,12 @@ function gcfCannotReachReason(raw: string): string | null {
   return null;
 }
 
-function emptyPcBackend(error: string | null) {
+function emptyPcBackend(error: string | null, httpStatus: number | null = null) {
   return {
     reachable: false,
     configured: Boolean(XAMPP_STORAGE_URL),
     error,
+    httpStatus,
     bytes: 0,
     files: 0,
     diskUsedBytes: 0,
@@ -308,10 +314,20 @@ function emptyPcBackend(error: string | null) {
   };
 }
 
+function describeXamppHttpError(status: number | null, url: string): string {
+  if (status === 530 || status === 502 || status === 503 || status === 504) {
+    return `PC tunnel offline (HTTP ${status}). Cloudflare could not reach this PC’s Apache — start the XAMPP tunnel / fix Worker origin. Live R2 media is unaffected.`;
+  }
+  if (status == null) {
+    return `Functions could not reach ${url} (PC tunnel offline or network error). Live R2 media is unaffected.`;
+  }
+  return `HTTP ${status} from XAMPP health (${url})`;
+}
+
 async function probeXamppHealth(timeoutMs = 5000): Promise<ReturnType<typeof emptyPcBackend> & { body?: unknown; latencyMs?: number }> {
   const blocked = gcfCannotReachReason(XAMPP_STORAGE_URL);
   if (blocked) {
-    return { ...emptyPcBackend(blocked), latencyMs: 0 };
+    return { ...emptyPcBackend(blocked, null), latencyMs: 0 };
   }
   const url = joinXamppUrl("health.json");
   const probe = await probeUrl(url, timeoutMs);
@@ -321,15 +337,14 @@ async function probeXamppHealth(timeoutMs = 5000): Promise<ReturnType<typeof emp
     const err =
       typeof body?.error === "string"
         ? body.error
-        : probe.status == null
-          ? `Functions could not reach ${url}`
-          : `HTTP ${probe.status} from XAMPP health`;
-    return { ...emptyPcBackend(err), latencyMs: probe.latencyMs, body: probe.body };
+        : describeXamppHttpError(probe.status, url);
+    return { ...emptyPcBackend(err, probe.status), latencyMs: probe.latencyMs, body: probe.body };
   }
   return {
     reachable: true,
     configured: true,
     error: null,
+    httpStatus: probe.status,
     bytes: Number(body.storeBytes ?? 0),
     files: Number(body.storeFiles ?? 0),
     diskUsedBytes: Number(disk.usedBytes ?? 0),
@@ -448,9 +463,9 @@ function accountSkeleton(opts: {
   };
 }
 
-const MAX_FAMILIES_IN_DUMP = 80;
-const COUNT_BUDGET_MS = 12_000;
-const R2_DUMP_BUDGET_MS = 8_000;
+const MAX_FAMILIES_IN_DUMP = 120;
+const COUNT_BUDGET_MS = 20_000;
+const R2_DUMP_BUDGET_MS = 55_000;
 const MAX_DEVICES_COUNTED = 25;
 const PREFERRED_FAMILY_ID = "tS2mTEiFqoY76nq7ei1d";
 
@@ -542,12 +557,13 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     sleep(R2_DUMP_BUDGET_MS).then(() => ({
       r2: null as R2Dump | null,
       d1: {} as Record<string, number>,
-      error: "R2 dump timed out; family list is from Firestore. Refresh to retry R2 bytes.",
+      error: "R2 dump timed out; family list is from Firestore. Per-family R2 shows unavailable until refresh succeeds.",
     })),
   ]);
 
   if (r2Bundle.error) warnings.push(`R2: ${r2Bundle.error}`);
   if (pcXampp.configured && pcXampp.error) warnings.push(`This PC (XAMPP): ${pcXampp.error}`);
+  const r2Available = Boolean(r2Bundle.r2);
 
   const emailByFamily = new Map<string, { uid: string; email: string }>();
   for (const p of profilesSnap.docs) {
@@ -569,16 +585,19 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
   }
 
   let familyIds = [...new Set([...familyDocs.keys(), ...emailByFamily.keys()])];
-  if (!familyIds.includes(PREFERRED_FAMILY_ID) && familyDocs.has(PREFERRED_FAMILY_ID)) {
-    familyIds = [PREFERRED_FAMILY_ID, ...familyIds];
-  }
+  // Prefer real customer families (linked parentProfiles / preferred) over orphan empty shells when truncating.
+  familyIds.sort((a, b) => {
+    if (a === PREFERRED_FAMILY_ID) return -1;
+    if (b === PREFERRED_FAMILY_ID) return 1;
+    const ap = emailByFamily.has(a) ? 0 : 1;
+    const bp = emailByFamily.has(b) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return a.localeCompare(b);
+  });
   if (familyIds.length > MAX_FAMILIES_IN_DUMP) {
     warnings.push(`Truncated to ${MAX_FAMILIES_IN_DUMP} of ${familyIds.length} families for this dump`);
   }
-  const preferredFirst = familyIds.includes(PREFERRED_FAMILY_ID)
-    ? [PREFERRED_FAMILY_ID, ...familyIds.filter((id) => id !== PREFERRED_FAMILY_ID)]
-    : familyIds;
-  const ids = preferredFirst.slice(0, MAX_FAMILIES_IN_DUMP);
+  const ids = familyIds.slice(0, MAX_FAMILIES_IN_DUMP);
 
   logger.info("buildStorageDump listed families", {
     familyCount: familyIds.length,
@@ -648,22 +667,22 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     }
     firestoreDocs += docs;
     const override = Number(family?.get("storageBytesMax") ?? 0);
-    accounts.push(
-      accountSkeleton({
-        familyId,
-        parentUid: owner?.uid || (family?.get("parentUid") as string | undefined) || null,
-        email: owner?.email || (family?.get("parentEmail") as string | undefined) || "",
-        childNames,
-        deviceCount,
-        features,
-        firestoreDocs: docs,
-        r2Bytes: Number(r2Fam?.bytes ?? 0),
-        r2Objects: Number(r2Fam?.objects ?? 0),
-        estimatedBytes: Object.values(features).reduce((s, f) => s + f.estimatedBytes, 0),
-        accountBytesMax: override > 0 ? override : limits.defaultAccountBytesMax,
-        storageBlocked: Boolean(family?.get("storageBlocked")),
-      }),
-    );
+    const row = accountSkeleton({
+      familyId,
+      parentUid: owner?.uid || (family?.get("parentUid") as string | undefined) || null,
+      email: owner?.email || (family?.get("parentEmail") as string | undefined) || "",
+      childNames,
+      deviceCount,
+      features,
+      firestoreDocs: docs,
+      r2Bytes: Number(r2Fam?.bytes ?? 0),
+      r2Objects: Number(r2Fam?.objects ?? 0),
+      estimatedBytes: Object.values(features).reduce((s, f) => s + f.estimatedBytes, 0),
+      accountBytesMax: override > 0 ? override : limits.defaultAccountBytesMax,
+      storageBlocked: Boolean(family?.get("storageBlocked")),
+    });
+    (row as { r2Available?: boolean }).r2Available = r2Available;
+    accounts.push(row);
   }
 
   if (countsTruncated) {
@@ -694,7 +713,7 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
     backends: {
       r2: {
         reachable: Boolean(r2Bundle.r2),
-        error: r2Bundle.error ?? null,
+        error: r2Bundle.error ?? (r2Bundle.r2 ? null : "R2 unavailable"),
         bytes: r2Bytes,
         objects: Number(r2Bundle.r2?.objects ?? 0),
         truncated: Boolean(r2Bundle.r2?.truncated),
@@ -718,6 +737,7 @@ export async function buildStorageDump(): Promise<Record<string, unknown>> {
         reachable: pcXampp.reachable,
         configured: pcXampp.configured,
         error: pcXampp.error ?? null,
+        httpStatus: pcXampp.httpStatus ?? null,
         bytes: pcXampp.bytes,
         files: pcXampp.files,
         diskUsedBytes: pcXampp.diskUsedBytes,
@@ -972,7 +992,94 @@ export const adminClearStorage = onCall(
       };
     }
 
-    throw new HttpsError("invalid-argument", "scope must be feature, account, platform, or pc-store.");
+    if (scope === "empty-leftovers") {
+      if (confirm !== "DELETE-EMPTY-LEFTOVERS") {
+        throw new HttpsError(
+          "failed-precondition",
+          "Type DELETE-EMPTY-LEFTOVERS to confirm deleting empty leftover families.",
+        );
+      }
+      const requested = Array.isArray(request.data?.familyIds)
+        ? (request.data.familyIds as unknown[]).map((id) => String(id).trim()).filter(Boolean)
+        : [];
+      const uniqueRequested = [...new Set(requested)];
+      if (uniqueRequested.length === 0) {
+        throw new HttpsError("invalid-argument", "Pass familyIds of empty leftover families to delete.");
+      }
+      if (uniqueRequested.includes(PREFERRED_FAMILY_ID)) {
+        throw new HttpsError(
+          "failed-precondition",
+          `Refusing to delete protected family ${PREFERRED_FAMILY_ID}.`,
+        );
+      }
+
+      const deleted: string[] = [];
+      const skipped: Array<{ familyId: string; reason: string }> = [];
+
+      for (const familyId of uniqueRequested) {
+        if (familyId === PREFERRED_FAMILY_ID) {
+          skipped.push({ familyId, reason: "protected preferred family" });
+          continue;
+        }
+        const familyRef = db.collection("families").doc(familyId);
+        const familySnap = await familyRef.get();
+        if (!familySnap.exists) {
+          skipped.push({ familyId, reason: "already gone" });
+          continue;
+        }
+        const devices = await familyRef.collection("devices").limit(1).get();
+        if (!devices.empty) {
+          skipped.push({ familyId, reason: "has devices" });
+          continue;
+        }
+        let docs = 0;
+        for (const col of FAMILY_COUNT_COLS) {
+          docs += await countColSafe(familyRef.collection(col));
+          if (docs > 0) break;
+        }
+        if (docs > 0) {
+          skipped.push({ familyId, reason: "has firestore docs" });
+          continue;
+        }
+
+        await deleteR2Prefix(`families/${familyId}/`);
+        await wipeFamilyData(familyId);
+
+        const profiles = await db.collection("parentProfiles").where("familyId", "==", familyId).get();
+        const owned = await db.collection("parentProfiles").where("ownedFamilyId", "==", familyId).get();
+        const profileDocs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+        for (const p of profiles.docs) profileDocs.set(p.id, p);
+        for (const p of owned.docs) profileDocs.set(p.id, p);
+        for (const p of profileDocs.values()) {
+          const email = (p.get("email") as string | undefined) || "";
+          const newId = await createFreshFamilyForUser(p.id, email);
+          await p.ref.set({ familyId: newId, ownedFamilyId: newId }, { merge: true });
+        }
+
+        deleted.push(familyId);
+      }
+
+      await writeAuditLog({
+        action: "clear_storage",
+        adminEmail,
+        targetUid: "empty-leftovers",
+        detail: `Deleted ${deleted.length} empty leftover families; skipped ${skipped.length}`,
+        meta: { deleted, skipped },
+      });
+      return {
+        ok: true,
+        docs: 0,
+        media: 0,
+        families: deleted.length,
+        deletedFamilyIds: deleted,
+        skipped,
+      };
+    }
+
+    throw new HttpsError(
+      "invalid-argument",
+      "scope must be feature, account, platform, pc-store, or empty-leftovers.",
+    );
   },
 );
 
@@ -1059,7 +1166,7 @@ export const adminGetInfraStatus = onCall({ cors: true, timeoutSeconds: 15 }, as
       reachableFromFunctions: pcHealth.reachable,
       probe: {
         ok: pcHealth.reachable,
-        status: pcHealth.reachable ? 200 : null,
+        status: pcHealth.httpStatus ?? (pcHealth.reachable ? 200 : null),
         latencyMs: pcHealth.latencyMs ?? 0,
         body: pcHealth.body ?? null,
         inconclusive: !pcHealth.reachable && !XAMPP_STORAGE_URL,
